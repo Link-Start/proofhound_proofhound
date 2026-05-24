@@ -30,7 +30,7 @@ The open-source edition currently focuses on a single-workspace local admin cons
 
 ## Quick Preview
 
-<video src="https://github.com/user-attachments/assets/e10a278c-1b86-4eb8-b0c8-1bd5e5d2a72f" controls muted playsinline width="100%" poster="docs/assets/proofhound-quickstart-poster.png" title="ProofHound quick start demo"></video>
+<video src="https://github.com/user-attachments/assets/e10a278c-1b86-4eb8-b0c8-1bd5e5d2a72f" controls muted playsinline width="100%" title="ProofHound quick start demo"></video>
 
 ## What It Solves
 
