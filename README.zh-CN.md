@@ -30,9 +30,7 @@ ProofHound 覆盖提示词版本、数据集回归、实验、自动优化、灰
 
 ## 快速预览
 
-[![ProofHound 快速开始演示](docs/assets/proofhound-quickstart-poster.png)](docs/assets/proofhound-quickstart.mp4?raw=1)
-
-[观看快速开始演示。](docs/assets/proofhound-quickstart.mp4?raw=1)
+<video src="https://github.com/user-attachments/assets/e10a278c-1b86-4eb8-b0c8-1bd5e5d2a72f" controls muted playsinline width="100%" poster="docs/assets/proofhound-quickstart-poster.png" title="ProofHound 快速开始演示"></video>
 
 ## 解决了什么问题
 
