@@ -1,15 +1,18 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { DEFAULT_LANGUAGE, isLanguage, LANGUAGE_STORAGE_KEY, resolveBrowserLanguage, type Language } from './language';
 
-export const LANGUAGE_STORAGE_KEY = 'proofhound.language';
-
-export const LANGUAGE_OPTIONS = [
-  { value: 'zh-CN', label: '中文', shortLabel: '中' },
-  { value: 'en-US', label: 'English', shortLabel: 'EN' },
-] as const;
-
-export type Language = (typeof LANGUAGE_OPTIONS)[number]['value'];
+export {
+  DEFAULT_LANGUAGE,
+  isLanguage,
+  LANGUAGE_OPTIONS,
+  LANGUAGE_STORAGE_KEY,
+  resolveAcceptLanguageHeader,
+  resolveBrowserLanguage,
+  resolveSupportedBrowserLanguage,
+  type Language,
+} from './language';
 
 const dictionaries = {
   'zh-CN': {
@@ -5874,19 +5877,23 @@ type I18nContextValue = {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-export function isLanguage(value: string | null): value is Language {
-  return LANGUAGE_OPTIONS.some((option) => option.value === value);
-}
-
 function getStoredLanguage(): Language {
-  if (typeof window === 'undefined') return 'zh-CN';
+  if (typeof window === 'undefined') return DEFAULT_LANGUAGE;
   const storedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-  return isLanguage(storedLanguage) ? storedLanguage : 'zh-CN';
+  if (isLanguage(storedLanguage)) return storedLanguage;
+  const browserLanguages = Array.isArray(window.navigator.languages) ? window.navigator.languages : [];
+  return resolveBrowserLanguage([...browserLanguages, window.navigator.language]);
 }
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  // 初值用 SSR 默认 'zh-CN'，mount 后同步真实 localStorage 值，避免 hydration mismatch
-  const [language, setLanguageState] = useState<Language>('zh-CN');
+export function I18nProvider({
+  children,
+  defaultLanguage = DEFAULT_LANGUAGE,
+}: {
+  children: ReactNode;
+  defaultLanguage?: Language;
+}) {
+  // 初值用 SSR 默认语言，mount 后同步用户偏好或浏览器语言，避免 hydration mismatch
+  const [language, setLanguageState] = useState<Language>(defaultLanguage);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration-safe localStorage sync, runs once on mount

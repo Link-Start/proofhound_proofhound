@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import Script from 'next/script';
 import { Suspense, type ReactNode } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { I18nProvider } from '@/i18n';
+import { DEFAULT_LANGUAGE, resolveAcceptLanguageHeader, type Language } from '@/i18n/language';
 import { ProjectContextProvider } from '@/providers/project-context-provider';
 import { RefineProvider } from '@/providers/refine-provider';
 import '@xyflow/react/dist/style.css';
@@ -17,22 +19,39 @@ const preferenceInitScript = `
 try {
   var theme = window.localStorage.getItem('proofhound.theme');
   var language = window.localStorage.getItem('proofhound.language');
+  var browserLanguages = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+  var resolveBrowserLanguage = function (value) {
+    if (!value) return null;
+    var normalized = String(value).toLowerCase();
+    if (normalized === 'zh' || normalized.indexOf('zh-') === 0) return 'zh-CN';
+    if (normalized === 'en' || normalized.indexOf('en-') === 0) return 'en-US';
+    return null;
+  };
   var themeOptions = ['system', 'light', 'dark', 'twilight', 'electric'];
   var themePreference = themeOptions.indexOf(theme) >= 0 ? theme : 'system';
   var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   var resolvedTheme = themePreference === 'system' ? (systemDark ? 'dark' : 'light') : themePreference;
+  var resolvedLanguage = ['zh-CN', 'en-US'].indexOf(language) >= 0 ? language : null;
+  for (var i = 0; !resolvedLanguage && i < browserLanguages.length; i += 1) {
+    resolvedLanguage = resolveBrowserLanguage(browserLanguages[i]);
+  }
   document.documentElement.dataset.theme = resolvedTheme;
   document.documentElement.dataset.themePreference = themePreference;
   document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
-  if (['zh-CN', 'en-US'].indexOf(language) >= 0) {
-    document.documentElement.lang = language;
-  }
+  document.documentElement.lang = resolvedLanguage || '${DEFAULT_LANGUAGE}';
 } catch (_) {}
 `;
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+async function getRequestLanguage(): Promise<Language> {
+  const requestHeaders = await headers();
+  return resolveAcceptLanguageHeader(requestHeaders.get('accept-language'));
+}
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const defaultLanguage = await getRequestLanguage();
+
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang={defaultLanguage} suppressHydrationWarning>
       <head>
         <Script
           id="proofhound-preferences"
@@ -42,7 +61,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body>
         <Suspense fallback={null}>
-          <I18nProvider>
+          <I18nProvider defaultLanguage={defaultLanguage}>
             <ProjectContextProvider>
               <RefineProvider>
                 <AppShell>{children}</AppShell>
