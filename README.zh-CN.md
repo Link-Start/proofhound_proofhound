@@ -30,9 +30,9 @@ ProofHound 覆盖提示词版本、数据集回归、实验、自动优化、灰
 
 ## 快速预览
 
-<video src="docs/assets/proofhound-quickstart.mp4" controls muted playsinline width="100%" title="ProofHound 快速开始演示"></video>
+[![ProofHound 快速开始演示](docs/assets/proofhound-quickstart-poster.png)](docs/assets/proofhound-quickstart.mp4?raw=1)
 
-[如果当前 Markdown 环境无法播放视频，请直接打开演示文件。](docs/assets/proofhound-quickstart.mp4)
+[观看快速开始演示。](docs/assets/proofhound-quickstart.mp4?raw=1)
 
 ## 解决了什么问题
 

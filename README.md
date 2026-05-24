@@ -30,9 +30,9 @@ The open-source edition currently focuses on a single-workspace local admin cons
 
 ## Quick Preview
 
-<video src="docs/assets/proofhound-quickstart.mp4" controls muted playsinline width="100%" title="ProofHound quick start demo"></video>
+[![ProofHound quick start demo](docs/assets/proofhound-quickstart-poster.png)](docs/assets/proofhound-quickstart.mp4?raw=1)
 
-[If your Markdown viewer does not play embedded videos, open the demo file directly.](docs/assets/proofhound-quickstart.mp4)
+[Watch the quick start demo.](docs/assets/proofhound-quickstart.mp4?raw=1)
 
 ## What It Solves
 
