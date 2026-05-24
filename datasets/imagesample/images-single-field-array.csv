@@ -1,0 +1,3 @@
+sample_id,image_urls,ocr_text,expected_output,source
+multi-single-001,"[""https://upload.wikimedia.org/wikipedia/commons/8/86/Polish_supermarket_receipt.jpg"",""https://upload.wikimedia.org/wikipedia/commons/9/9d/3375_coupon_by_Carrefour_until_2012-12-31.jpg""]",One supermarket receipt and one Carrefour coupon. Judge the document set by the primary commercial document type.,receipt_plus_coupon,wikimedia_commons
+multi-single-002,"[""https://upload.wikimedia.org/wikipedia/commons/4/49/Invoice1633.jpg"",""https://upload.wikimedia.org/wikipedia/commons/8/86/Polish_supermarket_receipt.jpg""]",One invoice and one supermarket receipt. Determine whether the pair includes a formal invoice.,invoice_plus_receipt,wikimedia_commons

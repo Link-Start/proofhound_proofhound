@@ -1,0 +1,21 @@
+// 详见 docs/specs/05-logging.md §6 — secret / token / api_key / authorization 全脱敏
+export const REDACT_PATHS = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'headers.authorization',
+  'headers.cookie',
+  'password',
+  'api_key',
+  'apiKey',
+  'token',
+  'secret',
+  'authorization',
+  '*.password',
+  '*.api_key',
+  '*.apiKey',
+  '*.token',
+  '*.secret',
+  '*.authorization',
+  '**.openai_api_key',
+  '**.anthropic_api_key',
+];

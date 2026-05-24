@@ -1,0 +1,269 @@
+// 单元测试 ExperimentWorkflowRegistrar.runImpl 的 finalize 决策:
+//   - 全部样本失败 → finalize('failed', 'all_samples_failed')
+//   - 部分失败  → finalize('success')
+//   - 全部成功  → finalize('success')
+//   - control_state=stop / cancel → 按对应终态收尾
+//
+// mock @dbos-inc/dbos-sdk:registerStep/registerWorkflow 退化为 identity,sleepSeconds noop,
+// 这样 runImpl 内的 this.xxxStep(...) 就是直接调对应私有 impl;再用 vi.spyOn 替换私有 impl
+// 注入预设返回值,从而隔离 db / bullmq / runResults 依赖。
+
+vi.mock('@dbos-inc/dbos-sdk', () => ({
+  DBOS: {
+    registerStep: (fn: unknown) => fn,
+    registerWorkflow: (fn: unknown) => fn,
+    sleepSeconds: vi.fn(async () => undefined),
+    get workflowID() {
+      return undefined;
+    },
+  },
+  ConfiguredInstance: class {},
+}));
+
+import {
+  ExperimentWorkflowRegistrar,
+  pickLimits,
+  pickRetry,
+  readExpectedField,
+  type ExperimentPlan,
+} from '../experiment.workflow';
+import { describe, expect, it, vi } from 'vitest';
+
+const PLAN: ExperimentPlan = {
+  experimentId: 'exp-1',
+  projectId: 'prj-1',
+  promptId: 'p-1',
+  promptVersionId: 'pv-1',
+  datasetId: 'ds-1',
+  modelId: 'm-1',
+  totalSamples: 2,
+  batchSize: 1,
+  isFrozen: true,
+  promptVersionExists: true,
+};
+
+function buildRegistrar() {
+  const db = {} as never;
+  const bullmq = {} as never;
+  const runResults = {} as never;
+  const registrar = new ExperimentWorkflowRegistrar(db, bullmq, runResults);
+
+  const finalize = vi.fn().mockResolvedValue(undefined);
+  const markStarted = vi.fn().mockResolvedValue(undefined);
+  const clearResume = vi.fn().mockResolvedValue(undefined);
+  const aggregate = vi.fn().mockResolvedValue(undefined);
+
+  (registrar as unknown as Record<string, unknown>)['finalizeStep'] = finalize;
+  (registrar as unknown as Record<string, unknown>)['markStartedStep'] = markStarted;
+  (registrar as unknown as Record<string, unknown>)['clearResumeStep'] = clearResume;
+  (registrar as unknown as Record<string, unknown>)['aggregateMetricsStep'] = aggregate;
+
+  return { registrar, finalize, markStarted, aggregate };
+}
+
+describe('ExperimentWorkflow.runImpl — finalize 决策', () => {
+  it('全部样本失败 → finalize(failed, all_samples_failed)', async () => {
+    const { registrar, finalize } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 1 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
+    r['loadSampleIdBatchStep'] = vi
+      .fn()
+      .mockResolvedValueOnce(['s1'])
+      .mockResolvedValueOnce(['s2'])
+      .mockResolvedValue([]);
+    r['enqueueBatchStep'] = vi.fn().mockResolvedValueOnce(['rr1']).mockResolvedValueOnce(['rr2']);
+    r['pollUntilBatchDoneStep'] = vi
+      .fn()
+      .mockResolvedValueOnce({ terminalCount: 1, failedCount: 1 })
+      .mockResolvedValueOnce({ terminalCount: 1, failedCount: 1 });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'failed', 'all_samples_failed');
+  });
+
+  it('部分失败 → finalize(success)', async () => {
+    const { registrar, finalize } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 1 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
+    r['loadSampleIdBatchStep'] = vi
+      .fn()
+      .mockResolvedValueOnce(['s1'])
+      .mockResolvedValueOnce(['s2'])
+      .mockResolvedValue([]);
+    r['enqueueBatchStep'] = vi.fn().mockResolvedValueOnce(['rr1']).mockResolvedValueOnce(['rr2']);
+    r['pollUntilBatchDoneStep'] = vi
+      .fn()
+      .mockResolvedValueOnce({ terminalCount: 1, failedCount: 0 })
+      .mockResolvedValueOnce({ terminalCount: 1, failedCount: 1 });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'success');
+  });
+
+  it('全部成功 → finalize(success)', async () => {
+    const { registrar, finalize } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 2 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
+    r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1', 's2']);
+    r['enqueueBatchStep'] = vi.fn().mockResolvedValueOnce(['rr1', 'rr2']);
+    r['pollUntilBatchDoneStep'] = vi.fn().mockResolvedValueOnce({ terminalCount: 2, failedCount: 0 });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'success');
+  });
+
+  it('control_state=stop → finalize(stopped) 不再 enqueue 下一 batch', async () => {
+    const { registrar, finalize } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 1 });
+    r['readControlStateStep'] = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('stop');
+    r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);
+    const enqueue = vi.fn().mockResolvedValueOnce(['rr1']);
+    r['enqueueBatchStep'] = enqueue;
+    r['pollUntilBatchDoneStep'] = vi.fn().mockResolvedValueOnce({ terminalCount: 1, failedCount: 0 });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(enqueue).toHaveBeenCalledTimes(1); // 第一 batch 入队后第二 batch 被 stop 拦住
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'stopped');
+  });
+
+  it('control_state=cancel → finalize(cancelled)', async () => {
+    const { registrar, finalize } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 1 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValueOnce('cancel');
+    r['loadSampleIdBatchStep'] = vi.fn();
+    r['enqueueBatchStep'] = vi.fn();
+    r['pollUntilBatchDoneStep'] = vi.fn();
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'cancelled');
+  });
+
+  it('poll 内返回 control=stop → finalize(stopped) 不再 enqueue 下一 batch', async () => {
+    const { registrar, finalize } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 1 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
+    r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);
+    const enqueue = vi.fn().mockResolvedValueOnce(['rr1']);
+    r['enqueueBatchStep'] = enqueue;
+    r['pollUntilBatchDoneStep'] = vi
+      .fn()
+      .mockResolvedValueOnce({ terminalCount: 0, failedCount: 0, control: 'stop' });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'stopped');
+  });
+
+  it('poll 内返回 control=cancel → finalize(cancelled)', async () => {
+    const { registrar, finalize } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 1 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
+    r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);
+    r['enqueueBatchStep'] = vi.fn().mockResolvedValueOnce(['rr1']);
+    r['pollUntilBatchDoneStep'] = vi
+      .fn()
+      .mockResolvedValueOnce({ terminalCount: 1, failedCount: 0, control: 'cancel' });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'cancelled');
+  });
+
+  it('prompt_version 未冻结 → finalize(failed, prompt_version_not_frozen)', async () => {
+    const { registrar, finalize, markStarted } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, isFrozen: false });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(markStarted).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'failed', 'prompt_version_not_frozen');
+  });
+
+  it('enqueueBatch 抛错 → finalize(failed, error.message)', async () => {
+    const { registrar, finalize, aggregate } = buildRegistrar();
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 1, batchSize: 1 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
+    r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);
+    r['enqueueBatchStep'] = vi.fn().mockRejectedValueOnce(new Error('payload_project_id_invalid'));
+    r['pollUntilBatchDoneStep'] = vi.fn();
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(aggregate).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith('exp-1', 'failed', 'payload_project_id_invalid');
+  });
+});
+
+describe('readExpectedField', () => {
+  it('reads prompt-editor rules array value as expected field', () => {
+    expect(
+      readExpectedField({
+        rules: [{ field: 'sentiment', operator: 'exact_match', value: 'gold_label' }],
+      }),
+    ).toBe('gold_label');
+  });
+});
+
+describe('pickLimits — 实验级限流取值', () => {
+  it('完整 3 字段 → 完整对象', () => {
+    expect(pickLimits({ rpmLimit: 10, tpmLimit: 5000, concurrency: 2 })).toEqual({
+      rpmLimit: 10,
+      tpmLimit: 5000,
+      concurrency: 2,
+    });
+  });
+
+  it('只填部分字段 → 缺省项不出现', () => {
+    expect(pickLimits({ rpmLimit: 10 })).toEqual({ rpmLimit: 10 });
+    expect(pickLimits({ tpmLimit: 5000, concurrency: 3 })).toEqual({
+      tpmLimit: 5000,
+      concurrency: 3,
+    });
+  });
+
+  it('空 runConfig / 全部非法值 → undefined', () => {
+    expect(pickLimits({})).toBeUndefined();
+    expect(pickLimits({ rpmLimit: 0, tpmLimit: -1, concurrency: '5' })).toBeUndefined();
+  });
+
+  it('非数字类型 → 忽略该字段', () => {
+    expect(pickLimits({ rpmLimit: '10', tpmLimit: 5000 })).toEqual({ tpmLimit: 5000 });
+  });
+});
+
+describe('pickRetry — retries → maxRetries 命名转换', () => {
+  it('正整数 → { maxRetries }', () => {
+    expect(pickRetry({ retries: 3 })).toEqual({ maxRetries: 3 });
+  });
+
+  it('0 → { maxRetries: 0 }', () => {
+    expect(pickRetry({ retries: 0 })).toEqual({ maxRetries: 0 });
+  });
+
+  it('缺省 / 非数字 / 负数 → undefined', () => {
+    expect(pickRetry({})).toBeUndefined();
+    expect(pickRetry({ retries: '3' })).toBeUndefined();
+    expect(pickRetry({ retries: -1 })).toBeUndefined();
+  });
+});

@@ -1,0 +1,4 @@
+sample_id,image_url,ocr_text,expected_output,source
+receipt-mini-001,https://upload.wikimedia.org/wikipedia/commons/8/86/Polish_supermarket_receipt.jpg,BIEDRONKA Wrocław · Chleb pszenny 3.49 PLN · Ser żółty 12.99 PLN · Szynka 18.50 PLN · RAZEM 34.98 PLN · 09.01.2020 14:23 · NIP 8990017293,receipt,wikimedia_commons
+receipt-mini-002,https://upload.wikimedia.org/wikipedia/commons/9/9d/3375_coupon_by_Carrefour_until_2012-12-31.jpg,家樂福 Carrefour · 折價券 編號 3375 · 滿 NT$1000 折 NT$100 · 有效期至 2012/12/31 · 限門市使用 · 不得兌換現金,coupon,wikimedia_commons
+receipt-mini-003,https://upload.wikimedia.org/wikipedia/commons/4/49/Invoice1633.jpg,"INVOICE No. 1633 · Bill To: Acme Corp. · Date: 2019-07-10 · Description: Consulting Services 40h · Subtotal $4,800.00 · Tax 8% $384.00 · TOTAL $5,184.00 · Terms: Net 30",invoice,wikimedia_commons

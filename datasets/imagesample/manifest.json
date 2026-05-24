@@ -1,0 +1,215 @@
+{
+  "name": "images-mini",
+  "description": "ProofHound dev seed image dataset for receipt / coupon / invoice classification with image URLs and OCR text.",
+  "source": {
+    "fixture": "packages/db/src/fixtures/dev/experiments.ts",
+    "constant": "RECEIPT_CLASSIFICATION_SAMPLES",
+    "seed_dataset_name": "images-mini"
+  },
+  "format": "jsonl",
+  "file": "images-mini.jsonl",
+  "encoding": "utf-8",
+  "sample_count": 3,
+  "labels": {
+    "receipt": 1,
+    "coupon": 1,
+    "invoice": 1
+  },
+  "recommended_upload_mapping": [
+    {
+      "name": "sample_id",
+      "upload_role": "id",
+      "schema_role": "metadata",
+      "type": "string",
+      "note": "Stable sample id. Selecting ID in the upload UI also stores it as the sample externalId."
+    },
+    {
+      "name": "image_url",
+      "upload_role": "image",
+      "schema_role": "image_url",
+      "type": "string",
+      "note": "HTTP(S) image URL. The backend infers image_url from the value prefix."
+    },
+    {
+      "name": "ocr_text",
+      "upload_role": "text",
+      "schema_role": "text",
+      "type": "string",
+      "note": "Suggested template variable: {{ocr_text}}."
+    },
+    {
+      "name": "expected_output",
+      "upload_role": "expected",
+      "schema_role": "expected_output",
+      "type": "string",
+      "note": "Classification target: receipt / coupon / invoice."
+    },
+    {
+      "name": "source",
+      "upload_role": "metadata",
+      "schema_role": "metadata",
+      "type": "string",
+      "note": "Original sample source."
+    }
+  ],
+  "files": [
+    {
+      "file": "images-mini.jsonl",
+      "format": "jsonl",
+      "encoding": "utf-8",
+      "size_bytes": 1062,
+      "sha256": "d1c726c66d66edecf8c4f67abed0903372b00f22a6233f5276ef2086536ee1ed"
+    },
+    {
+      "file": "images-mini.json",
+      "format": "json_array",
+      "encoding": "utf-8",
+      "size_bytes": 1173,
+      "sha256": "eabdb9a0f3111bdac6598a1564a4a740c392f88b1d8ec1724cea5d64cb0c7496"
+    },
+    {
+      "file": "images-mini.csv",
+      "format": "csv",
+      "encoding": "utf-8",
+      "size_bytes": 894,
+      "sha256": "883b428b70715c2207150adb9f7370ed69c6a2683855d78f7b34749fee08b729"
+    },
+    {
+      "file": "images-mini.tsv",
+      "format": "tsv",
+      "encoding": "utf-8",
+      "size_bytes": 892,
+      "sha256": "55e691c9f18ba080615ecbadc7635e419f67f377af0f80fa8406bc7c2b19f70d"
+    },
+    {
+      "file": "images-single-field-array.jsonl",
+      "format": "jsonl",
+      "encoding": "utf-8",
+      "size_bytes": 810,
+      "sha256": "d41efc8c42bfbc2accf236e613b07ce4bc89240ca4b3cbf962eb0d30c53c91f4"
+    },
+    {
+      "file": "images-single-field-array.json",
+      "format": "json_array",
+      "encoding": "utf-8",
+      "size_bytes": 923,
+      "sha256": "c68a6d238f305da7a89a0b4f46722eac382bd00a7aa6c2802c3af51f343c301a"
+    },
+    {
+      "file": "images-single-field-array.csv",
+      "format": "csv",
+      "encoding": "utf-8",
+      "size_bytes": 729,
+      "sha256": "739e63638c1203c2d7de1185dba535de9d695428f5fa8acd54db1ebf04e30e74"
+    },
+    {
+      "file": "images-single-field-array.tsv",
+      "format": "tsv",
+      "encoding": "utf-8",
+      "size_bytes": 717,
+      "sha256": "3c2b2f22ca45022e33ae6c25378bcc620e97c8ebc0904a5033326658f1fa4707"
+    },
+    {
+      "file": "images-multi-field.jsonl",
+      "format": "jsonl",
+      "encoding": "utf-8",
+      "size_bytes": 765,
+      "sha256": "a5f7039bdd699f6958cbaca27b2b5ab67584485118eef799f0ecd3a3e601ac12"
+    },
+    {
+      "file": "images-multi-field.json",
+      "format": "json_array",
+      "encoding": "utf-8",
+      "size_bytes": 852,
+      "sha256": "e7f6c46e47b06702afe8b9c4e6a894b0d9bdb9e665603c3f4e3cbb44df09e16a"
+    },
+    {
+      "file": "images-multi-field.csv",
+      "format": "csv",
+      "encoding": "utf-8",
+      "size_bytes": 640,
+      "sha256": "2be278571d8a9deb6b6574b630a7a0e0a5a0aebb0be261b21626cba203822c26"
+    },
+    {
+      "file": "images-multi-field.tsv",
+      "format": "tsv",
+      "encoding": "utf-8",
+      "size_bytes": 640,
+      "sha256": "37aca1637a4ebdd22ebf8db9203cbf2b7423ba1a8a1fd9cecb4a1815e0cbf100"
+    },
+    {
+      "file": "images-zip-single-image.zip",
+      "format": "zip",
+      "encoding": "binary",
+      "size_bytes": 648,
+      "sha256": "87912861a9380bd6056c573d6baed46fd123d298b0ca381f2babb9a429a19208"
+    },
+    {
+      "file": "images-zip-single-field-array.zip",
+      "format": "zip",
+      "encoding": "binary",
+      "size_bytes": 909,
+      "sha256": "e85a4c34a04af62856daa6d127eb196e7d3089ee7352cc574aaf2db144674b17"
+    },
+    {
+      "file": "images-zip-multi-field.zip",
+      "format": "zip",
+      "encoding": "binary",
+      "size_bytes": 879,
+      "sha256": "d227cce643e4f4e5f967fe9e538ffcfde6fc2150374ad38fa3b8dc0cca041add"
+    }
+  ],
+  "current_v1_upload_formats": ["csv", "tsv", "jsonl", "json_array", "zip"],
+  "image_value_forms": {
+    "currently_sampled": ["image_url", "image_url_array", "zip_local_image_path", "zip_local_image_path_array"],
+    "supported_by_backend_inference": ["image_url", "image_base64", "image"]
+  },
+  "example_groups": [
+    {
+      "name": "images-mini",
+      "shape": "single_image_field",
+      "description": "Seed-equivalent 3-row image URL dataset from the dev fixture.",
+      "files": ["images-mini.csv", "images-mini.tsv", "images-mini.jsonl", "images-mini.json"]
+    },
+    {
+      "name": "images-single-field-array",
+      "shape": "single_field_multi_images",
+      "description": "One image field stores a JSON array of image URLs. CSV/TSV cells keep the JSON array intact.",
+      "files": [
+        "images-single-field-array.csv",
+        "images-single-field-array.tsv",
+        "images-single-field-array.jsonl",
+        "images-single-field-array.json"
+      ]
+    },
+    {
+      "name": "images-multi-field",
+      "shape": "multi_field_multi_images",
+      "description": "Each image is stored in a separate image field.",
+      "files": [
+        "images-multi-field.csv",
+        "images-multi-field.tsv",
+        "images-multi-field.jsonl",
+        "images-multi-field.json"
+      ]
+    },
+    {
+      "name": "images-zip-single-image",
+      "shape": "zip_single_image_field",
+      "description": "ZIP with CSV metadata and one local image path that is inlined as a data URL during upload.",
+      "files": ["images-zip-single-image.zip"]
+    },
+    {
+      "name": "images-zip-single-field-array",
+      "shape": "zip_single_field_multi_images",
+      "description": "ZIP with JSONL metadata and one image field containing an array of local image paths.",
+      "files": ["images-zip-single-field-array.zip"]
+    },
+    {
+      "name": "images-zip-multi-field",
+      "shape": "zip_multi_field_multi_images",
+      "description": "ZIP with CSV metadata and two separate local image path fields.",
+      "files": ["images-zip-multi-field.zip"]
+    }
+  ]
+}

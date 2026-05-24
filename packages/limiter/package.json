@@ -1,0 +1,29 @@
+{
+  "name": "@proofhound/limiter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Redis 集中限流（RPM / TPM 滑动窗口 + Lua 原子脚本）— RPM / TPM / 并发",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run --dir src --exclude \"**/*.integration.test.ts\"",
+    "test:unit": "vitest run --dir src --exclude \"**/*.integration.test.ts\"",
+    "test:integration": "vitest run --dir src integration.test",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@proofhound/logger": "workspace:*",
+    "ioredis": "^5.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "name": "Yelp Polarity random 50",
+  "description": "Uniform random 50-row subset sampled without replacement from the local Yelp Polarity full JSONL export.",
+  "source": {
+    "dataset": "Yelp Review Polarity",
+    "huggingface_dataset": "fancyzhx/yelp_polarity",
+    "huggingface_url": "https://huggingface.co/datasets/fancyzhx/yelp_polarity",
+    "huggingface_commit": "bbf1c97a1f0cf005e5aded43839fd814654a1557",
+    "raw_archive_url": "https://s3.amazonaws.com/fast-ai-nlp/yelp_review_polarity_csv.tgz",
+    "raw_archive_sha256": "528f22e286cad085948acbc3bea7e58188416546b0e364d0ae4ca0ce666abe35",
+    "full_file": "../../yelp_polarity.jsonl",
+    "full_sha256": "3442bb1c5a194359d1ae365bbf12fba2e67231b3c05ae102a3520fd374eb7401"
+  },
+  "format": "jsonl",
+  "file": "yelp-polarity-random-50.jsonl",
+  "encoding": "utf-8",
+  "sample_count": 50,
+  "sampling": {
+    "method": "uniform_without_replacement",
+    "source_sample_count": 598000,
+    "sample_size": 50,
+    "seed": 20260521,
+    "source_line_numbers_1_based": [
+      20021,
+      35533,
+      64003,
+      67139,
+      69523,
+      125574,
+      148705,
+      154575,
+      180152,
+      205430,
+      249194,
+      264788,
+      266198,
+      266511,
+      269011,
+      277881,
+      286005,
+      292897,
+      297780,
+      324325,
+      327036,
+      340884,
+      350960,
+      371664,
+      372241,
+      390860,
+      396098,
+      425677,
+      442469,
+      458090,
+      464485,
+      474881,
+      475739,
+      482805,
+      483503,
+      485028,
+      487117,
+      487893,
+      496790,
+      518450,
+      530924,
+      531218,
+      532560,
+      533525,
+      539707,
+      540631,
+      550737,
+      555456,
+      576384,
+      577434
+    ]
+  },
+  "splits": {
+    "train": 48,
+    "test": 2
+  },
+  "labels": {
+    "positive": 22,
+    "negative": 28
+  },
+  "files": {
+    "yelp-polarity-random-50.csv": {
+      "format": "csv",
+      "sha256": "e76c8b17569663e3861a2dfa753ebcce2a364890bce172f82efcfcb250aa36e1"
+    },
+    "yelp-polarity-random-50.tsv": {
+      "format": "tsv",
+      "sha256": "31bf6709d2a36ac7c788303f0253170c11e4e31eee4f668f4aa2f6906066ad01"
+    },
+    "yelp-polarity-random-50.jsonl": {
+      "format": "jsonl",
+      "sha256": "9b5d545de6814738d89d50a050e3979eb26421c8c755a89a94c7934203ff470f"
+    },
+    "yelp-polarity-random-50.json": {
+      "format": "json_array",
+      "sha256": "33a4812aa7cff9cbdd10aeea932aaa3d14da07b0ce4e81dc3579588d777ffb6d"
+    }
+  },
+  "recommended_field_mapping": [
+    {
+      "name": "text",
+      "role": "text",
+      "type": "string",
+      "note": "提示词变量，建议模板中使用 {{text}}"
+    },
+    {
+      "name": "expected_output",
+      "role": "expected_output",
+      "type": "string",
+      "note": "实验判定用期望输出：negative / positive"
+    },
+    {
+      "name": "sample_id",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "label",
+      "role": "metadata",
+      "type": "number",
+      "note": "HF 数值标签：0=negative, 1=positive"
+    },
+    {
+      "name": "label_name",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "sentiment_zh",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "original_class_index",
+      "role": "metadata",
+      "type": "number",
+      "note": "原始 CSV 类别：1=negative, 2=positive"
+    },
+    {
+      "name": "split",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "source_dataset",
+      "role": "metadata",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+import 'reflect-metadata';
+import { resolve } from 'node:path';
+import { NestFactory } from '@nestjs/core';
+import { createLogger } from '@proofhound/logger';
+import { envSchema } from './config/env.schema';
+import { WorkerModule } from './worker.module';
+
+function loadRootEnv(): void {
+  try {
+    process.loadEnvFile(resolve(process.cwd(), '../../.env'));
+  } catch {
+    // 在 CI / 容器部署里没有 .env 是正常的。
+  }
+}
+
+async function bootstrap(): Promise<void> {
+  loadRootEnv();
+
+  const env = envSchema.parse(process.env);
+  const logger = createLogger('worker.bootstrap', { service: 'worker', level: env.LOG_LEVEL });
+
+  const app = await NestFactory.createApplicationContext(WorkerModule, { abortOnError: true });
+  app.enableShutdownHooks();
+
+  const queues = env.WORKER_QUEUES.split(',')
+    .map((q) => q.trim())
+    .filter(Boolean);
+  logger.info({ queues, concurrency: env.WORKER_CONCURRENCY }, 'worker_started');
+}
+
+bootstrap().catch((error: unknown) => {
+  const logger = createLogger('worker.bootstrap', { service: 'worker' });
+  logger.error({ error }, 'worker_failed_to_start');
+  process.exit(1);
+});

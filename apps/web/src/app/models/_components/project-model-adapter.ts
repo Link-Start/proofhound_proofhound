@@ -1,0 +1,73 @@
+import type { ProjectModelListItemDto } from '@proofhound/shared';
+import type { ImageCapability, ModelStatus, ProbeStatus, ProjectModel } from './model-view-model';
+
+export function formatLargeNumber(value: number): string {
+  if (value >= 1_000_000) {
+    const m = value / 1_000_000;
+    return `${m >= 10 ? m.toFixed(1) : m.toFixed(2)} M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toLocaleString('en-US', { maximumFractionDigits: 1 })} k`;
+  }
+  return String(value);
+}
+
+export function formatProjectModelDateTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function formatJsonInput(value: Record<string, unknown> | undefined): string {
+  const entries = Object.keys(value ?? {});
+  return entries.length > 0 ? JSON.stringify(value, null, 2) : '';
+}
+
+export function dtoToProjectModel(dto: ProjectModelListItemDto): ProjectModel {
+  return {
+    id: dto.id,
+    name: dto.name,
+    provider: dto.providerType,
+    providerModelId: dto.providerModelId,
+    endpoint: dto.endpoint,
+    source: 'local',
+    status: dto.status as ModelStatus,
+    probeStatus: dto.probeStatus as ProbeStatus,
+    lastProbedAt: formatProjectModelDateTime(dto.lastProbedAt),
+    lastProbeError: dto.lastProbeError,
+    owner: dto.createdByDisplayName ?? undefined,
+    apiKey: '',
+    credentialTail: dto.credentialTail,
+    contextWindow: dto.contextWindowTokens != null ? formatLargeNumber(dto.contextWindowTokens) : '',
+    contextWindowInput: dto.contextWindowTokens != null ? String(dto.contextWindowTokens) : '',
+    extraBodyInput: formatJsonInput(dto.extraBody),
+    rpm: {
+      limit: formatLargeNumber(dto.rpm.limit),
+      limitInput: String(dto.rpm.limit),
+      usage: dto.rpm.usage,
+      current: formatLargeNumber(dto.rpm.current),
+    },
+    tpm: {
+      limit: formatLargeNumber(dto.tpm.limit),
+      limitInput: String(dto.tpm.limit),
+      usage: dto.tpm.usage,
+      current: formatLargeNumber(dto.tpm.current),
+    },
+    concurrency: {
+      limit: String(dto.concurrency.limit),
+      limitInput: String(dto.concurrency.limit),
+      usage: dto.concurrency.usage,
+      current: String(dto.concurrency.current),
+    },
+    pricing: {
+      inputPerMillion: dto.pricing.inputPerMillion.toFixed(2),
+      outputPerMillion: dto.pricing.outputPerMillion.toFixed(2),
+    },
+    imageCapability: dto.capabilities.image as ImageCapability,
+    references: dto.references,
+    readonly: false,
+    lastUpdated: formatProjectModelDateTime(dto.updatedAt),
+  };
+}

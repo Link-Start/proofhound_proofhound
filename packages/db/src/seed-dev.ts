@@ -1,0 +1,670 @@
+/**
+ * Dev seed: 写入当前开发环境的本地数据快照。
+ *
+ * 开源 self-hosted 版本创建单个本地项目作为数据边界，不创建成员、角色、平台连接器或组织治理数据。
+ */
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
+import { encryptApiKey } from '@proofhound/crypto';
+import { LOCAL_PROJECT_ID } from '@proofhound/shared';
+import { and, eq, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
+import { createDbClient } from './client';
+import {
+  apiTokens,
+  connectors,
+  datasetSamples,
+  datasets,
+  experiments,
+  models,
+  optimizationRoundSteps,
+  optimizations,
+  promptVersionLabels,
+  prompts,
+  promptVersions,
+  projects,
+  runResults,
+} from './schema';
+import { DEV_API_TOKENS } from './fixtures/dev/api-tokens';
+import { DEV_CONNECTORS } from './fixtures/dev/connectors';
+import { DEV_EXPERIMENTS, DEV_EXPERIMENT_DATASETS } from './fixtures/dev/experiments';
+import { DEV_MODELS } from './fixtures/dev/models';
+import { DEV_OPTIMIZATIONS, DEV_OPTIMIZATION_ROUND_STEPS } from './fixtures/dev/optimizations';
+import { DEV_PROMPTS } from './fixtures/dev/prompts';
+
+const PRODUCTION_ENV_NAMES = new Set(['prod', 'production']);
+const DEV_MODEL_API_KEY_PLACEHOLDER = 'dev-seed-placeholder-api-key';
+const DEFAULT_MODEL_PROBE_API_KEY_ENV = 'MODEL_PROBE_API_KEY';
+const LOCAL_ACTOR_ID = '00000000-0000-4000-8000-000000000001';
+
+function getCurrentEnvironment(): string {
+  return (process.env['APP_ENV'] ?? process.env['NODE_ENV'] ?? 'development').toLowerCase();
+}
+
+function getConnectorShape(kind: string): { direction: 'input' | 'output'; type: 'redis' | 'kafka' | 'webhook' } {
+  if (kind === 'webhook-input') return { direction: 'input', type: 'webhook' };
+  return {
+    direction: kind.endsWith('-input') ? 'input' : 'output',
+    type: kind.startsWith('redis-') ? 'redis' : 'kafka',
+  };
+}
+
+async function setPromptVersionsFreezeGuard(
+  executor: { execute(query: SQL): Promise<unknown> },
+  mode: 'disable' | 'enable',
+): Promise<void> {
+  await executor.execute(
+    mode === 'disable'
+      ? sql`
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1
+              FROM pg_trigger
+              WHERE tgrelid = 'ph_assets.prompt_versions'::regclass
+                AND tgname = 'prompt_versions_freeze_guard'
+                AND NOT tgisinternal
+            ) THEN
+              EXECUTE 'ALTER TABLE ph_assets.prompt_versions DISABLE TRIGGER prompt_versions_freeze_guard';
+            END IF;
+          END $$;
+        `
+      : sql`
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1
+              FROM pg_trigger
+              WHERE tgrelid = 'ph_assets.prompt_versions'::regclass
+                AND tgname = 'prompt_versions_freeze_guard'
+                AND NOT tgisinternal
+            ) THEN
+              EXECUTE 'ALTER TABLE ph_assets.prompt_versions ENABLE TRIGGER prompt_versions_freeze_guard';
+            END IF;
+          END $$;
+        `,
+  );
+}
+
+async function main(): Promise<void> {
+  try {
+    process.loadEnvFile(resolve(process.cwd(), '../../.env'));
+  } catch {
+    // OK in CI.
+  }
+
+  if (process.env['SEED_PROFILE'] !== 'dev' && process.env['ALLOW_DEV_SEED'] !== 'true') {
+    console.error('❌  Dev seed 需要显式开启：SEED_PROFILE=dev pnpm db:seed:dev');
+    process.exit(1);
+  }
+
+  const currentEnvironment = getCurrentEnvironment();
+  if (process.env['ALLOW_DEV_SEED'] !== 'true' && PRODUCTION_ENV_NAMES.has(currentEnvironment)) {
+    console.error(`❌  Dev seed 拒绝写入 ${currentEnvironment} 环境`);
+    console.error('    如确需写入，请显式设置 ALLOW_DEV_SEED=true');
+    process.exit(1);
+  }
+
+  const databaseUrl = process.env['DATABASE_URL'];
+  if (!databaseUrl) {
+    console.error('❌  DATABASE_URL 必须配置');
+    process.exit(1);
+  }
+
+  const modelApiKeyEncryptionKey = process.env['MODEL_API_KEY_ENCRYPTION_KEY'];
+  const db = createDbClient(databaseUrl);
+
+  console.warn(`\n🌱  使用本地 actor 写入 ${currentEnvironment} 环境 dev 数据快照`);
+
+  await db
+    .insert(projects)
+    .values({
+      id: LOCAL_PROJECT_ID,
+      name: '本地项目',
+      description: 'Self-hosted 单项目数据边界',
+      type: 'classification',
+      status: 'active',
+      createdBy: LOCAL_ACTOR_ID,
+    })
+    .onConflictDoUpdate({
+      target: projects.id,
+      set: {
+        name: '本地项目',
+        description: 'Self-hosted 单项目数据边界',
+        type: 'classification',
+        status: 'active',
+        archivedAt: null,
+        deletedAt: null,
+        updatedAt: new Date(),
+      },
+    });
+
+  const fixtureDatasetIds = DEV_EXPERIMENT_DATASETS.map((d) => d.id);
+  const fixtureModelIds = DEV_MODELS.map((m) => m.id);
+  const fixturePromptIds = DEV_PROMPTS.map((p) => p.id);
+  const fixtureExperimentIds = DEV_EXPERIMENTS.map((e) => e.id);
+  const fixtureOptimizationIds = DEV_OPTIMIZATIONS.map((a) => a.id);
+  const fixtureConnectorIds = DEV_CONNECTORS.map((c) => c.id);
+
+  await db.delete(runResults);
+  await db.delete(optimizationRoundSteps);
+  await db
+    .update(optimizations)
+    .set({ sourceExperimentId: null, updatedAt: new Date() })
+    .where(notInArray(optimizations.id, fixtureOptimizationIds));
+  await db
+    .update(experiments)
+    .set({ optimizationId: null, roundIndex: null, updatedAt: new Date() })
+    .where(sql`${experiments.optimizationId} IS NOT NULL`);
+  await db.delete(experiments).where(notInArray(experiments.id, fixtureExperimentIds));
+  await db.delete(optimizations).where(notInArray(optimizations.id, fixtureOptimizationIds));
+
+  await db.transaction(async (tx) => {
+    await setPromptVersionsFreezeGuard(tx, 'disable');
+    await tx.delete(promptVersionLabels);
+    await tx.delete(promptVersions).where(notInArray(promptVersions.promptId, fixturePromptIds));
+    await tx.delete(prompts).where(notInArray(prompts.id, fixturePromptIds));
+    await setPromptVersionsFreezeGuard(tx, 'enable');
+  });
+
+  await db.delete(datasetSamples).where(notInArray(datasetSamples.datasetId, fixtureDatasetIds));
+  await db.delete(datasets).where(notInArray(datasets.id, fixtureDatasetIds));
+  await db.delete(connectors).where(notInArray(connectors.id, fixtureConnectorIds));
+  await db.delete(models).where(notInArray(models.id, fixtureModelIds));
+
+  let seededDevModels = false;
+
+  if (!modelApiKeyEncryptionKey) {
+    const existingDevModels = await db
+      .select({ id: models.id })
+      .from(models)
+      .where(
+        inArray(
+          models.id,
+          DEV_MODELS.map((fixture) => fixture.id),
+        ),
+      );
+
+    if (existingDevModels.length === DEV_MODELS.length) {
+      console.warn('⚠️  MODEL_API_KEY_ENCRYPTION_KEY 未配置，复用已有模型数据');
+      seededDevModels = true;
+    } else {
+      console.warn('⚠️  跳过模型数据：MODEL_API_KEY_ENCRYPTION_KEY 未配置');
+    }
+  } else {
+    const warnedMissingEnvs = new Set<string>();
+
+    for (const fixture of DEV_MODELS) {
+      const envVar = fixture.apiKeyEnvVar ?? DEFAULT_MODEL_PROBE_API_KEY_ENV;
+      const rawApiKey = process.env[envVar]?.trim();
+      const apiKey = rawApiKey && rawApiKey.length > 0 ? rawApiKey : DEV_MODEL_API_KEY_PLACEHOLDER;
+      const apiKeyEncrypted = encryptApiKey(apiKey, modelApiKeyEncryptionKey);
+
+      if (apiKey === DEV_MODEL_API_KEY_PLACEHOLDER && !warnedMissingEnvs.has(envVar)) {
+        console.warn(`⚠️  ${envVar} 未配置，使用占位凭证的模型连通性测试会失败`);
+        warnedMissingEnvs.add(envVar);
+      }
+
+      await db
+        .insert(models)
+        .values({
+          id: fixture.id,
+          projectId: LOCAL_PROJECT_ID,
+          name: fixture.name,
+          providerType: fixture.providerType,
+          providerModelId: fixture.providerModelId,
+          endpoint: fixture.endpoint,
+          apiKeyEncrypted,
+          contextWindowTokens: fixture.contextWindowTokens,
+          rpmLimit: fixture.rpmLimit,
+          tpmLimit: fixture.tpmLimit,
+          concurrencyLimit: fixture.concurrencyLimit,
+          inputTokenPricePerMillion: fixture.inputTokenPricePerMillion,
+          outputTokenPricePerMillion: fixture.outputTokenPricePerMillion,
+          capabilities: fixture.capabilities,
+          extraBody: fixture.extraBody ?? {},
+          isActive: fixture.isActive,
+          lastProbedAt: null,
+          lastProbeError: null,
+          createdBy: LOCAL_ACTOR_ID,
+        })
+        .onConflictDoUpdate({
+          target: models.id,
+          set: {
+            name: fixture.name,
+            projectId: LOCAL_PROJECT_ID,
+            providerType: fixture.providerType,
+            providerModelId: fixture.providerModelId,
+            endpoint: fixture.endpoint,
+            apiKeyEncrypted,
+            contextWindowTokens: fixture.contextWindowTokens,
+            rpmLimit: fixture.rpmLimit,
+            tpmLimit: fixture.tpmLimit,
+            concurrencyLimit: fixture.concurrencyLimit,
+            inputTokenPricePerMillion: fixture.inputTokenPricePerMillion,
+            outputTokenPricePerMillion: fixture.outputTokenPricePerMillion,
+            capabilities: fixture.capabilities,
+            extraBody: fixture.extraBody ?? {},
+            isActive: fixture.isActive,
+            deletedAt: null,
+            updatedAt: new Date(),
+          },
+        });
+    }
+
+    console.warn(`✅  模型数据就绪：${DEV_MODELS.length} 个模型`);
+    seededDevModels = true;
+  }
+
+  for (const fixture of DEV_API_TOKENS) {
+    const tokenHash = createHash('sha256').update(fixture.plaintext).digest('hex');
+    await db
+      .insert(apiTokens)
+      .values({
+        id: fixture.id,
+        scope: 'project_api',
+        projectId: LOCAL_PROJECT_ID,
+        name: fixture.name,
+        tokenHash,
+        prefix: fixture.prefix,
+        ipWhitelist: null,
+        createdBy: LOCAL_ACTOR_ID,
+      })
+      .onConflictDoUpdate({
+        target: apiTokens.id,
+        set: {
+          scope: 'project_api',
+          projectId: LOCAL_PROJECT_ID,
+          name: fixture.name,
+          tokenHash,
+          prefix: fixture.prefix,
+          revokedAt: null,
+        },
+      });
+  }
+  console.warn(`✅  连接器 API Token 数据就绪：${DEV_API_TOKENS.length} 条`);
+
+  for (const fixture of DEV_CONNECTORS) {
+    const shape = getConnectorShape(fixture.kind);
+    await db
+      .insert(connectors)
+      .values({
+        id: fixture.id,
+        projectId: LOCAL_PROJECT_ID,
+        name: fixture.name,
+        description: fixture.description,
+        direction: shape.direction,
+        type: shape.type,
+        config: fixture.config,
+        configEncrypted: null,
+        webhookPath: fixture.kind === 'webhook-input' ? fixture.webhookPath : null,
+        webhookTokenId: fixture.kind === 'webhook-input' ? fixture.tokenId : null,
+        ipWhitelist: null,
+        createdBy: LOCAL_ACTOR_ID,
+      })
+      .onConflictDoUpdate({
+        target: connectors.id,
+        set: {
+          name: fixture.name,
+          projectId: LOCAL_PROJECT_ID,
+          description: fixture.description,
+          direction: shape.direction,
+          type: shape.type,
+          config: fixture.config,
+          configEncrypted: null,
+          webhookPath: fixture.kind === 'webhook-input' ? fixture.webhookPath : null,
+          webhookTokenId: fixture.kind === 'webhook-input' ? fixture.tokenId : null,
+          ipWhitelist: null,
+          deletedAt: null,
+          updatedAt: new Date(),
+        },
+      });
+  }
+  console.warn(`✅  连接器数据就绪：${DEV_CONNECTORS.length} 条`);
+
+  for (const fixture of DEV_EXPERIMENT_DATASETS) {
+    if (fixture.sampleCount !== fixture.samples.length) {
+      console.error(
+        `❌  数据集 ${fixture.name} sampleCount=${fixture.sampleCount} 与实际样本数 ${fixture.samples.length} 不一致`,
+      );
+      process.exit(1);
+    }
+
+    await db
+      .insert(datasets)
+      .values({
+        id: fixture.id,
+        projectId: LOCAL_PROJECT_ID,
+        name: fixture.name,
+        description: fixture.description,
+        sampleCount: fixture.sampleCount,
+        fieldSchema: fixture.fieldSchema,
+        hasImages: fixture.hasImages,
+        storagePrefix: fixture.storagePrefix,
+        createdBy: LOCAL_ACTOR_ID,
+        createdAt: new Date(fixture.createdAt),
+        updatedAt: new Date(fixture.updatedAt),
+      })
+      .onConflictDoUpdate({
+        target: datasets.id,
+        set: {
+          name: fixture.name,
+          projectId: LOCAL_PROJECT_ID,
+          description: fixture.description,
+          sampleCount: fixture.sampleCount,
+          fieldSchema: fixture.fieldSchema,
+          hasImages: fixture.hasImages,
+          storagePrefix: fixture.storagePrefix,
+          deletedAt: null,
+          updatedAt: new Date(fixture.updatedAt),
+        },
+      });
+
+    const fixtureSampleIds = fixture.samples.map((sample) => sample.id);
+    await db
+      .delete(datasetSamples)
+      .where(
+        fixtureSampleIds.length === 0
+          ? eq(datasetSamples.datasetId, fixture.id)
+          : and(eq(datasetSamples.datasetId, fixture.id), notInArray(datasetSamples.id, fixtureSampleIds)),
+      );
+
+    for (const sample of fixture.samples) {
+      await db
+        .insert(datasetSamples)
+        .values({
+          id: sample.id,
+          datasetId: fixture.id,
+          data: sample.data,
+          externalId: sample.externalId,
+          createdAt: new Date(sample.createdAt),
+          updatedAt: new Date(sample.updatedAt),
+        })
+        .onConflictDoUpdate({
+          target: datasetSamples.id,
+          set: {
+            datasetId: fixture.id,
+            data: sample.data,
+            externalId: sample.externalId,
+            updatedAt: new Date(sample.updatedAt),
+          },
+        });
+    }
+  }
+  console.warn(`✅  数据集数据就绪：${DEV_EXPERIMENT_DATASETS.length} 个`);
+
+  await db.transaction(async (tx) => {
+    await setPromptVersionsFreezeGuard(tx, 'disable');
+
+    for (const fixture of DEV_PROMPTS) {
+      await tx
+        .insert(prompts)
+        .values({
+          id: fixture.id,
+          projectId: LOCAL_PROJECT_ID,
+          name: fixture.name,
+          currentOnlineVersionId: fixture.currentOnlineVersionId,
+          defaultDatasetId: fixture.defaultDatasetId ?? null,
+          createdBy: LOCAL_ACTOR_ID,
+          createdAt: new Date(fixture.createdAt),
+          updatedAt: new Date(fixture.updatedAt),
+        })
+        .onConflictDoUpdate({
+          target: prompts.id,
+          set: {
+            name: fixture.name,
+            projectId: LOCAL_PROJECT_ID,
+            currentOnlineVersionId: fixture.currentOnlineVersionId,
+            defaultDatasetId: fixture.defaultDatasetId ?? null,
+            deletedAt: null,
+            updatedAt: new Date(fixture.updatedAt),
+          },
+        });
+
+      for (const version of fixture.versions) {
+        const frozenAt = version.frozenAt ? new Date(version.frozenAt) : null;
+
+        await tx
+          .insert(promptVersions)
+          .values({
+            id: version.id,
+            promptId: fixture.id,
+            versionNumber: version.versionNumber,
+            body: version.body,
+            variables: version.variables,
+            outputSchema: version.outputSchema,
+            judgmentRules: version.judgmentRules,
+            promptLanguage: version.promptLanguage,
+            parentVersionId: version.parentVersionId,
+            generatedByOptimizationId: version.generatedByOptimizationId,
+            changeReason: version.changeReason,
+            isFrozen: version.isFrozen,
+            createdAt: new Date(version.createdAt),
+            frozenAt,
+            createdBy: LOCAL_ACTOR_ID,
+          })
+          .onConflictDoUpdate({
+            target: promptVersions.id,
+            set: {
+              versionNumber: version.versionNumber,
+              body: version.body,
+              variables: version.variables,
+              outputSchema: version.outputSchema,
+              judgmentRules: version.judgmentRules,
+              promptLanguage: version.promptLanguage,
+              parentVersionId: version.parentVersionId,
+              generatedByOptimizationId: version.generatedByOptimizationId,
+              changeReason: version.changeReason,
+              isFrozen: version.isFrozen,
+              createdAt: new Date(version.createdAt),
+              frozenAt,
+            },
+          });
+      }
+
+      const fixtureVersionIds = fixture.versions.map((version) => version.id);
+      await tx
+        .delete(promptVersions)
+        .where(
+          fixtureVersionIds.length === 0
+            ? eq(promptVersions.promptId, fixture.id)
+            : and(eq(promptVersions.promptId, fixture.id), notInArray(promptVersions.id, fixtureVersionIds)),
+        );
+    }
+
+    await setPromptVersionsFreezeGuard(tx, 'enable');
+  });
+  console.warn(`✅  提示词数据就绪：${DEV_PROMPTS.length} 个`);
+
+  if (!seededDevModels) {
+    console.warn('⚠️  跳过实验 / 优化数据：实验需要先写入模型数据');
+    process.exit(0);
+  }
+
+  async function upsertExperiment(fixture: (typeof DEV_EXPERIMENTS)[number]): Promise<void> {
+    await db
+      .insert(experiments)
+      .values({
+        id: fixture.id,
+        projectId: LOCAL_PROJECT_ID,
+        name: fixture.name,
+        promptVersionId: fixture.promptVersionId,
+        datasetId: fixture.datasetId,
+        modelId: fixture.modelId,
+        optimizationId: fixture.optimizationId,
+        roundIndex: fixture.roundIndex,
+        status: fixture.status,
+        runConfig: fixture.runConfig,
+        dbosWorkflowId: fixture.dbosWorkflowId,
+        controlState: fixture.controlState,
+        totalSamples: fixture.totalSamples,
+        processedSamples: fixture.processedSamples,
+        failedSamples: fixture.failedSamples,
+        metrics: fixture.metrics,
+        failureKind: fixture.failureKind,
+        failureReason: fixture.failureReason,
+        startedAt: fixture.startedAt ? new Date(fixture.startedAt) : null,
+        finishedAt: fixture.finishedAt ? new Date(fixture.finishedAt) : null,
+        createdBy: LOCAL_ACTOR_ID,
+        createdAt: new Date(fixture.createdAt),
+        updatedAt: new Date(fixture.updatedAt),
+      })
+      .onConflictDoUpdate({
+        target: experiments.id,
+        set: {
+          name: fixture.name,
+          projectId: LOCAL_PROJECT_ID,
+          promptVersionId: fixture.promptVersionId,
+          datasetId: fixture.datasetId,
+          modelId: fixture.modelId,
+          optimizationId: fixture.optimizationId,
+          roundIndex: fixture.roundIndex,
+          status: fixture.status,
+          runConfig: fixture.runConfig,
+          dbosWorkflowId: fixture.dbosWorkflowId,
+          controlState: fixture.controlState,
+          totalSamples: fixture.totalSamples,
+          processedSamples: fixture.processedSamples,
+          failedSamples: fixture.failedSamples,
+          metrics: fixture.metrics,
+          failureKind: fixture.failureKind,
+          failureReason: fixture.failureReason,
+          startedAt: fixture.startedAt ? new Date(fixture.startedAt) : null,
+          finishedAt: fixture.finishedAt ? new Date(fixture.finishedAt) : null,
+          deletedAt: null,
+          updatedAt: new Date(fixture.updatedAt),
+        },
+      });
+  }
+
+  for (const fixture of DEV_EXPERIMENTS.filter((experiment) => experiment.optimizationId === null)) {
+    await upsertExperiment(fixture);
+  }
+
+  for (const fixture of DEV_OPTIMIZATIONS) {
+    await db
+      .insert(optimizations)
+      .values({
+        id: fixture.id,
+        projectId: LOCAL_PROJECT_ID,
+        name: fixture.name,
+        description: fixture.description,
+        optimizationHint: fixture.optimizationHint,
+        strategy: fixture.strategy,
+        strategyConfig: fixture.strategyConfig,
+        startingMode: fixture.startingMode,
+        sourceExperimentId: fixture.sourceExperimentId,
+        promptId: fixture.promptId,
+        baseVersionId: fixture.baseVersionId,
+        datasetId: fixture.datasetId,
+        experimentModelId: fixture.experimentModelId,
+        analysisModelId: fixture.analysisModelId,
+        promptLanguage: fixture.promptLanguage,
+        status: fixture.status,
+        dbosWorkflowId: fixture.dbosWorkflowId,
+        controlState: fixture.controlState,
+        goals: fixture.goals,
+        fieldWhitelist: fixture.fieldWhitelist,
+        runConfig: fixture.runConfig,
+        maxRounds: fixture.maxRounds,
+        currentRound: fixture.currentRound,
+        bestVersionId: fixture.bestVersionId,
+        bestMetrics: fixture.bestMetrics,
+        summary: fixture.summary,
+        analysisFailureReason: fixture.analysisFailureReason,
+        startedAt: fixture.startedAt ? new Date(fixture.startedAt) : null,
+        finishedAt: fixture.finishedAt ? new Date(fixture.finishedAt) : null,
+        createdBy: LOCAL_ACTOR_ID,
+        createdAt: new Date(fixture.createdAt),
+        updatedAt: new Date(fixture.updatedAt),
+      })
+      .onConflictDoUpdate({
+        target: optimizations.id,
+        set: {
+          name: fixture.name,
+          projectId: LOCAL_PROJECT_ID,
+          description: fixture.description,
+          optimizationHint: fixture.optimizationHint,
+          strategy: fixture.strategy,
+          strategyConfig: fixture.strategyConfig,
+          startingMode: fixture.startingMode,
+          sourceExperimentId: fixture.sourceExperimentId,
+          promptId: fixture.promptId,
+          baseVersionId: fixture.baseVersionId,
+          datasetId: fixture.datasetId,
+          experimentModelId: fixture.experimentModelId,
+          analysisModelId: fixture.analysisModelId,
+          promptLanguage: fixture.promptLanguage,
+          status: fixture.status,
+          dbosWorkflowId: fixture.dbosWorkflowId,
+          controlState: fixture.controlState,
+          goals: fixture.goals,
+          fieldWhitelist: fixture.fieldWhitelist,
+          runConfig: fixture.runConfig,
+          maxRounds: fixture.maxRounds,
+          currentRound: fixture.currentRound,
+          bestVersionId: fixture.bestVersionId,
+          bestMetrics: fixture.bestMetrics,
+          summary: fixture.summary,
+          analysisFailureReason: fixture.analysisFailureReason,
+          startedAt: fixture.startedAt ? new Date(fixture.startedAt) : null,
+          finishedAt: fixture.finishedAt ? new Date(fixture.finishedAt) : null,
+          deletedAt: null,
+          updatedAt: new Date(fixture.updatedAt),
+        },
+      });
+  }
+
+  for (const fixture of DEV_EXPERIMENTS.filter((experiment) => experiment.optimizationId !== null)) {
+    await upsertExperiment(fixture);
+  }
+  console.warn(`✅  实验数据就绪：${DEV_EXPERIMENTS.length} 个`);
+
+  for (const fixture of DEV_OPTIMIZATION_ROUND_STEPS) {
+    await db
+      .insert(optimizationRoundSteps)
+      .values({
+        id: fixture.id,
+        optimizationId: fixture.optimizationId,
+        roundIndex: fixture.roundIndex,
+        step: fixture.step,
+        status: fixture.status,
+        errorClass: fixture.errorClass,
+        errorMessage: fixture.errorMessage,
+        runResultId: fixture.runResultId,
+        experimentId: fixture.experimentId,
+        startedAt: fixture.startedAt ? new Date(fixture.startedAt) : null,
+        finishedAt: fixture.finishedAt ? new Date(fixture.finishedAt) : null,
+        attempt: fixture.attempt,
+        dbosWorkflowId: fixture.dbosWorkflowId,
+        createdAt: new Date(fixture.createdAt),
+        updatedAt: new Date(fixture.updatedAt),
+      })
+      .onConflictDoUpdate({
+        target: optimizationRoundSteps.id,
+        set: {
+          optimizationId: fixture.optimizationId,
+          roundIndex: fixture.roundIndex,
+          step: fixture.step,
+          status: fixture.status,
+          errorClass: fixture.errorClass,
+          errorMessage: fixture.errorMessage,
+          runResultId: fixture.runResultId,
+          experimentId: fixture.experimentId,
+          startedAt: fixture.startedAt ? new Date(fixture.startedAt) : null,
+          finishedAt: fixture.finishedAt ? new Date(fixture.finishedAt) : null,
+          attempt: fixture.attempt,
+          dbosWorkflowId: fixture.dbosWorkflowId,
+          updatedAt: new Date(fixture.updatedAt),
+        },
+      });
+  }
+  console.warn(`✅  优化数据就绪：${DEV_OPTIMIZATIONS.length} 个，步骤 ${DEV_OPTIMIZATION_ROUND_STEPS.length} 条`);
+  console.warn('✅  本地 dev 数据快照写入完成');
+
+  process.exit(0);
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});

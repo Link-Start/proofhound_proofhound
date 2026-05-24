@@ -1,0 +1,24 @@
+{
+  "name": "@proofhound/crypto",
+  "version": "0.0.0",
+  "private": true,
+  "description": "共享对称加密 util — AES-256-GCM 加解密 API KEY / 凭证密文，server / worker / seed 唯一事实标准",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

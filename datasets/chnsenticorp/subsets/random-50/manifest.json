@@ -1,0 +1,164 @@
+{
+  "name": "ChnSentiCorp random 50",
+  "description": "Uniform random 50-row subset sampled without replacement from the local ChnSentiCorp full JSONL export.",
+  "source": {
+    "dataset": "seamew/ChnSentiCorp",
+    "url": "https://huggingface.co/datasets/seamew/ChnSentiCorp/tree/main",
+    "commit": "5fad0d07523f9c5fc76b8babaca9ab6fdeb6af2d",
+    "full_file": "../../chnsenticorp.jsonl",
+    "full_sha256": "76829cab0b9cd70c184ba66ce64eff9abfd98c13080ebe76454f655f67510d27"
+  },
+  "format": "jsonl",
+  "file": "chnsenticorp-random-50.jsonl",
+  "encoding": "utf-8",
+  "sample_count": 50,
+  "sampling": {
+    "method": "uniform_without_replacement",
+    "source_sample_count": 12000,
+    "sample_size": 50,
+    "seed": 424385828,
+    "source_line_numbers_1_based": [
+      115,
+      226,
+      642,
+      804,
+      1029,
+      1041,
+      1125,
+      1522,
+      1814,
+      2106,
+      2211,
+      3003,
+      3028,
+      3160,
+      3383,
+      3498,
+      3682,
+      4011,
+      4100,
+      4344,
+      4577,
+      4721,
+      4829,
+      4841,
+      5242,
+      5393,
+      5708,
+      5876,
+      6718,
+      6737,
+      6804,
+      7263,
+      7375,
+      7673,
+      7828,
+      8255,
+      8402,
+      8652,
+      8974,
+      9705,
+      9869,
+      10876,
+      11030,
+      11126,
+      11237,
+      11386,
+      11416,
+      11564,
+      11633,
+      11819
+    ]
+  },
+  "splits": {
+    "train": 39,
+    "validation": 2,
+    "test": 9
+  },
+  "labels": {
+    "negative": 24,
+    "positive": 26
+  },
+  "sha256": "351df78eb6056f02291268bda768523bfbb2455fbfb01f4b360364f252518e10",
+  "recommended_field_mapping": [
+    {
+      "name": "text",
+      "role": "text",
+      "type": "string",
+      "note": "提示词变量，建议模板中使用 {{text}}"
+    },
+    {
+      "name": "expected_output",
+      "role": "expected_output",
+      "type": "string",
+      "note": "实验判定用期望输出：negative / positive"
+    },
+    {
+      "name": "sample_id",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "label",
+      "role": "metadata",
+      "type": "number",
+      "note": "原始数值标签：0=negative, 1=positive"
+    },
+    {
+      "name": "label_name",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "sentiment_zh",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "split",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "source_dataset",
+      "role": "metadata",
+      "type": "string"
+    }
+  ],
+  "files": [
+    {
+      "file": "chnsenticorp-random-50.jsonl",
+      "format": "jsonl",
+      "encoding": "utf-8",
+      "size_bytes": 29988,
+      "sha256": "351df78eb6056f02291268bda768523bfbb2455fbfb01f4b360364f252518e10"
+    },
+    {
+      "file": "chnsenticorp-random-50.json",
+      "format": "json_array",
+      "encoding": "utf-8",
+      "size_bytes": 32691,
+      "sha256": "c43acbc67e7577696bc282107fded8d7edc22a1f0db47131ae9eb3c4dd7355aa"
+    },
+    {
+      "file": "chnsenticorp-random-50.csv",
+      "format": "csv",
+      "encoding": "utf-8",
+      "size_bytes": 24384,
+      "sha256": "06d3cbaa284a3b04569e8e288268558929914214773a40f241bfb2aefed5e520"
+    },
+    {
+      "file": "chnsenticorp-random-50.tsv",
+      "format": "tsv",
+      "encoding": "utf-8",
+      "size_bytes": 24372,
+      "sha256": "bcf45ff4efa6ccb1471e57a1b5d557bf8d3b736dd9fb464662b37930e49248a7"
+    }
+  ],
+  "current_v1_upload_formats": [
+    "csv",
+    "tsv",
+    "jsonl",
+    "json_array"
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "name": "Yelp Polarity",
+  "description": "English binary sentiment classification dataset converted from the Yelp Review Polarity CSV archive for ProofHound upload.",
+  "source": {
+    "dataset": "Yelp Review Polarity",
+    "huggingface_dataset": "fancyzhx/yelp_polarity",
+    "huggingface_url": "https://huggingface.co/datasets/fancyzhx/yelp_polarity",
+    "huggingface_commit": "bbf1c97a1f0cf005e5aded43839fd814654a1557",
+    "raw_archive_url": "https://s3.amazonaws.com/fast-ai-nlp/yelp_review_polarity_csv.tgz",
+    "raw_archive_sha256": "528f22e286cad085948acbc3bea7e58188416546b0e364d0ae4ca0ce666abe35",
+    "original_features": {
+      "text": "string",
+      "class_index": "1=negative, 2=positive"
+    },
+    "original_version": "Version 1, Updated 09/09/2015",
+    "original_license": "",
+    "citation": "Xiang Zhang, Junbo Zhao, Yann LeCun. Character-level Convolutional Networks for Text Classification. NIPS 2015."
+  },
+  "format": "jsonl",
+  "file": "yelp_polarity.jsonl",
+  "encoding": "utf-8",
+  "sample_count": 598000,
+  "splits": {
+    "train": {
+      "sample_count": 560000,
+      "labels": {
+        "negative": 280000,
+        "positive": 280000
+      }
+    },
+    "test": {
+      "sample_count": 38000,
+      "labels": {
+        "positive": 19000,
+        "negative": 19000
+      }
+    }
+  },
+  "labels": {
+    "negative": 299000,
+    "positive": 299000
+  },
+  "sha256": "3442bb1c5a194359d1ae365bbf12fba2e67231b3c05ae102a3520fd374eb7401",
+  "recommended_field_mapping": [
+    {
+      "name": "text",
+      "role": "text",
+      "type": "string",
+      "note": "提示词变量，建议模板中使用 {{text}}"
+    },
+    {
+      "name": "expected_output",
+      "role": "expected_output",
+      "type": "string",
+      "note": "实验判定用期望输出：negative / positive"
+    },
+    {
+      "name": "sample_id",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "label",
+      "role": "metadata",
+      "type": "number",
+      "note": "HF 数值标签：0=negative, 1=positive"
+    },
+    {
+      "name": "label_name",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "sentiment_zh",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "original_class_index",
+      "role": "metadata",
+      "type": "number",
+      "note": "原始 CSV 类别：1=negative, 2=positive"
+    },
+    {
+      "name": "split",
+      "role": "metadata",
+      "type": "string"
+    },
+    {
+      "name": "source_dataset",
+      "role": "metadata",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "sample_id": "multi-field-001",
+    "front_image_url": "https://upload.wikimedia.org/wikipedia/commons/8/86/Polish_supermarket_receipt.jpg",
+    "back_image_url": "https://upload.wikimedia.org/wikipedia/commons/9/9d/3375_coupon_by_Carrefour_until_2012-12-31.jpg",
+    "ocr_text": "Front image is a supermarket receipt; back image is a coupon.",
+    "expected_output": "receipt_coupon_pair",
+    "source": "wikimedia_commons"
+  },
+  {
+    "sample_id": "multi-field-002",
+    "front_image_url": "https://upload.wikimedia.org/wikipedia/commons/4/49/Invoice1633.jpg",
+    "back_image_url": "https://upload.wikimedia.org/wikipedia/commons/8/86/Polish_supermarket_receipt.jpg",
+    "ocr_text": "Front image is an invoice; back image is a supermarket receipt.",
+    "expected_output": "invoice_receipt_pair",
+    "source": "wikimedia_commons"
+  }
+]

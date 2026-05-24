@@ -1,0 +1,118 @@
+import { datasetClient, type DatasetTransferOptions } from '@proofhound/api-client';
+import type {
+  CreateDatasetDto,
+  DatasetExportFormatDto,
+  DatasetListItemDto,
+  DeleteDatasetSamplesDto,
+  UpdateDatasetMetadataDto,
+} from '@proofhound/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+interface CreateDatasetVariables extends DatasetTransferOptions {
+  body: CreateDatasetDto;
+}
+
+interface DownloadDatasetVariables extends DatasetTransferOptions {
+  datasetId: string;
+  format: DatasetExportFormatDto;
+}
+
+interface UpdateDatasetVariables {
+  datasetId: string;
+  body: UpdateDatasetMetadataDto;
+}
+
+type DatasetListResponse = { data: DatasetListItemDto[]; total: number };
+
+export function useDatasets(projectId: string) {
+  return useQuery({
+    queryKey: ['datasets', projectId],
+    queryFn: () => datasetClient.listDatasets(projectId),
+    enabled: projectId.length > 0,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useDataset(projectId: string, datasetId: string) {
+  return useQuery({
+    queryKey: ['datasets', projectId, datasetId],
+    queryFn: () => datasetClient.getDataset(projectId, datasetId),
+    enabled: projectId.length > 0 && datasetId.length > 0,
+  });
+}
+
+export function useDatasetSamples(projectId: string, datasetId: string) {
+  return useQuery({
+    queryKey: ['dataset-samples', projectId, datasetId],
+    queryFn: () => datasetClient.listDatasetSamples(projectId, datasetId),
+    enabled: projectId.length > 0 && datasetId.length > 0,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useCreateDataset(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, onProgress }: CreateDatasetVariables) =>
+      datasetClient.createDataset(projectId, body, { onProgress }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
+    },
+  });
+}
+
+export function useUpdateDataset(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ datasetId, body }: UpdateDatasetVariables) =>
+      datasetClient.updateDataset(projectId, datasetId, body),
+    onSuccess: (dataset) => {
+      queryClient.setQueryData<DatasetListResponse>(['datasets', projectId], (current) =>
+        current
+          ? {
+              ...current,
+              data: current.data.map((item) => (item.id === dataset.id ? dataset : item)),
+            }
+          : current,
+      );
+      queryClient.setQueryData(['datasets', projectId, dataset.id], dataset);
+      void queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['datasets', projectId, dataset.id] });
+    },
+  });
+}
+
+export function useDownloadDataset(projectId: string) {
+  return useMutation({
+    mutationFn: ({ datasetId, format, onProgress }: DownloadDatasetVariables) =>
+      datasetClient.downloadDataset(projectId, datasetId, format, { onProgress }),
+  });
+}
+
+export function useDeleteDataset(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (datasetId: string) => datasetClient.deleteDataset(projectId, datasetId),
+    onSuccess: (_data, datasetId) => {
+      void queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
+      void queryClient.removeQueries({ queryKey: ['datasets', projectId, datasetId] });
+      void queryClient.removeQueries({ queryKey: ['dataset-samples', projectId, datasetId] });
+    },
+  });
+}
+
+export function useDeleteDatasetSamples(projectId: string, datasetId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: DeleteDatasetSamplesDto) => datasetClient.deleteDatasetSamples(projectId, datasetId, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['datasets', projectId, datasetId] });
+      void queryClient.invalidateQueries({ queryKey: ['dataset-samples', projectId, datasetId] });
+    },
+  });
+}
