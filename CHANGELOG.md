@@ -1,5 +1,11 @@
 # proofhound
 
+## 0.1.3
+
+### Patch Changes
+
+- update README.md
+
 ## 0.1.2
 
 ### Patch Changes
