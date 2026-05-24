@@ -1,6 +1,6 @@
 {
   "name": "proofhound",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "license": "Apache-2.0",
   "description": "ProofHound — Prompt 全生命周期治理平台",
@@ -56,7 +56,8 @@
     "docker:down": "docker compose -f dev/docker-compose.yml down",
     "docker:logs": "docker compose -f dev/docker-compose.yml logs -f",
     "changeset": "changeset",
-    "release": "pnpm run release:version && pnpm run ci",
+    "release": "pnpm run release:version && pnpm run ci && pnpm run release:commit",
+    "release:commit": "node scripts/release-commit.mjs",
     "release:version": "changeset version",
     "deps:check": "madge --circular --extensions ts,tsx --exclude '(^|/)dist/' packages/ apps/",
     "deps:graph": "madge --image deps.svg --extensions ts,tsx packages/ apps/",
