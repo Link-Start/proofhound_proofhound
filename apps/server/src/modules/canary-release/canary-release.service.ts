@@ -1,5 +1,5 @@
-// 灰度发布兼容服务。事实源为 release_lines / release_line_events。
-// 详见 docs/specs/27-releases.md 与 docs/specs/03-orchestration.md §3.3
+// Canary release compatibility service. The source of truth is release_lines / release_line_events.
+// See docs/specs/27-releases.md and docs/specs/03-orchestration.md §3.3
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createLogger } from '@proofhound/logger';

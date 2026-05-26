@@ -8,8 +8,8 @@ export const redisConsumerModeSchema = z.enum(['list', 'stream']);
 export type RedisConsumerMode = z.infer<typeof redisConsumerModeSchema>;
 
 // ---------------------------------------------------------------------------
-// 连接器（业务术语 connector，DB 物理表 ph_assets.connectors）
-// 详见 docs/specs/26-connectors.md §3 / docs/specs/06-database-schema.md §4.5
+// Connector (business term: connector; DB physical table: ph_assets.connectors)
+// See docs/specs/26-connectors.md §3 / docs/specs/06-database-schema.md §4.5
 // ---------------------------------------------------------------------------
 
 export const connectorDirectionSchema = z.enum(['input', 'output']);
@@ -27,7 +27,7 @@ export const webhookOutputMethodSchema = z.enum(['POST', 'PUT']);
 export type WebhookOutputMethod = z.infer<typeof webhookOutputMethodSchema>;
 
 // ---------------------------------------------------------------------------
-// config 分支:每种 (type, direction) 一个 schema
+// config variants: one schema per (type, direction)
 // ---------------------------------------------------------------------------
 
 const redisStreamKeySchema = z
@@ -178,7 +178,7 @@ export const webhookOutputConfigSchema = z.object({
 });
 export type WebhookOutputConfig = z.infer<typeof webhookOutputConfigSchema>;
 
-// 任意已落库的 config(用于响应 DTO 与表单回填):六种之一
+// Any persisted config (used by response DTO and form rehydration): one of six
 export const connectorConfigShapeSchema = z.union([
   redisInputConfigSchema,
   redisOutputConfigSchema,
@@ -190,7 +190,7 @@ export const connectorConfigShapeSchema = z.union([
 export type ConnectorConfigShape = z.infer<typeof connectorConfigShapeSchema>;
 
 // ---------------------------------------------------------------------------
-// 通用字段
+// Common fields
 // ---------------------------------------------------------------------------
 
 const connectorNameSchema = z
@@ -215,8 +215,8 @@ const ipWhitelistEntrySchema = z
 const ipWhitelistSchema = z.array(ipWhitelistEntrySchema).max(64);
 
 // ---------------------------------------------------------------------------
-// 创建 DTO:三层嵌套的 discriminatedUnion(先 type 再 direction)
-// 6 个具体 schema 各自约束自己的本地连接配置 / webhookPath / config / token / ipWhitelist 等
+// Create DTO: triple-nested discriminatedUnion (first by type, then by direction)
+// Six concrete schemas each constrain their own local connection config / webhookPath / config / token / ipWhitelist, etc.
 // ---------------------------------------------------------------------------
 
 const createCommonBase = {
@@ -300,9 +300,9 @@ const createWebhookInputSchema = z.object({
   ...createCommonBase,
   type: z.literal('webhook'),
   direction: z.literal('input'),
-  // @deprecated webhook token 现由 connector 自管(scope='webhook' AND connector_id=...),
-  // 创建 connector 时服务端自动生成首个 webhook token。前端发送的 tokenId 被静默忽略,
-  // 保留字段用于前端旧表单短期兼容。详见 docs/specs/06-database-schema.md §3.2 / §4.5。
+  // @deprecated webhook tokens are now self-managed by the connector (scope='webhook' AND connector_id=...);
+  // when creating a connector, the server auto-generates the first webhook token. The tokenId sent by the frontend is silently ignored;
+  // the field is kept for short-term compatibility with the legacy frontend form. See docs/specs/06-database-schema.md §3.2 / §4.5.
   tokenId: z.string().uuid().optional(),
   ipWhitelist: ipWhitelistSchema.optional(),
   config: webhookInputConfigSchema,
@@ -315,8 +315,8 @@ const createWebhookOutputSchema = z.object({
   config: webhookOutputConfigSchema,
 });
 
-// 注意:Zod discriminatedUnion 一次只支持一层 discriminator,所以这里用 union(由
-// type+direction 共同 narrow),前端构造时按 type/direction 选具体 schema。
+// Note: Zod discriminatedUnion only supports a single-layer discriminator, so we use union here (narrowed by
+// the combination of type+direction); on the frontend, pick the concrete schema by type/direction.
 export const createConnectorSchema = z.union([
   createRedisInputSchema,
   createRedisOutputSchema,
@@ -333,7 +333,7 @@ export type CreateKafkaOutputConnectorDto = z.infer<typeof createKafkaOutputSche
 export type CreateWebhookInputConnectorDto = z.infer<typeof createWebhookInputSchema>;
 export type CreateWebhookOutputConnectorDto = z.infer<typeof createWebhookOutputSchema>;
 
-// 各分支 schema 也对外导出,供前端按 (type, direction) 显式选择校验。
+// Each branch schema is also exported so the frontend can explicitly pick validation by (type, direction).
 export const createConnectorSchemaByKind = {
   'redis:input': createRedisInputSchema,
   'redis:output': createRedisOutputSchema,
@@ -344,7 +344,7 @@ export const createConnectorSchemaByKind = {
 } as const satisfies Record<string, z.ZodTypeAny>;
 
 // ---------------------------------------------------------------------------
-// 更新 DTO:扁平 partial,禁 type / direction
+// Update DTO: flat partial; type / direction are forbidden
 // ---------------------------------------------------------------------------
 
 export const updateConnectorSchema = z
@@ -353,7 +353,7 @@ export const updateConnectorSchema = z
     description: z.string().trim().max(500).nullable().optional(),
     config: connectorConfigShapeSchema.optional(),
     credentials: z.union([redisConnectorCredentialsSchema, kafkaConnectorCredentialsSchema]).optional(),
-    // @deprecated 见 createWebhookInputSchema 注释;update 路径下也会被静默忽略。
+    // @deprecated see createWebhookInputSchema comment; silently ignored in the update path too.
     tokenId: z.string().uuid().optional(),
     ipWhitelist: ipWhitelistSchema.nullable().optional(),
   })
@@ -364,7 +364,7 @@ export const updateConnectorSchema = z
 export type UpdateConnectorDto = z.infer<typeof updateConnectorSchema>;
 
 // ---------------------------------------------------------------------------
-// 引用统计(本期 stub)
+// Reference counting (stubbed in this cycle)
 // ---------------------------------------------------------------------------
 
 export const connectorReferencesSummarySchema = z.object({
@@ -388,7 +388,7 @@ export const connectorReferencesResponseSchema = z.object({
 export type ConnectorReferencesResponseDto = z.infer<typeof connectorReferencesResponseSchema>;
 
 // ---------------------------------------------------------------------------
-// 列表项 / 详情
+// List item / detail
 // ---------------------------------------------------------------------------
 
 export const connectorTokenSummarySchema = z.object({
@@ -399,7 +399,7 @@ export const connectorTokenSummarySchema = z.object({
 export type ConnectorTokenSummaryDto = z.infer<typeof connectorTokenSummarySchema>;
 
 // per-connector webhook token(scope='webhook' AND connector_id=...)
-// 详见 docs/specs/06-database-schema.md §3.2 与 docs/specs/26-connectors.md
+// See docs/specs/06-database-schema.md §3.2 and docs/specs/26-connectors.md
 export const connectorWebhookTokenSummarySchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -438,8 +438,8 @@ export const createWebhookTokenResponseSchema = z.object({
 });
 export type CreateWebhookTokenResponseDto = z.infer<typeof createWebhookTokenResponseSchema>;
 
-// reveal endpoint:从 token_encrypted 解密返回明文,与 user token 的 reveal 对齐。
-// 详见 docs/specs/06-database-schema.md §3.2 "token_encrypted 用于本地管理端按需展示可恢复 Token"
+// reveal endpoint: decrypt from token_encrypted and return the plaintext, aligned with user token reveal.
+// See docs/specs/06-database-schema.md §3.2 "token_encrypted is used for on-demand reveal of recoverable tokens on the local admin console"
 export const revealWebhookTokenResponseSchema = z.object({
   tokenId: z.string().uuid(),
   plaintext: z.string().nullable(),
@@ -477,14 +477,14 @@ export type ConnectorListResponseDto = z.infer<typeof connectorListResponseSchem
 
 export const connectorDetailSchema = connectorListItemSchema.extend({
   config: connectorConfigShapeSchema,
-  // 该 connector 当前所有 active webhook token 全列表(scope='webhook', revoked_at IS NULL)。
-  // 非 webhook-input connector 始终为空数组。
+  // Full list of all active webhook tokens currently held by this connector (scope='webhook', revoked_at IS NULL).
+  // Always an empty array for non-webhook-input connectors.
   webhookTokens: z.array(connectorWebhookTokenSummarySchema),
   ipWhitelist: z.array(z.string()).nullable(),
 });
 export type ConnectorDetailDto = z.infer<typeof connectorDetailSchema>;
 
-// create 响应额外返回首次自动生成的 webhook token 明文(只在创建时出现一次)。
+// The create response additionally returns the plaintext of the first auto-generated webhook token (only appears at creation time).
 export const connectorCreateResponseSchema = connectorDetailSchema.extend({
   initialWebhookToken: z
     .object({
@@ -527,7 +527,7 @@ export const peekConnectorResponseSchema = z.object({
 export type PeekConnectorResponseDto = z.infer<typeof peekConnectorResponseSchema>;
 
 // ---------------------------------------------------------------------------
-// 批量删除
+// Batch delete
 // ---------------------------------------------------------------------------
 
 export const bulkDeleteConnectorsRequestSchema = z.object({
@@ -571,7 +571,7 @@ export const connectorListQuerySchema = z.object({
 export type ConnectorListQueryDto = z.infer<typeof connectorListQuerySchema>;
 
 // ---------------------------------------------------------------------------
-// helper: 由 (type, direction) 推 config schema 的运行时函数
+// Helper: runtime function that derives the config schema from (type, direction)
 // ---------------------------------------------------------------------------
 
 export function getConnectorConfigSchema(type: ConnectorType, direction: ConnectorDirection): z.ZodTypeAny {

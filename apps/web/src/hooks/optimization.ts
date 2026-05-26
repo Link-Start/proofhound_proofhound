@@ -76,9 +76,9 @@ export function useControlOptimization(projectId: string) {
   return useMutation<unknown, Error, ControlOptimizationVariables, ControlMutationContext>({
     mutationFn: ({ optimizationId, action }: ControlOptimizationVariables) =>
       optimizationClient.controlOptimization(projectId, optimizationId, action),
-    // 抢占式 UI 反馈:后端 service 在 stop/cancel 时会一次性写 status 终态(SPEC 25 §7),
-    // 这里在网络往返之前就把 detail cache 改成对应终态,用户点击后立即看到状态翻转。
-    // resume 不做 optimistic(等真实响应,launcher 启动可能失败)。
+    // Preemptive UI feedback: the backend service writes the terminal status in one shot on stop/cancel (SPEC 25 §7);
+    // before the network round-trip, mutate the detail cache to the matching terminal state so the user sees the status flip immediately on click.
+    // resume does not do optimistic (wait for the real response; launcher startup may fail).
     onMutate: async ({ optimizationId, action }) => {
       const nextStatus =
         action === 'stop' ? ('stopped' as const)

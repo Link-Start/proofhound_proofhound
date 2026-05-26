@@ -4,10 +4,10 @@ import type { DbClient } from '@proofhound/db';
 import type { LLMRunResultRecord, LLMRunResultWriter } from '@proofhound/llm-client';
 import { DATABASE_CLIENT } from '../database/database.constants';
 
-// ph_runs.run_results 是按 created_at 月分区,无法对单列 id 加 UNIQUE 约束;
-// 用 INSERT ... SELECT ... WHERE NOT EXISTS 做幂等(SPEC 25 §11.2):
-//  - DBOS workflow 重试 / replay 时同一 runResultId 不会写重复行
-//  - 与 apps/worker/src/runners/run-result-writer.ts 行为等价(双实现差异由抽到 packages 时统一)
+// ph_runs.run_results is monthly-partitioned by created_at, so a UNIQUE constraint cannot be applied to a single id column;
+// use INSERT ... SELECT ... WHERE NOT EXISTS for idempotency (SPEC 25 §11.2):
+//  - DBOS workflow retry / replay never writes a duplicate row for the same runResultId
+//  - Behaviorally equivalent to apps/worker/src/runners/run-result-writer.ts (the dual implementation will be reconciled when extracted into a package)
 @Injectable()
 export class DrizzleRunResultWriter implements LLMRunResultWriter {
   constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}

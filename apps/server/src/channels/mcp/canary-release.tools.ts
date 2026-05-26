@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions for canary releases.
  * Each tool delegates to CanaryReleaseService, matching the REST surface 1:1.
- * See docs/specs/00-overview.md §5 (三通道等价) + docs/specs/27-releases.md.
+ * See docs/specs/00-overview.md §5 (three-channel parity) + docs/specs/27-releases.md.
  */
 import {
   cancelCanaryReleaseInputSchema,

@@ -1,4 +1,4 @@
-// 详见 docs/specs/05-logging.md §6 — secret / token / api_key / authorization 全脱敏
+// See docs/specs/05-logging.md §6 — secret / token / api_key / authorization are all redacted
 export const REDACT_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',

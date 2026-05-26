@@ -31,15 +31,15 @@ const inferenceSchema = z.object({
   apiVersion: z.string().optional(),
 });
 
-// 实验级 / 优化级"自我节流"上限：worker 在 invokeLLM 前与 model 级配额取 min；
-// 模型级始终是天花板（SPEC 21 §配额 / SPEC 24 §4：所有调用通道共用同一份模型配额）。
+// Experiment-level / optimization-level "self-throttling" cap: the worker takes min(this, model-level quota) before invokeLLM;
+// the model-level cap is always the ceiling (SPEC 21 §quota / SPEC 24 §4: all channels share the same model quota).
 const runtimeLimitsSchema = z.object({
   rpmLimit: z.number().int().positive().optional(),
   tpmLimit: z.number().int().positive().optional(),
   concurrency: z.number().int().positive().optional(),
 });
 
-// 单条样本 LLM 调用的内部重试上限；不影响 BullMQ job 级 attempts。
+// Per-sample LLM call internal retry cap; does not affect BullMQ job-level attempts.
 const runtimeRetrySchema = z.object({
   maxRetries: z.number().int().min(0).max(10).optional(),
 });
@@ -63,8 +63,8 @@ export const llmJobPayloadSchema = z.object({
   promptId: z.string().uuid().optional(),
   sampleId: z.string().uuid().nullable().optional(),
   externalId: z.string().nullable().optional(),
-  // 由 enqueue 端(实验 / 优化 workflow 在 step 内通过 DBOS.workflowID 取值)注入,
-  // worker 端透传到 LLM 调用日志与 ph_runs.run_results.dbos_workflow_id;发布 runner 来源为 undefined
+  // Injected by the enqueue side (experiment / optimization workflow obtains it via DBOS.workflowID inside a step),
+  // passed through by the worker into the LLM call log and ph_runs.run_results.dbos_workflow_id; the release runner source is undefined
   dbosWorkflowId: z.string().optional(),
   renderedPrompt: renderedPromptSchema,
   inputVariables: z.unknown().optional(),

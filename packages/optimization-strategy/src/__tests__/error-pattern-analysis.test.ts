@@ -58,7 +58,7 @@ const currentRunResults: RunResultRecord[] = [
 
 const previousRunResults: RunResultRecord[] = [
   { id: 'prr1', sampleId: 's1', decisionOutput: 'A', isCorrect: true },
-  { id: 'prr2', sampleId: 's2', decisionOutput: 'B', isCorrect: true }, // 上轮对，本轮错 → regression
+  { id: 'prr2', sampleId: 's2', decisionOutput: 'B', isCorrect: true }, // Previous round correct, this round wrong → regression
   { id: 'prr3', sampleId: 's3', decisionOutput: 'B', isCorrect: false },
   { id: 'prr4', sampleId: 's4', decisionOutput: 'A', isCorrect: false },
 ];
@@ -71,7 +71,7 @@ const fieldWhitelist: FieldWhitelist = {
   modifiableSections: ['任务说明', '示例区'],
 };
 
-// 标准 fake LLM 响应
+// Standard fake LLM response
 const confusionResp = JSON.stringify({
   confusionPair: 'B→A',
   errorPatterns: [
@@ -158,7 +158,7 @@ describe('errorPatternAnalysisConfigSchema', () => {
 describe('OPTIMIZATION_TIPS', () => {
   it('contains 6+ techniques referenced by name', () => {
     expect(OPTIMIZATION_TIPS.length).toBeGreaterThan(500);
-    // 必须包含核心技巧
+    // Must contain the core technique
     for (const tip of ['思维链', 'Few-shot', '术语', '输出约束', 'Chain-of-Verification']) {
       expect(OPTIMIZATION_TIPS).toContain(tip);
     }
@@ -196,7 +196,7 @@ describe('parse helpers', () => {
   });
 
   it('validatePromptVariables flags removed when required base var is dropped', () => {
-    // base 用过 {{text}}，新版本整段重写丢了占位 → 必须拒绝（否则模型推理时根本看不到样本）
+    // base used {{text}}, new version rewrites the whole thing and loses the placeholder → must be rejected (otherwise the model cannot see the sample at inference)
     const r = validatePromptVariables('完全不引用变量', ['text', 'expected_output'], [], ['text']);
     expect(r.ok).toBe(false);
     expect(r.removed).toEqual(['text']);
@@ -204,7 +204,7 @@ describe('parse helpers', () => {
   });
 
   it('validatePromptVariables does not require non-base whitelist vars (e.g. expected_output)', () => {
-    // 白名单含 ground truth 字段，但 base 没用过它 → 不应强制新版本也带上
+    // Whitelist contains the ground truth field, but base never used it → new version must not be forced to include it
     const r = validatePromptVariables('只用 {{text}}', ['text', 'expected_output'], ['text'], ['text']);
     expect(r.ok).toBe(true);
     expect(r.removed).toEqual([]);
@@ -294,7 +294,7 @@ describe('analyzeFailures', () => {
     await analyzeFailures(commonArgs(), makeInvokeLLMDependencies(adapter));
     const confusionCall = adapter.callsFor('confusion')[0]!;
     expect(confusionCall.userPrompt).toContain('text');
-    expect(confusionCall.userPrompt).toContain('secret_id'); // analysisOnlyFields 可见
+    expect(confusionCall.userPrompt).toContain('secret_id'); // analysisOnlyFields visible
     expect(confusionCall.systemPrompt).toContain('promptVariables');
     expect(confusionCall.systemPrompt).toContain('analysisOnlyFields');
   });
@@ -323,7 +323,7 @@ describe('analyzeFailures', () => {
       expect(b.budget.baselineInputTokens).toBeGreaterThan(0);
       expect(b.budget.sampleBudgetTokens).toBeGreaterThanOrEqual(0);
       expect(b.budget.fittedSampleCount).toBeGreaterThan(0);
-      expect(b.budget.fieldsTruncated).toBe(false); // 默认 budget 60k 足够
+      expect(b.budget.fieldsTruncated).toBe(false); // Default budget 60k is sufficient
     }
   });
 
@@ -345,10 +345,10 @@ describe('analyzeFailures', () => {
         ...commonArgs(),
         samples: tightSamples,
         currentRunResults: tightRuns,
-        previousRunResults: null, // 隔离 confusion 这一路
+        previousRunResults: null, // Isolate the confusion path
         strategyConfig: {
           ...DEFAULT_ERROR_PATTERN_ANALYSIS_CONFIG,
-          maxInputTokensPerBatch: 2_500, // 一条样本约 ~500 tokens，加 baseline 约 800-1000 → ≤ 3 条
+          maxInputTokensPerBatch: 2_500, // One sample is ~500 tokens; with baseline ~800-1000 → ≤ 3 entries
         },
       },
       makeInvokeLLMDependencies(adapter),
@@ -361,7 +361,7 @@ describe('analyzeFailures', () => {
 
   it('triggers field truncation when a single sample exceeds the budget', async () => {
     const adapter = defaultAdapter();
-    // 一条样本就 ~10k tokens (40000 chars)
+    // One sample is ~10k tokens (40000 chars)
     const huge: SampleRecord = {
       id: 'huge1',
       input: { text: 'x'.repeat(40_000), secret_id: 'sx' },
@@ -375,7 +375,7 @@ describe('analyzeFailures', () => {
         previousRunResults: null,
         strategyConfig: {
           ...DEFAULT_ERROR_PATTERN_ANALYSIS_CONFIG,
-          maxInputTokensPerBatch: 2_000, // 一条都塞不下
+          maxInputTokensPerBatch: 2_000, // Cannot fit a single one
         },
       },
       makeInvokeLLMDependencies(adapter),
@@ -386,7 +386,7 @@ describe('analyzeFailures', () => {
   });
 
   it('summarize truncates fields when batches exceed budget', async () => {
-    // 准备一个长 reason 让 batches 序列化巨大
+    // Prepare a long reason so the serialized batches are huge
     const longReason = 'r'.repeat(5_000);
     const giantConfusion = JSON.stringify({
       confusionPair: 'B→A',
@@ -407,7 +407,7 @@ describe('analyzeFailures', () => {
         previousRunResults: null,
         strategyConfig: {
           ...DEFAULT_ERROR_PATTERN_ANALYSIS_CONFIG,
-          maxInputTokensPerBatch: 4_000, // 比 2 个 giant batch 加起来小
+          maxInputTokensPerBatch: 4_000, // Smaller than the sum of 2 giant batches
         },
       },
       makeInvokeLLMDependencies(adapter),
@@ -427,8 +427,8 @@ describe('analyzeFailures', () => {
   });
 
   it('writes run_results with round_index = roundNumber when runResultMeta + analysisRunResultId supplied', async () => {
-    // 详情页 listOptimizationLlmRunResults 用 isNotNull(round_index) 过滤,缺失即整行被吃。
-    // 该 test 确认 summarize 阶段 invokeLLM 调 writer.writeRunResult 时带上 roundIndex。
+    // The detail page's listOptimizationLlmRunResults filters by isNotNull(round_index); a missing value drops the whole row.
+    // This test confirms that during the summarize stage, invokeLLM calls writer.writeRunResult with roundIndex.
     const adapter = defaultAdapter();
     const writer = new RecordingRunResultWriter();
     await analyzeFailures(
@@ -447,7 +447,7 @@ describe('analyzeFailures', () => {
       },
       { ...makeInvokeLLMDependencies(adapter), runResultWriter: writer },
     );
-    // 只有 summarize 阶段写表(confusion / regression 不写),应为 1 条
+    // Only the summarize stage writes to the table (confusion / regression do not), so it should be 1 record
     expect(writer.records).toHaveLength(1);
     const [rec] = writer.records;
     expect(rec).toMatchObject({
@@ -587,32 +587,32 @@ describe('generateNextVersion', () => {
     const adapter = defaultAdapter();
     await generateNextVersion(commonGenArgs(), makeInvokeLLMDependencies(adapter));
     const call = adapter.callsFor('generate')[0]!;
-    // 9 块逐一断言（按 spec）
-    expect(call.systemPrompt).toContain('提示词改写工程师'); // 1. 角色设定
-    expect(call.systemPrompt).toContain('硬约束'); // 优化约束
-    expect(call.systemPrompt).toContain('promptVariables'); // 变量白名单
-    expect(call.systemPrompt).toContain('analysisOnlyFields'); // 禁止字段
-    expect(call.systemPrompt).toContain('output schema'); // 不可改 schema
-    expect(call.systemPrompt).toContain('judgment rules'); // 不可改 judgment
-    expect(call.systemPrompt).toContain('逐字保留 base 已用占位'); // 硬约束 #1 — 防止 v17 类型塌缩
-    expect(call.systemPrompt).toContain('modifiableSections'); // 可改段
-    expect(call.systemPrompt).toContain('优化技巧'); // 优化技巧
-    expect(call.systemPrompt).toContain('JSON'); // JSON 输出
-    expect(call.systemPrompt).toContain('转义'); // 转义约束
-    // 用户提示进 user 消息
+    // Assert each of the 9 blocks (per spec)
+    expect(call.systemPrompt).toContain('提示词改写工程师'); // 1. Role setup
+    expect(call.systemPrompt).toContain('硬约束'); // Optimization constraints
+    expect(call.systemPrompt).toContain('promptVariables'); // Variable whitelist
+    expect(call.systemPrompt).toContain('analysisOnlyFields'); // Forbidden fields
+    expect(call.systemPrompt).toContain('output schema'); // Schema is immutable
+    expect(call.systemPrompt).toContain('judgment rules'); // Judgment is immutable
+    expect(call.systemPrompt).toContain('逐字保留 base 已用占位'); // Hard constraint #1 — prevent v17-style collapse
+    expect(call.systemPrompt).toContain('modifiableSections'); // Modifiable sections
+    expect(call.systemPrompt).toContain('优化技巧'); // Optimization techniques
+    expect(call.systemPrompt).toContain('JSON'); // JSON output
+    expect(call.systemPrompt).toContain('转义'); // Escape constraints
+    // User hints go into the user message
     expect(call.userPrompt).toContain('请保留原 prompt 的简洁风格');
-    // 当前 prompt + 目标对照 + 涉及范围指标 + 错误分析 都在 user 消息
+    // The current prompt + goal comparison + scope-relevant metrics + error analysis are all in the user message
     expect(call.userPrompt).toContain(currentVersion.body);
     expect(call.userPrompt).toContain('优化目标 vs 当前实际');
-    // 「目标 + 当前实际 + 差距」三件套
+    // "goal + current actual + gap" triple
     expect(call.userPrompt).toContain('目标 `>= 0.9`');
     expect(call.userPrompt).toContain('当前实际 `0.2500`');
     expect(call.userPrompt).toContain('差距 `-0.6500`');
     expect(call.userPrompt).toContain('❌ 未达成');
-    // base 已用占位被显式列出（A: 防 v17 整段重写时漏掉 {{text}}）
+    // base placeholders already in use are explicitly listed (A: prevent missing {{text}} during a v17-style full rewrite)
     expect(call.userPrompt).toContain('必须保留的变量占位');
     expect(call.userPrompt).toContain('`{{text}}`');
-    // 涉及范围指标
+    // Scope-relevant metrics
     expect(call.userPrompt).toContain('涉及范围的完整指标');
     expect(call.userPrompt).toContain('### 整体');
     expect(call.userPrompt).toContain('错误分析');
@@ -662,7 +662,7 @@ describe('generateNextVersion', () => {
   it('auto-builds outputFormatInstruction from currentVersion.outputSchema enum labels', async () => {
     const adapter = defaultAdapter();
     const result = await generateNextVersion(commonGenArgs(), makeInvokeLLMDependencies(adapter));
-    // currentVersion.outputSchema 是 { decision: enum [A, B] }
+    // currentVersion.outputSchema is { decision: enum [A, B] }
     expect(result.outputFormatInstruction).toContain('## 输出格式');
     expect(result.outputFormatInstruction).toContain('"decision": <A | B>');
     expect(result.outputFormatInstruction).toContain('必须是以下之一：`A` / `B`');
@@ -686,8 +686,8 @@ describe('generateNextVersion', () => {
   });
 
   it('bridges PromptOutputSchemaDto {fields:[...]} into 「## 输出格式」 section', async () => {
-    // 生产 DB 里 prompt_versions.output_schema 多以 {fields:[{key,value,isJudgment}]} DTO 形态持久化。
-    // 桥接后 composedFullPrompt 必须包含中文「## 输出格式」段，不能把原始 {"fields":[...]} 直接塞回 prompt。
+    // In the production DB, prompt_versions.output_schema is mostly persisted in the {fields:[{key,value,isJudgment}]} DTO shape.
+    // After bridging, composedFullPrompt must contain the localized output-format section; the raw {"fields":[...]} must not be re-injected into the prompt.
     const adapter = defaultAdapter();
     const argsDto = commonGenArgs();
     argsDto.currentVersion = {
@@ -713,7 +713,7 @@ describe('generateNextVersion', () => {
     const adapter = defaultAdapter();
     await generateNextVersion(commonGenArgs(), makeInvokeLLMDependencies(adapter));
     const call = adapter.callsFor('generate')[0]!;
-    // user prompt 不再把 outputSchema 原样 JSON.stringify 给 LLM
+    // The user prompt no longer JSON.stringifies outputSchema as-is to the LLM
     expect(call.userPrompt).toContain('运行时自动拼接的输出格式段');
     expect(call.userPrompt).toContain('<A | B>');
     expect(call.userPrompt).not.toContain('## 不可改动的 output schema');
@@ -760,7 +760,7 @@ describe('generateNextVersion', () => {
       perClass: {
         positive: { precision: 0.8, recall: 0.65, f1: 0.72 },
         negative: { precision: 0.62, recall: 0.83, f1: 0.71 },
-        neutral: { precision: 0.55, recall: 0.4, f1: 0.46 }, // 用户没设 goal — 不应出现
+        neutral: { precision: 0.55, recall: 0.4, f1: 0.46 }, // User did not set a goal — must not appear
       },
     };
     await generateNextVersion(
@@ -772,19 +772,19 @@ describe('generateNextVersion', () => {
       makeInvokeLLMDependencies(adapter),
     );
     const call = adapter.callsFor('generate')[0]!;
-    // 每条 goal 单独成行 + 含 observed/gap/status
+    // Each goal on its own line + contains observed/gap/status
     expect(call.userPrompt).toContain('整体 的 `accuracy`：目标 `>= 0.9`');
     expect(call.userPrompt).toContain('当前实际 `0.7200`');
     expect(call.userPrompt).toContain('分类「positive」 的 `recall`：目标 `>= 0.85`');
     expect(call.userPrompt).toContain('当前实际 `0.6500`');
     expect(call.userPrompt).toContain('分类「negative」 的 `precision`：目标 `>= 0.9`');
     expect(call.userPrompt).toContain('当前实际 `0.6200`');
-    // 涉及范围指标 — 只展示 overall + positive + negative，不应出现 neutral
+    // Scope-relevant metrics — only display overall + positive + negative; neutral must not appear
     expect(call.userPrompt).toContain('### 整体');
     expect(call.userPrompt).toContain('### 分类「positive」');
     expect(call.userPrompt).toContain('### 分类「negative」');
     expect(call.userPrompt).not.toContain('neutral');
-    expect(call.userPrompt).not.toContain('0.46'); // neutral 的 f1 不应泄露
+    expect(call.userPrompt).not.toContain('0.46'); // neutral's f1 must not leak
   });
 
   it('marks already-achieved goals with ✅ in the goals-vs-actual table', async () => {
@@ -808,7 +808,7 @@ describe('generateNextVersion', () => {
     const goalsLE: OptimizationGoal[] = [
       { metric: 'false_positive_rate', op: '<=', value: 0.05, scope: { kind: 'overall' } },
     ];
-    const m: MetricSnapshot = { overall: { false_positive_rate: 0.03 } }; // observed < target → 已达成，gap=+0.02
+    const m: MetricSnapshot = { overall: { false_positive_rate: 0.03 } }; // observed < target → achieved, gap=+0.02
     await generateNextVersion(
       { ...commonGenArgs(), goals: goalsLE, metrics: m },
       makeInvokeLLMDependencies(adapter),
@@ -833,7 +833,7 @@ describe('generateNextVersion', () => {
     );
     expect(result.budget.errorAnalysisTruncated).toBe(true);
     expect(result.budget.originalErrorAnalysisChars).toBe(longAnalysis.length);
-    // generate user prompt 内 errorAnalysisText 被截断了
+    // Inside the generate user prompt, errorAnalysisText is truncated
     const call = adapter.callsFor('generate')[0]!;
     expect(call.userPrompt).toContain('…[truncated]');
   });
@@ -881,7 +881,7 @@ describe('generateNextVersion', () => {
     const goalsMissing: OptimizationGoal[] = [
       { metric: 'accuracy', op: '>=', value: 0.9, scope: { kind: 'overall' } },
     ];
-    const m: MetricSnapshot = { overall: { f1: 0.5 } }; // accuracy 缺失
+    const m: MetricSnapshot = { overall: { f1: 0.5 } }; // accuracy is missing
     await generateNextVersion(
       { ...commonGenArgs(), goals: goalsMissing, metrics: m },
       makeInvokeLLMDependencies(adapter),
@@ -906,7 +906,7 @@ describe('generateNextVersion', () => {
   });
 
   it('retries once and succeeds when first response drops a required base variable', async () => {
-    // 首次丢占位 → 反馈给 LLM → 第二次补回 {{text}} → 成功，retries=1, autoPatched=false
+    // First-time placeholder lost → feedback to LLM → second call restores {{text}} → success, retries=1, autoPatched=false
     const droppingResp = JSON.stringify({
       newPromptBody: '请综合判断评论的整体情感倾向。无任何变量占位的整段重写。',
       changeSummary: 'x',
@@ -925,7 +925,7 @@ describe('generateNextVersion', () => {
     expect(result.autoPatched).toBe(false);
     expect(result.patchedVariables).toEqual([]);
     expect(result.newPromptBody).toContain('{{text}}');
-    // 第二次调用 messages 末尾 user 消息必须含 retry 反馈段（FakeLLMAdapter.userPrompt 取第一条 user，retry feedback 是追加的最后一条）
+    // On the second call, the last user message in messages must contain the retry feedback section (FakeLLMAdapter.userPrompt picks the first user message; retry feedback is the appended last one)
     const retryMessages = adapter.callsFor('generate')[1]!.messages!;
     const userMsgs = retryMessages.filter((m) => m.role === 'user');
     const lastUser = userMsgs[userMsgs.length - 1]!;
@@ -935,7 +935,7 @@ describe('generateNextVersion', () => {
   });
 
   it('auto-patches when LLM keeps dropping required variable across all retries', async () => {
-    // 连续 3 次（首调 + 2 次重试）都丢占位 → 走系统兜底补丁，retries=2, autoPatched=true
+    // 3 consecutive calls (initial + 2 retries) all miss the placeholder → fall back to the system patch; retries=2, autoPatched=true
     const droppingResp = JSON.stringify({
       newPromptBody: '请综合判断评论的整体情感倾向。无任何变量占位的整段重写。',
       changeSummary: 'x',
@@ -953,7 +953,7 @@ describe('generateNextVersion', () => {
   });
 
   it('throws InvalidVariableUsageError immediately on disallowed variable (no retry)', async () => {
-    // LLM 输出含白名单外变量 → 业务方字段配置错误，重试也救不了 → 立即 fatal
+    // LLM output contains a variable outside the whitelist → business-side field config error; retries cannot save it → fatal immediately
     const badResp = JSON.stringify({
       newPromptBody: '判断 {{secret_id}} 的情感。',
       changeSummary: 'x',
@@ -967,7 +967,7 @@ describe('generateNextVersion', () => {
       name: 'InvalidVariableUsageError',
       disallowedVariables: ['secret_id'],
     });
-    // 确认只调了 1 次（disallowed 不走重试）
+    // Confirm only 1 call was made (disallowed does not go through retries)
     expect(adapter.callsFor('generate')).toHaveLength(1);
   });
 });
@@ -1016,7 +1016,7 @@ describe('optimization run_results 持久化(SPEC 25 §11.2)', () => {
       dbosWorkflowId: runResultMeta.dbosWorkflowId,
       status: 'success',
     });
-    // parsed_output 含 errorPatterns / suggestedChanges,喂前端详情页(SPEC 25 §11.3)
+    // parsed_output contains errorPatterns / suggestedChanges, fed to the frontend detail page (SPEC 25 §11.3)
     const parsed = writer.records[0]!.parsedOutput as Record<string, unknown> | null;
     expect(parsed).not.toBeNull();
     expect(parsed).toHaveProperty('errorPatterns');

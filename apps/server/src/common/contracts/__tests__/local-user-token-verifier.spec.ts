@@ -38,7 +38,7 @@ describe('LocalUserTokenVerifier', () => {
   });
 
   function withRow(row: unknown) {
-    // 每次调用 db.select() 都返回新的 chain，避免被前一次 verify 的 await 链耗尽。
+    // Every db.select() call returns a fresh chain so it is not exhausted by the previous verify's await chain.
     db.select = vi.fn(() => makeQueryChain(row ? [row] : []));
   }
 
@@ -50,8 +50,8 @@ describe('LocalUserTokenVerifier', () => {
   });
 
   it('使用 sha256 hash 查表（hash 长度 64 hex）', async () => {
-    // verifier 内部用 createHash('sha256').update(token).digest('hex')，
-    // 这里只做断言 hash 形态，避免对 drizzle chain 形态做深度耦合。
+    // The verifier internally uses createHash('sha256').update(token).digest('hex');
+    // here we only assert the hash shape to avoid tightly coupling to the drizzle chain shape.
     expect(HASH).toMatch(/^[a-f0-9]{64}$/);
   });
 
@@ -113,7 +113,7 @@ describe('LocalUserTokenVerifier', () => {
     withRow({ id: TOKEN_ID, ipWhitelist: null, expiresAt: null });
     const verifier = new LocalUserTokenVerifier(db);
     await verifier.verify(TOKEN);
-    // update 应该被调用过一次（fire-and-forget）
+    // update should be called exactly once (fire-and-forget)
     expect(updateChain.update).toHaveBeenCalledTimes(1);
   });
 

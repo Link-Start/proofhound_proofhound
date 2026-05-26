@@ -1,4 +1,4 @@
-// JudgmentStrategy 接口 — 详见 docs/specs/07-code-structure.md §12.2 + docs/specs/24-experiments.md §7
+// JudgmentStrategy interface — see docs/specs/07-code-structure.md §12.2 + docs/specs/24-experiments.md §7
 export type ProjectType = 'classification' | 'generative' | 'agent';
 
 export type JudgmentStatus = 'correct' | 'incorrect' | 'parse_error' | 'judge_error';

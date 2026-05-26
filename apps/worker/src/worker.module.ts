@@ -13,7 +13,7 @@ import { RedisModule } from './infrastructure/redis/redis.module';
       useFactory: () => ({
         connection: { url: process.env['REDIS_URL'] ?? 'redis://localhost:6379' },
         defaultJobOptions: {
-          // SPEC 03 §4.2：LLM job 默认 5 次重试 + 指数退避 1s→32s；上限 5 min
+          // SPEC 03 §4.2: LLM jobs use 5 retries + exponential backoff 1s→32s by default; capped at 5 min
           attempts: 5,
           backoff: { type: 'exponential', delay: 1_000 },
         },

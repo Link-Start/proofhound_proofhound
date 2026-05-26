@@ -1,15 +1,15 @@
-// LocalMcpAuthResolver — MCP channel 默认实现
-// 详见 docs/specs/08-saas-adapter-boundary.md §3.3
+// LocalMcpAuthResolver — default implementation for the MCP channel
+// See docs/specs/08-saas-adapter-boundary.md §3.3
 //
-// resolveFromMcp() 当前仍是 "transport TODO" 阶段：
-// OSS apps/server/src/channels/mcp/ 下只有 tool 定义聚合，**没有真正挂载 MCP server**
-// （mcp.controller.ts 是空 controller，没有 transport adapter；getMcpActor 历史上从 McpToolContext
-// 接 actor 字段直接读）。在 MCP transport adapter 落地前，本 resolver 提供：
-//   - resolveFromMcp(metadata): 尝试从 metadata.authInfo.token / headers.authorization / meta.token
-//     提取 token；若提取到走 verifier，否则抛 401。
-//   - resolveFromUserToken(token): 直接 verifier 校验（与 HTTP 路径行为一致，跳过 IP 校验）。
+// resolveFromMcp() is still in the "transport TODO" phase:
+// OSS apps/server/src/channels/mcp/ only contains tool definition aggregation; **no real MCP server is mounted**
+// (mcp.controller.ts is an empty controller without a transport adapter; historically getMcpActor read the actor field directly
+// from McpToolContext). Until the MCP transport adapter lands, this resolver provides:
+//   - resolveFromMcp(metadata): try to extract token from metadata.authInfo.token / headers.authorization / meta.token;
+//     if found, run the verifier; otherwise throw 401.
+//   - resolveFromUserToken(token): verifier check directly (same behavior as HTTP path, skipping IP check).
 //
-// 这一步保证 SaaS adapter 可以照常 override；同时不阻塞 HTTP 主路径。
+// This keeps SaaS adapters overridable as usual without blocking the HTTP mainline.
 
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { McpAuthResolver } from './mcp-auth.resolver';
@@ -34,8 +34,8 @@ export class LocalMcpAuthResolver extends McpAuthResolver {
   }
 
   private extractToken(metadata: McpRequestMetadataLike): string | null {
-    // TODO(mcp-transport): MCP SDK 真正接入后，statement 应改成读 SDK 提供的 authInfo.token；
-    // 当前实现是基于 SDK 几种常见做法的合并兜底（authInfo / headers / meta），SDK 落地时收敛。
+    // TODO(mcp-transport): once the MCP SDK is actually wired up, this statement should switch to reading the SDK-provided authInfo.token;
+    // the current implementation is a fallback union of common SDK shapes (authInfo / headers / meta) and will be tightened when the SDK lands.
     if (metadata.authInfo?.token) return metadata.authInfo.token;
 
     const headers = metadata.headers ?? {};

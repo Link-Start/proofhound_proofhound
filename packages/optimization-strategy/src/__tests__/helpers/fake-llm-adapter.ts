@@ -1,4 +1,4 @@
-// 按 system prompt 内容嗅探来分流响应的 LLMAdapter 替身
+// LLMAdapter test double that dispatches responses by sniffing the system prompt content
 import type { AdapterInvokeArgs, AdapterInvokeResult, LLMAdapter, LLMMessage } from '@proofhound/llm-client';
 
 export type AnalyzeStep =
@@ -41,7 +41,7 @@ function detectStep(systemPrompt: string): AnalyzeStep {
   if (systemPrompt.includes('混淆对分析子任务')) return 'confusion';
   if (systemPrompt.includes('回归样本分析子任务')) return 'regression';
   if (systemPrompt.includes('错误模式分析汇总师')) return 'summarize';
-  // 顺序敏感:首版生成的 system prompt 也含"提示词",但角色名"首版提示词草拟工程师"独特,放在 generate 之前匹配
+  // Order-sensitive: the first-version generation system prompt also contains the "prompt" keyword, but the unique first-version-drafter role name is matched before the regular generate role
   if (systemPrompt.includes('首版提示词草拟工程师')) return 'generateInitial';
   if (systemPrompt.includes('提示词改写工程师')) return 'generate';
   return 'unknown';

@@ -166,13 +166,13 @@ function mapPromptVersionToOption(prompt: PromptListItemDto, version: PromptVers
   };
 }
 
-// model.{rpm|tpm|concurrency}.limit 为 -1 表示无限制
+// model.{rpm|tpm|concurrency}.limit = -1 means unlimited
 function formatModelLimit(limit: number): string {
   return limit < 0 ? '∞' : formatThousand(limit);
 }
 
-// expected_output 是 ground truth（评判用），既不是 prompt 输入字段也不是
-// metadata —— 注入 prompt 会泄漏答案，后端 toLoopFieldWhitelist 也会兜底剔除。
+// expected_output is the ground truth (used for judgment); it is neither a prompt input field nor
+// metadata — injecting it into the prompt would leak the answer; backend toLoopFieldWhitelist also strips it as a backstop.
 function deriveDatasetFields(dataset: DatasetListItemDto | null | undefined): {
   inputs: DatasetFieldSchemaDto[];
   metas: DatasetFieldSchemaDto[];
@@ -193,7 +193,7 @@ function classScopes(dataset: DatasetListItemDto | null | undefined): string[] {
   return dataset.categoryDistribution.categories.map((category) => category.label);
 }
 
-// ---- 详情面板内用的轻量 metric formatters（不抽公共,实验详情页有同款,但签名不同）----
+// ---- Lightweight metric formatters used inside the detail panel (not extracted; the experiment detail page has a similar one with a different signature) ----
 
 function formatMetricFraction(value: number | null | undefined, digits = 3) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -472,7 +472,7 @@ function ModeTile({
 // option rows (per-resource)
 // ---------------------------------------------------------------------------
 
-// ---- 实验信息面板:右栏完整画像(基本/质量/运行参数/工程指标/per-class)----
+// ---- Experiment info panel: right column full profile (basic / quality / run params / engineering metrics / per-class) ----
 
 function MetricCard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
@@ -552,7 +552,7 @@ function ExperimentDetailPanel({
         </div>
       )}
 
-      {/* 基本信息:常驻 */}
+      {/* Basic info: always visible */}
       <div className="rounded-md border bg-card px-3 py-3">
         <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
           {t('optimizations.new.origin.experimentDetail.basicSection')}
@@ -574,7 +574,7 @@ function ExperimentDetailPanel({
         </div>
       </div>
 
-      {/* 质量指标:常驻,4 卡 */}
+      {/* Quality metrics: always visible, 4 cards */}
       <div className="rounded-md border bg-card px-3 py-3">
         <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
           {t('optimizations.new.origin.experimentDetail.qualitySection')}
@@ -597,7 +597,7 @@ function ExperimentDetailPanel({
         </div>
       </div>
 
-      {/* 运行参数:折叠 */}
+      {/* Run parameters: collapsible */}
       <SectionDetails
         title={t('optimizations.new.origin.experimentDetail.runConfigSection')}
         testid="optimization-new-experiment-detail-runconfig"
@@ -623,7 +623,7 @@ function ExperimentDetailPanel({
         </div>
       </SectionDetails>
 
-      {/* 工程指标:折叠 */}
+      {/* Engineering metrics: collapsible */}
       <SectionDetails
         title={t('optimizations.new.origin.experimentDetail.engineeringSection')}
         testid="optimization-new-experiment-detail-engineering"
@@ -656,7 +656,7 @@ function ExperimentDetailPanel({
         </div>
       </SectionDetails>
 
-      {/* per-class:折叠 */}
+      {/* per-class: collapsible */}
       <SectionDetails
         title={t('optimizations.new.origin.experimentDetail.perClassSection')}
         testid="optimization-new-experiment-detail-per-class"
@@ -1056,8 +1056,8 @@ export function OptimizationNewPage({
   const optimizationNameTaken = useMemo(() => isProjectNameTaken(name, optimizations), [optimizations, name]);
 
   // Effective selections: user choice or fall back to first-fit. Derived (no setState in render).
-  // experiment fallback 走 successExperiments[0]：列表过滤后 running/failed 等被排除，
-  // 这里也得对齐，否则用户没选时表单会落到不可见实验上
+  // experiment fallback uses successExperiments[0]: after list filtering, running/failed etc. are excluded;
+  // must align here, otherwise the form falls onto an invisible experiment when the user has not selected one
   const successExperimentsHead = useMemo(
     () => experiments.find((item) => item.status === 'success') ?? null,
     [experiments],
@@ -1065,8 +1065,8 @@ export function OptimizationNewPage({
   const effectiveExperimentId = selectedExperimentId || successExperimentsHead?.id || '';
   const effectivePromptId = selectedPromptId || prompts[0]?.id || '';
 
-  // 起步=experiment 且用户未手选模型时,实验模型 / 分析模型默认跟随实验关联模型;
-  // 关联模型已被软删时返回 undefined,继续 fallback 到 models[0]
+  // Start = experiment and the user has not manually picked a model: experiment model / analysis model defaults follow the experiment's bound model;
+  // when the bound model has been soft-deleted, returns undefined and falls back to models[0]
   const experimentDefaultModelId = useMemo(() => {
     if (originMode !== 'experiment') return undefined;
     const exp = experiments.find((item) => item.id === effectiveExperimentId);
@@ -1125,7 +1125,7 @@ export function OptimizationNewPage({
   );
 
   const impliedDatasetId =
-    originMode === 'experiment' ? (selectedExperiment?.datasetId ?? null) : effectiveDatasetId || null; // prompt 与 dataset 模式都使用 effectiveDatasetId
+    originMode === 'experiment' ? (selectedExperiment?.datasetId ?? null) : effectiveDatasetId || null; // Both prompt and dataset modes use effectiveDatasetId
 
   const impliedDataset = useMemo(
     () => (impliedDatasetId ? (datasets.find((item) => item.id === impliedDatasetId) ?? null) : null),
@@ -1143,8 +1143,8 @@ export function OptimizationNewPage({
     [models, effectiveAnalysisModelId],
   );
 
-  // filtered lists — 实验列表只接受 status==='success' 作为基线候选；
-  // 因为只有跑完的实验才有可信的运行参数 + 指标可被整组带入
+  // filtered lists — the experiment list only accepts status==='success' as a baseline candidate;
+  // only completed experiments have trustworthy run parameters + metrics that can be group-imported
   const successExperiments = useMemo(() => experiments.filter((item) => item.status === 'success'), [experiments]);
   const filteredExperiments = useMemo(() => {
     const query = experimentSearch.trim().toLowerCase();
@@ -1180,16 +1180,16 @@ export function OptimizationNewPage({
     );
   }, [models, analysisModelSearch]);
 
-  // ---- 运行参数自动同步 helper（避开 §4.21：所有 setState 走 callback，不在 useEffect 里监听同名 state）----
+  // ---- Run parameter auto-sync helper (avoiding §4.21: all setState goes through a callback, not a useEffect listening to the same-name state) ----
 
-  // 项目模型列表里查模型；不存在（被软删）返回 undefined
+  // Look up the model in the project model list; returns undefined when not found (soft-deleted)
   const modelOf = useCallback(
     (id: string | null | undefined) => (id ? models.find((item) => item.id === id) : undefined),
     [models],
   );
 
-  // 选实验 = 整组覆盖：modelId / analysisModelId(= modelId) / temperature / concurrency / rpm / tpm
-  // 实验 runConfig 优先 → 模型 limit 降级 → 硬编码兜底
+  // Selecting an experiment = whole-group override: modelId / analysisModelId(= modelId) / temperature / concurrency / rpm / tpm
+  // Experiment runConfig priority → model limit fallback → hardcoded backstop
   const applyExperimentDefaults = useCallback(
     (exp: ExperimentListItemDto) => {
       setSelectedExperimentId(exp.id);
@@ -1209,7 +1209,7 @@ export function OptimizationNewPage({
     [modelOf],
   );
 
-  // 切换模型 / 从 experiment 模式切走 → 运行参数跟随模型默认（temperature 模型无字段，保留用户值）
+  // Switch model / switch away from experiment mode → run parameters follow the model default (temperature has no model field; keep user value)
   const applyModelDefaults = useCallback((model: ProjectModelListItemDto) => {
     setSelectedModelId(model.id);
     setConcurrency(model.concurrency.limit > 0 ? model.concurrency.limit : 8);
@@ -1222,7 +1222,7 @@ export function OptimizationNewPage({
     setSelectedPromptVersionId('');
   }, []);
 
-  // 切换起步方式（仅 experiment → 其他）触发 applyModelDefaults，回退实验绑定的运行参数
+  // Switching start mode (experiment → other only) triggers applyModelDefaults, falling back to the run parameters bound to the experiment
   const handleOriginModeChange = useCallback(
     (next: OriginMode) => {
       setOriginMode((current) => {
@@ -1235,8 +1235,8 @@ export function OptimizationNewPage({
     [applyModelDefaults, selectedModel],
   );
 
-  // URL ?sourceExperimentId=<success-id> 一次性同步入口（唯一允许的 useEffect）
-  // ref 哨兵保证 setState 引发的 re-render 不会重新触发本 effect,所以不会循环
+  // URL ?sourceExperimentId=<success-id> one-shot sync entry (the only allowed useEffect)
+  // ref sentinel ensures setState-induced re-renders do not retrigger this effect, so no loop
   const didInitialSyncRef = useRef(false);
   useEffect(() => {
     if (didInitialSyncRef.current) return;
@@ -1244,7 +1244,7 @@ export function OptimizationNewPage({
     if (experiments.length === 0) return;
     const exp = experiments.find((item) => item.id === initialSourceExperimentId);
     if (exp && exp.status === 'success') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL 入口首次同步,ref 保证只跑一次
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL entry first-time sync; ref guarantees one-shot
       applyExperimentDefaults(exp);
     }
     didInitialSyncRef.current = true;

@@ -1,5 +1,5 @@
-// 正式发布兼容仓储：读写事实源为 ph_releases.release_lines / release_line_events
-// 详见 docs/specs/27-releases.md 与 docs/specs/06-database-schema.md
+// Production release compatibility repository: read/write source of truth is ph_releases.release_lines / release_line_events
+// See docs/specs/27-releases.md and docs/specs/06-database-schema.md
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DbClient } from '@proofhound/db';

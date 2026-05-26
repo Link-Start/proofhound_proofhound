@@ -262,7 +262,7 @@ export function AppShell({ children }: AppShellProps) {
   const { t } = useI18n();
   const projectContext = useProjectContext();
   const entityTitle = useBreadcrumbEntityTitle(pathname, projectContext.projectId);
-  // 初值用 SSR 默认，mount 后同步真实 cookie / localStorage，避免 hydration mismatch
+  // Initial value uses SSR default; after mount, sync with the real cookie / localStorage to avoid hydration mismatch
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarVariant, setSidebarVariantState] = useState<SidebarVariant>(DEFAULT_SIDEBAR_VARIANT);
   const [sidebarCollapsible, setSidebarCollapsibleState] = useState<SidebarCollapsible>(DEFAULT_SIDEBAR_COLLAPSIBLE);

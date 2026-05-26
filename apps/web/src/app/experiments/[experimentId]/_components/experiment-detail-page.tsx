@@ -281,7 +281,7 @@ interface ControlButton {
 
 function deriveControlButtons(status: ExperimentStatusDto, controlState: string | null): ControlButton[] {
   if (controlState === 'cancel' || (status === 'running' && controlState === 'stop')) {
-    return []; // pending 状态由 UI 表达
+    return []; // pending state is expressed by the UI
   }
   switch (status) {
     case 'running':

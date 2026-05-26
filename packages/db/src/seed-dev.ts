@@ -1,7 +1,7 @@
 /**
- * Dev seed: 写入当前开发环境的本地数据快照。
+ * Dev seed: writes the current dev environment's local data snapshot.
  *
- * 开源 self-hosted 版本创建单个本地项目作为数据边界，不创建成员、角色、平台连接器或组织治理数据。
+ * The OSS self-hosted edition creates a single local project as the data boundary; it does not create members, roles, platform connectors, or org governance data.
  */
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -255,8 +255,8 @@ async function main(): Promise<void> {
     seededDevModels = true;
   }
 
-  // connector 必须先于 webhook token 写入：webhook token 通过外键 connector_id 反向关联
-  // (ph_core.tokens, scope='webhook' AND connector_id=<connector.id>),详见 docs/specs/06-database-schema.md §3.2 / §4.5
+  // The connector must be written before the webhook token: the webhook token is reverse-linked via the foreign key connector_id
+  // (ph_core.tokens, scope='webhook' AND connector_id=<connector.id>); see docs/specs/06-database-schema.md §3.2 / §4.5
   for (const fixture of DEV_CONNECTORS) {
     const shape = getConnectorShape(fixture.kind);
     await db

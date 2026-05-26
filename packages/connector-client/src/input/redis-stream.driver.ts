@@ -13,8 +13,8 @@ import type {
   RedisBrokerCredentials,
 } from '../types';
 
-// Redis Stream:用 XREVRANGE key + - COUNT N 读最新 N 条,不消费 / 不提交
-// id 形如 `1700000000000-0`,可解析出毫秒时间戳作为 receivedAt
+// Redis Stream: use XREVRANGE key + - COUNT N to read the latest N entries; does not consume / commit
+// id is in the form `1700000000000-0`; parse the millisecond timestamp as receivedAt
 function parseStreamIdTimestamp(id: string): string | null {
   const dashIndex = id.indexOf('-');
   if (dashIndex === -1) return null;
@@ -23,7 +23,7 @@ function parseStreamIdTimestamp(id: string): string | null {
   return new Date(ms).toISOString();
 }
 
-// XREVRANGE 返回 `[id, [field1, value1, field2, value2, ...]]`,把扁平 KV 数组拼成对象
+// XREVRANGE returns `[id, [field1, value1, field2, value2, ...]]`; assemble the flat KV array into an object
 function fieldsToObject(fields: string[]): Record<string, string> {
   const obj: Record<string, string> = {};
   for (let i = 0; i + 1 < fields.length; i += 2) {
@@ -56,7 +56,7 @@ export const redisStreamInputDriver: InputDriver<RedisBrokerCredentials, RedisIn
 
     try {
       await redis.connect();
-      // XREVRANGE: 从最新往旧返回,COUNT N
+      // XREVRANGE: returns newest → oldest, COUNT N
       const rows = (await redis.xrevrange(connectorConfig.key, '+', '-', 'COUNT', limit)) as Array<[string, string[]]>;
       const messages: PeekMessage[] = rows.map(([id, fields]) => ({
         id,

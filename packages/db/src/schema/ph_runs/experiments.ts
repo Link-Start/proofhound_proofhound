@@ -1,4 +1,4 @@
-// ph_runs.experiments / optimizations — 离线回归实验与优化任务
+// ph_runs.experiments / optimizations — offline regression experiments and optimization tasks
 
 import { sql } from 'drizzle-orm';
 import {

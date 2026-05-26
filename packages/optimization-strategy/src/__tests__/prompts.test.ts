@@ -1,4 +1,4 @@
-// 测试跨轮历史段(SPEC 25 §11.3)的渲染、注入位置和 token budget 降级
+// Tests the rendering, injection position and token-budget degradation of the cross-round history section (SPEC 25 §11.3)
 import { describe, expect, it } from 'vitest';
 import {
   buildAnalyzeConfusionMessages,
@@ -73,7 +73,7 @@ describe('formatRoundHistory', () => {
     ];
     const out = formatRoundHistory(baseHistory, f1Goals);
     expect(out).toContain('(f1)');
-    // 测试数据没填 f1 字段 → 渲染"（缺失）"
+    // Test data omits the f1 field → renders the localized "(missing)" placeholder
     expect(out).toContain('（缺失）');
   });
 
@@ -89,8 +89,8 @@ describe('formatRoundHistory', () => {
       { ...baseHistory[0], appliedChanges: [], changeSummary: '' },
     ];
     const out = formatRoundHistory(empty, goals);
-    expect(out).toContain('（未提供）'); // changeSummary 空
-    expect(out).toContain('（无）'); // appliedChanges 空
+    expect(out).toContain('（未提供）'); // changeSummary empty
+    expect(out).toContain('（无）'); // appliedChanges empty
   });
 
   it('renders appliedTips per round (SPEC 25 §11.3 「工具箱轮换提示」)', () => {
@@ -113,7 +113,7 @@ describe('formatToolboxSwitchHint', () => {
     expect(out).toContain('原地转圈');
     expect(out).toContain('`输出约束硬性化`');
     expect(out).toContain('`Few-shot 示例`');
-    // 工具箱全集都列出来
+    // The full toolbox is listed
     for (const name of OPTIMIZATION_TIP_NAMES) {
       expect(out).toContain(`\`${name}\``);
     }
@@ -127,9 +127,9 @@ describe('formatToolboxSwitchHint', () => {
   });
 
   it('deduplicates trimmed tips via caller (formatter trusts input)', () => {
-    // formatToolboxSwitchHint 内部用 Set 去重 + trim 过滤
+    // formatToolboxSwitchHint internally dedupes with Set + filters by trim
     const out = formatToolboxSwitchHint(['思维链', '思维链', '  ', ''], OPTIMIZATION_TIP_NAMES);
-    // 思维链只出现一次在「已尝试」段（工具箱全集中也包含它，整体出现两次：一次已尝试 + 一次工具箱）
+    // Chain-of-thought appears only once in the "already tried" section (it is also in the full toolbox, so appears twice overall: once in "already tried" + once in the toolbox)
     const matches = out.match(/`思维链`/g) ?? [];
     expect(matches.length).toBe(2);
   });
@@ -173,17 +173,17 @@ describe('fitRoundHistoryToBudget', () => {
       isBest: i === 5,
       generatedFromBaseVersionId: `v${i}`,
     }));
-    // budget 200 足够小,使 L0 必超 → 至少进入 L1
+    // budget 200 is small enough that L0 must exceed → at least enters L1
     const r = fitRoundHistoryToBudget(longHistory, 200, goals);
     expect(r.truncated).toBe(true);
     expect(r.level).toBeGreaterThanOrEqual(1);
     expect(r.fitted).toBeDefined();
     expect(r.fitted!.length).toBe(6);
-    // 早期 entry(index 0) 的 changeSummary 被压缩
+    // Early entries (index 0) have changeSummary compressed
     const earlyEntry = r.fitted![0]!;
     const originalChars = longHistory[0]!.changeSummary.length;
     expect(earlyEntry.changeSummary.length).toBeLessThan(originalChars);
-    // 早期 appliedChanges 的 rationale 被去掉(L1/L2/L3 均如此)
+    // Early appliedChanges' rationale is removed (L1/L2/L3 all do)
     if (earlyEntry.appliedChanges.length > 0) {
       expect(earlyEntry.appliedChanges[0]!.rationale).toBeUndefined();
     }
@@ -206,10 +206,10 @@ describe('fitRoundHistoryToBudget', () => {
     expect(r.level).toBe(3);
     expect(r.truncated).toBe(true);
     expect(r.fitted!.length).toBe(50);
-    // 仅最后一条保留原 changeSummary / appliedChanges
+    // Only the last entry retains the original changeSummary / appliedChanges
     expect(r.fitted![49]!.changeSummary).toBe(big[49]!.changeSummary);
     expect(r.fitted![49]!.appliedChanges.length).toBe(1);
-    // 前 49 条 changeSummary / appliedChanges 都清空(但 metrics + delta 保留)
+    // The first 49 entries' changeSummary / appliedChanges are cleared (but metrics + delta are kept)
     for (let i = 0; i < 49; i++) {
       expect(r.fitted![i]!.changeSummary).toBe('');
       expect(r.fitted![i]!.appliedChanges).toEqual([]);
@@ -279,7 +279,7 @@ describe('buildGenerateMessages with roundHistory', () => {
   });
 
   it('renders toolbox switch hint even when roundHistory is empty (caller responsibility)', () => {
-    // caller 只在 streak >= 2 时构造 hint;但 formatter 不依赖 history,空 history 也能渲染
+    // The caller constructs the hint only when streak >= 2; but the formatter does not depend on history, and empty history can also render
     const { user } = buildGenerateMessages({
       ...baseArgs,
       toolboxSwitchHint: {

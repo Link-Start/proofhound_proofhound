@@ -1,20 +1,20 @@
-// per-connector webhook token fixture：仅 dev seed 使用，seed-dev.ts 顶部已禁止 production。
-// 业务术语 webhook token，物理表 ph_core.tokens (scope='webhook' AND connector_id=...)。
-// seed 时用 node:crypto sha256(plaintext) 算 token_hash；明文打印到控制台一次，前端只能看到 prefix。
-// 详见 docs/specs/06-database-schema.md §3.2 / §4.5。
+// per-connector webhook token fixture: used only by dev seed; the top of seed-dev.ts already forbids production.
+// Business term: webhook token; physical table: ph_core.tokens (scope='webhook' AND connector_id=...).
+// At seed time, use node:crypto sha256(plaintext) to compute token_hash; print plaintext to the console once; the frontend only sees the prefix.
+// See docs/specs/06-database-schema.md §3.2 / §4.5.
 
 export type DevTokenFixture = {
   id: string;
   scope: 'webhook';
-  // 必须指向 DEV_CONNECTORS 中某个 webhook-input 连接器 id
+  // Must point to a webhook-input connector id in DEV_CONNECTORS
   connectorId: string;
   name: string;
   prefix: string;
   plaintext: string;
 };
 
-// 这两条 webhook token 分别挂在 sync / async webhook-input 连接器上,
-// 与 packages/db/src/fixtures/dev/connectors.ts 中的两条 webhook-input 一一对应。
+// These two webhook tokens are attached to the sync / async webhook-input connectors respectively,
+// matching the two webhook-input rows in packages/db/src/fixtures/dev/connectors.ts one-to-one.
 export const DEV_TOKENS: DevTokenFixture[] = [
   {
     id: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001',

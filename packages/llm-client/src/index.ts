@@ -1,5 +1,5 @@
-// LLM 调用包出口
-// 任何调用都必须经过 invokeLLM —— 内部会执行日志契约（docs/specs/05-logging.md §5.6）
+// LLM client package exports
+// Any call must go through invokeLLM — it internally enforces the logging contract (docs/specs/05-logging.md §5.6)
 export * from './invoke';
 export * from './invoke-streaming';
 export * from './token-estimate';

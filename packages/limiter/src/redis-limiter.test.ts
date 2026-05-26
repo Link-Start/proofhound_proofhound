@@ -21,7 +21,7 @@ describe('RedisLimiter', () => {
     expect(evalMock.mock.calls[0]?.[1]).toBe(4);
     expect(evalMock.mock.calls[1]?.[1]).toBe(1);
 
-    // ACQUIRE 第 6 个 ARGV 是 concurrency_ttl_ms（默认 5 min）
+    // The 6th ARGV of ACQUIRE is concurrency_ttl_ms (default 5 min)
     const acquireArgs = evalMock.mock.calls[0]!;
     expect(acquireArgs[acquireArgs.length - 2]).toBe(5 * 60_000);
     expect(typeof acquireArgs[acquireArgs.length - 1]).toBe('string');
@@ -110,12 +110,12 @@ describe('RedisLimiter', () => {
       }),
     ).rejects.toBeInstanceOf(RateLimitExceededError);
 
-    // 一次 ACQUIRE 调用，没有 RELEASE
+    // One ACQUIRE call, no RELEASE
     expect(evalMock).toHaveBeenCalledTimes(1);
   });
 
   it('release script floors at zero (regression: never decrement below 0)', async () => {
-    // 通过断言脚本内文验证 floor 分支，避免 mock 复制 Lua 语义
+    // Verify the floor branch by asserting against the script body itself, avoiding having to replicate Lua semantics in the mock
     const evalMock = vi.fn(async (_script: string) => 0);
     const redis = { eval: evalMock };
     const limiter = new RedisLimiter(redis);

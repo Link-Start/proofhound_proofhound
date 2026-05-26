@@ -13,8 +13,8 @@ import type {
   RedisBrokerCredentials,
 } from '../types';
 
-// Redis List:LRANGE key 0 limit-1 读最近 N 条(不消费)
-// 业务约定:list 头部为最新(BRPOPLPUSH / LPUSH 写入),从 index 0 开始向后即是最新 → 旧
+// Redis List: LRANGE key 0 limit-1 reads the latest N entries (does not consume)
+// Business convention: the head of the list is the newest (BRPOPLPUSH / LPUSH writes here); index 0 onward goes from newest to oldest
 function tryParseJson(raw: string): unknown {
   try {
     return JSON.parse(raw);

@@ -15,7 +15,7 @@ export const MODEL_UNLIMITED_RATE_LIMIT = -1;
 export const MODEL_DEFAULT_CONCURRENCY_LIMIT = 20;
 export const MODEL_MAX_CONCURRENCY_LIMIT = 999;
 
-// UI 下拉可选的厂商类型；DTO 仍保持开放字符串，避免锁死已有数据和未来扩展。
+// UI-selectable vendor types; the DTO keeps an open string to avoid locking existing data and future extensions.
 export const SUPPORTED_MODEL_PROVIDER_TYPES = [
   'openai',
   'azure-openai',
@@ -35,7 +35,7 @@ const modelRateLimitValueSchema = z
 
 const modelConcurrencyLimitValueSchema = z.number().int().min(1).max(MODEL_MAX_CONCURRENCY_LIMIT);
 
-// limit = 上限；usage = 0-100 百分比；current = 当前窗口绝对计数（RPM/TPM）或 in-flight 数（concurrency）
+// limit = upper bound; usage = 0-100 percent; current = absolute counter in the current window (RPM/TPM) or in-flight count (concurrency)
 export const modelLimitSchema = z.object({
   limit: modelRateLimitValueSchema,
   usage: z.number().min(0).max(100),
@@ -70,7 +70,7 @@ export const modelActiveUsageSchema = z.object({
 export type ModelActiveUsageDto = z.infer<typeof modelActiveUsageSchema>;
 
 // ---------------------------------------------------------------------------
-// 列表项
+// List item
 // ---------------------------------------------------------------------------
 const modelBaseListItemSchema = z.object({
   id: z.string().uuid(),
@@ -103,7 +103,7 @@ export const projectModelListItemSchema = modelBaseListItemSchema.extend({
 export type ProjectModelListItemDto = z.infer<typeof projectModelListItemSchema>;
 
 // ---------------------------------------------------------------------------
-// 列表响应包装
+// List response wrapper
 // ---------------------------------------------------------------------------
 export const projectModelListResponseSchema = z.object({
   data: z.array(projectModelListItemSchema),
@@ -112,7 +112,7 @@ export const projectModelListResponseSchema = z.object({
 export type ProjectModelListResponseDto = z.infer<typeof projectModelListResponseSchema>;
 
 // ---------------------------------------------------------------------------
-// 创建 / 更新 DTO
+// Create / update DTOs
 // ---------------------------------------------------------------------------
 const modelRateLimitInputSchema = z.object({
   limit: z.coerce
@@ -174,7 +174,7 @@ export const updateProjectModelSchema = modelMutableFieldsSchema
 export type UpdateProjectModelDto = z.infer<typeof updateProjectModelSchema>;
 
 // ---------------------------------------------------------------------------
-// 子操作响应
+// Sub-operation responses
 // ---------------------------------------------------------------------------
 export const modelReferencesSchema = modelActiveUsageSchema.extend({
   total: z.number().int().nonnegative(),
@@ -207,7 +207,7 @@ export const modelExportFormatSchema = z.enum(['csv']);
 export type ModelExportFormatDto = z.infer<typeof modelExportFormatSchema>;
 
 // ---------------------------------------------------------------------------
-// 模型上下文字典（保持不变）
+// Model context dictionary (unchanged)
 // ---------------------------------------------------------------------------
 export const contextWindowTokensSchema = z.coerce.number().int().positive();
 

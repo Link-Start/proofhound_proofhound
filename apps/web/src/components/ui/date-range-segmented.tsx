@@ -77,7 +77,7 @@ const WEEKDAY_REFERENCE_DATES = [
   '2024-01-13T00:00:00',
 ];
 
-// 由 preset 计算 [from, to)。to 用 now，方便监控展示
+// Compute [from, to) from a preset. to uses now to make monitoring display convenient
 export function resolveDateRangePreset(
   preset: DateRangePreset,
   now: Date = new Date(),
@@ -166,8 +166,8 @@ function CustomRangePopover({
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" sideOffset={6} className="w-[calc(100vw-2rem)] p-3 sm:w-[640px]">
-        {/* 每次重开 popover 都是新 form 实例，本地 state 从 props 初始化，
-            外部 value 变化时通过卸载/重建同步，避开 useEffect 回填模式 */}
+        {/* A new form instance is created each time the popover reopens; local state is initialized from props;
+            external value changes are synced via unmount/remount, avoiding the useEffect backfill pattern */}
         {open && (
           <CustomRangeForm
             initialFrom={value.from}

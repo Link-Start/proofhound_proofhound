@@ -1,11 +1,11 @@
-// LocalActorContextResolver — HTTP 入口默认实现
-// 详见 docs/specs/08-saas-adapter-boundary.md §3.2
+// LocalActorContextResolver — default implementation for the HTTP entry
+// See docs/specs/08-saas-adapter-boundary.md §3.2
 //
-// 行为：
-//   - 从 `Authorization: Bearer <token>` 解析；缺失 / 格式错抛 401
-//   - 调 LocalUserTokenVerifier（sha256 比对 ph_core.tokens scope='user'）
-//   - 提供 req.ip 给 verifier 做 ip_whitelist 校验
-//   - 成功后返回 ActorContext，由 LocalActorGuard 适配成 CurrentUserPayload
+// Behavior:
+//   - Parses `Authorization: Bearer <token>`; throws 401 if missing / malformed
+//   - Calls LocalUserTokenVerifier (sha256 compare against ph_core.tokens where scope='user')
+//   - Provides req.ip to the verifier for ip_whitelist validation
+//   - On success returns ActorContext, which LocalActorGuard adapts into CurrentUserPayload
 
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ActorContextResolver } from './actor-context.resolver';
@@ -26,7 +26,7 @@ export class LocalActorContextResolver extends ActorContextResolver {
   }
 
   async resolveFromUserToken(token: string): Promise<ActorContext> {
-    // ip_whitelist 跳过：本接口不持有请求 IP，SPEC §3.2 明确这条路径不校验 IP
+    // ip_whitelist skip: this entry does not carry the request IP; SPEC §3.2 explicitly states this path does not check IP
     return this.verifier.verify(token);
   }
 

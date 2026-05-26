@@ -1,11 +1,11 @@
-// ActorContextResolver — HTTP 入口 adapter 扩展点
-// 详见 docs/specs/08-saas-adapter-boundary.md §3.2
+// ActorContextResolver — HTTP-entry adapter extension point
+// See docs/specs/08-saas-adapter-boundary.md §3.2
 //
-// HTTP Controller 通过 LocalActorGuard → resolveFromHttp 完成 user token 校验；
-// 同样的 token 资源池由 McpAuthResolver 独立校验，但本 resolver **不**调用 McpAuthResolver
-// （SPEC §8 红线：三条入口 resolver 互不调用对方）。
+// HTTP controllers complete user-token validation via LocalActorGuard → resolveFromHttp;
+// the same token pool is validated independently by McpAuthResolver, but this resolver MUST NOT call McpAuthResolver
+// (SPEC §8 red line: the three entry resolvers never call each other).
 //
-// `resolveFromUserToken` 是给 HTTP 路径和单元测试的共享入口；不允许被 MCP 入口直接复用。
+// `resolveFromUserToken` is the shared entrypoint for HTTP paths and unit tests; it must not be reused directly by the MCP entry.
 
 import type { ActorContext } from '../actor-context';
 import type { HttpRequestLike } from './types';

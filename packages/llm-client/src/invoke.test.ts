@@ -166,8 +166,8 @@ describe('invokeLLM', () => {
   });
 
   it('passes roundIndex from RunResultContext through to writeRunResult (optimization path)', async () => {
-    // 优化 LLM 调用必须把 roundIndex 透传到 run_results 行,否则详情页
-    // listOptimizationLlmRunResults 的 isNotNull(round_index) 过滤会丢掉整行。
+    // Optimization LLM calls must pass roundIndex through to the run_results row; otherwise the detail page's
+    // listOptimizationLlmRunResults isNotNull(round_index) filter drops the whole row.
     const adapter: LLMAdapter = {
       providerType: 'fake',
       async invoke() {
@@ -291,7 +291,7 @@ describe('invokeLLM', () => {
       invokeLLM(baseArgs(), { limiter, logger, runResultWriter, adapters: [adapter] }),
     ).rejects.toThrow('provider is down');
 
-    // 关键：失败时仅记录日志,不再写 run_result;否则 BullMQ retry 成功后无法覆盖第一次失败的 error 行
+    // Critical: on failure, only log; do NOT write a run_result; otherwise after BullMQ retries succeed, they cannot overwrite the first failed error row
     expect(order).toEqual(['acquire', 'provider', 'log_failed', 'release']);
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -325,7 +325,7 @@ describe('invokeLLM', () => {
     expect(providerInvoke).not.toHaveBeenCalled();
     expect(runResultWriter.writeRunResult).not.toHaveBeenCalled();
     expect(logger.error).not.toHaveBeenCalled();
-    // 关键：acquire 抛错时不应再调 release（否则 concurrency 计数变负）
+    // Critical: when acquire throws, do NOT call release (otherwise the concurrency count goes negative)
     expect(limiter.release).not.toHaveBeenCalled();
   });
 
@@ -848,7 +848,7 @@ describe('invokeLLM — maxRetries 内部重试', () => {
       invokeLLM({ ...baseArgs(), maxRetries: 1 }, { limiter, logger, adapters: [adapter] }),
     ).rejects.toBeInstanceOf(LLMAdapterHttpError);
 
-    expect(invokeMock).toHaveBeenCalledTimes(2); // 初次 + 1 次重试
+    expect(invokeMock).toHaveBeenCalledTimes(2); // Initial + 1 retry
     expect(limiter.release).toHaveBeenCalledTimes(1);
   });
 

@@ -141,7 +141,7 @@ export function usePeekConnector(projectId: string) {
 }
 
 // per-connector webhook tokens hooks
-// 见 packages/api-client/src/connector.ts + docs/specs/26-connectors.md
+// See packages/api-client/src/connector.ts + docs/specs/26-connectors.md
 export function useConnectorWebhookTokens(projectId: string, connectorId: string, enabled = true) {
   return useQuery({
     queryKey: webhookTokensKey(projectId, connectorId),

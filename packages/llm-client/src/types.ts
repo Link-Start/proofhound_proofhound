@@ -84,8 +84,8 @@ export interface RunResultContext {
   dbosWorkflowId?: string | null;
   bullmqJobId?: string | null;
   attempt: number;
-  // 优化 LLM 调用专用:optimization_analysis / optimization_generate 的轮序号(0-based)。
-  // 详情页 listOptimizationLlmRunResults 用 isNotNull(round_index) 过滤,缺失会导致整行被吃。
+  // Used by optimization LLM calls: round index (0-based) for optimization_analysis / optimization_generate.
+  // The detail page's listOptimizationLlmRunResults filters by isNotNull(round_index); missing values cause the whole row to be dropped.
   roundIndex?: number | null;
 }
 
@@ -104,9 +104,9 @@ export interface InvokeLLMArgs {
   runResult?: RunResultContext;
   timeoutMs?: number;
   /**
-   * 单条样本的内部重试次数（对可重试 HTTP 状态 + 网络错误生效）。
-   * 不影响 BullMQ job 级 attempts；RateLimitExceededError 透传不被吞。
-   * 缺省 0（向后兼容）。
+   * Per-sample internal retry count (applies to retryable HTTP statuses + network errors).
+   * Does not affect BullMQ job-level attempts; RateLimitExceededError passes through and is not swallowed.
+   * Defaults to 0 (backward compatible).
    */
   maxRetries?: number;
   parseResponse?: (content: string) => unknown;
@@ -174,7 +174,7 @@ export interface LLMRunResultRecord {
   attempt: number;
   dbosWorkflowId?: string | null;
   bullmqJobId?: string | null;
-  // 优化 LLM 调用专用,见 RunResultContext.roundIndex 注释。
+  // Used by optimization LLM calls; see the comment on RunResultContext.roundIndex.
   roundIndex?: number | null;
 }
 

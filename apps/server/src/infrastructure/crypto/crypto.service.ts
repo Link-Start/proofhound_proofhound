@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { decryptApiKey, encryptApiKey } from '@proofhound/crypto';
 
-// API KEY 的加解密算法 / 格式定义在 @proofhound/crypto，server / worker / seed 唯一事实标准。
-// 本 service 只负责注入 MODEL_API_KEY_ENCRYPTION_KEY 并暴露 NestJS 友好的封装。
+// The API KEY encryption/decryption algorithm and format are defined in @proofhound/crypto — the single source of truth for server / worker / seed.
+// This service only injects MODEL_API_KEY_ENCRYPTION_KEY and exposes a NestJS-friendly wrapper.
 
 @Injectable()
 export class CryptoService {

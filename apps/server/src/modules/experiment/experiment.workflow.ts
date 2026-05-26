@@ -24,7 +24,7 @@ const { experiments, datasetSamples, promptVersions, models, datasets } = schema
 const DEFAULT_BATCH_SIZE = 50;
 const POLL_SLEEP_SCHEDULE_SEC = [2, 2, 3, 5, 8, 10];
 const POLL_TIMEOUT_SEC = 30 * 60;
-// runResultId 命名空间 UUID(随机选定 + 写死,保证跨重启稳定)
+// runResultId namespace UUID (chosen randomly and pinned, to stay stable across restarts)
 const RUN_RESULT_NS = '6f1c2c0a-2c4e-4f5a-9d8a-3b1e2a000001';
 
 export interface ExperimentPlan {
@@ -46,15 +46,15 @@ interface RenderedPromptForPayload {
   expectedOutput: unknown;
 }
 
-// DBOS SDK 4.x 要求 instance-method workflow / step 的宿主类继承 ConfiguredInstance,
-// 否则恢复时无法找回实例,运行时抛 DBOSInvalidWorkflowTransitionError。
+// DBOS SDK 4.x requires the host class of instance-method workflow / step to extend ConfiguredInstance,
+// otherwise restore cannot find the instance and the runtime throws DBOSInvalidWorkflowTransitionError.
 @Injectable()
 export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
   private readonly logger = createLogger('experiment.workflow', { service: 'server' });
 
-  // 注册必须发生在 DBOS.launch() 之前。NestJS 在调用 onModuleInit hook 之前先实例化所有
-  // provider；DbosService.onModuleInit 又跑在 ExperimentModule.onModuleInit 之前;因此把
-  // registerStep / registerWorkflow 放在 constructor 是保证 register-before-launch 的最简方案。
+  // Registration must happen before DBOS.launch(). NestJS instantiates all providers before invoking onModuleInit hooks;
+  // DbosService.onModuleInit also runs before ExperimentModule.onModuleInit, so placing
+  // registerStep / registerWorkflow in the constructor is the simplest way to guarantee register-before-launch.
   readonly runWorkflow: (experimentId: string) => Promise<void>;
   private readonly loadPlanStep: (experimentId: string) => Promise<ExperimentPlan>;
   private readonly markStartedStep: (experimentId: string) => Promise<void>;
@@ -161,8 +161,8 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
           },
           'workflow_batch_done',
         );
-        // poll 内感知到的控制信号:已 enqueue 的 LLM job 不取消(worker 端没有 abort 通道),
-        // 但 workflow 在 batch 边界立刻终结,不再发起新 batch
+        // Control signals observed inside poll: already-enqueued LLM jobs are not cancelled (the worker has no abort channel),
+        // but the workflow terminates immediately at the batch boundary and stops dispatching new batches
         if (counts.control === 'cancel') {
           await this.finalizeStep(experimentId, 'cancelled');
           return;
@@ -175,7 +175,7 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
 
       this.logger.debug({ experimentId, totalTerminal, totalFailed }, 'workflow_loop_finished');
 
-      // 全部样本失败 → 实验整体 failed；部分失败仍算 success(failed_samples 已经反映在 metrics 里)
+      // All samples failed → the experiment as a whole is failed; partial failures still count as success (failed_samples is already reflected in metrics)
       if (totalTerminal > 0 && totalFailed === totalTerminal) {
         await this.finalizeStep(experimentId, 'failed', 'all_samples_failed');
         return;
@@ -285,8 +285,8 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     const renderContext = await this.loadRenderContext(experimentId);
     const samples = await this.loadSampleDataByIds(sampleIds);
     const expectedField = readExpectedField(renderContext.judgmentRules);
-    // step 内调 DBOS.workflowID 拿当前 workflow id;跟着 payload 透传给 worker,
-    // 让 LLM 调用日志和 ph_runs.run_results.dbos_workflow_id 能按 workflow 串联(SPEC 05 §5.6)
+    // Inside the step we call DBOS.workflowID to capture the current workflow id, and pass it along in the payload to the worker,
+    // so that LLM call logs and ph_runs.run_results.dbos_workflow_id can be threaded by workflow (SPEC 05 §5.6)
     const dbosWorkflowId = DBOS.workflowID;
 
     const runResultIds: string[] = [];
@@ -345,7 +345,7 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
       this.logger.debug({ experimentId, pollIndex, expected: runResultIds.length, ...counts }, 'step_poll_batch_tick');
       if (counts.terminalCount >= runResultIds.length) return { ...counts, control: null };
 
-      // 每轮 poll 都读一下 control_state,避免大 batch + 慢模型场景下用户点停止后要等整批跑完
+      // Re-read control_state every poll round, so that under large-batch + slow-model scenarios, a user who clicks stop does not have to wait for the whole batch to finish
       const controlState = await this.readControlStateImpl(experimentId);
       if (controlState === 'stop' || controlState === 'cancel') {
         this.logger.debug({ experimentId, controlState }, 'step_poll_batch_control_interrupt');
@@ -480,8 +480,8 @@ function pickInference(runConfig: Record<string, unknown>): LlmJobPayload['infer
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-// 实验级"自我节流"上限。worker 在 invokeLLM 前与 model 级配额取 min；
-// 模型级始终是天花板（SPEC 21 §配额 / SPEC 24 §4）。
+// Experiment-level "self-throttling" cap. The worker takes min(this, model-level quota) before invokeLLM;
+// the model-level cap is always the ceiling (SPEC 21 §quota / SPEC 24 §4).
 export function pickLimits(runConfig: Record<string, unknown>): LlmJobPayload['limits'] {
   const out: NonNullable<LlmJobPayload['limits']> = {};
   if (typeof runConfig['rpmLimit'] === 'number' && runConfig['rpmLimit'] > 0) {
@@ -496,7 +496,7 @@ export function pickLimits(runConfig: Record<string, unknown>): LlmJobPayload['l
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-// DTO 用 retries（复数），payload 用 maxRetries（单数）—— picker 内做命名转换。
+// DTO uses retries (plural) while payload uses maxRetries (singular) — the picker handles the rename.
 export function pickRetry(runConfig: Record<string, unknown>): LlmJobPayload['retry'] {
   if (typeof runConfig['retries'] === 'number' && runConfig['retries'] >= 0) {
     return { maxRetries: runConfig['retries'] as number };
@@ -513,7 +513,7 @@ function uuidV5FromSample(experimentId: string, sampleId: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-// drizzle-orm 没有暴露 inArray for raw uuid arrays;手工拼接安全 IN 子句
+// drizzle-orm does not expose inArray for raw uuid arrays; manually compose a safe IN clause
 function inArrayUuids(column: PgColumn, ids: string[]) {
   const params = sql.join(
     ids.map((id) => sql`${id}::uuid`),
@@ -522,7 +522,7 @@ function inArrayUuids(column: PgColumn, ids: string[]) {
   return sql`${column} IN (${params})`;
 }
 
-// 为方便外部 e2e / mcp 调用：暴露稳定的 runResultId 计算
+// For external e2e / mcp callers: expose a stable runResultId computation
 export function computeRunResultId(experimentId: string, sampleId: string): string {
   return uuidV5FromSample(experimentId, sampleId);
 }

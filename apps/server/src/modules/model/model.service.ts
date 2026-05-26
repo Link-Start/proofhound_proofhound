@@ -66,7 +66,7 @@ export class ModelService {
   ) {}
 
   // -------------------------------------------------------------------------
-  // 本地实例模型
+  // Local in-process model
   // -------------------------------------------------------------------------
   async listProjectModels(projectId: string, actor: CurrentUserPayload): Promise<ProjectModelListResponseDto> {
     await this.getAccessibleProject(projectId, actor);
@@ -100,8 +100,8 @@ export class ModelService {
     return this.toProjectModelListItem(row);
   }
 
-  // 供已完成项目权限校验的兄弟 Service（如 ExperimentService）直接查模型可见性，
-  // 不再重复跑 actor 鉴权；如需鉴权请走 getProjectModelDetail
+  // For sibling services that have already done project access checks (such as ExperimentService) to query model visibility directly,
+  // without re-running actor authorization; if authorization is needed, go through getProjectModelDetail
   async findModelAccessibleToProject(projectId: string, modelId: string): Promise<ProjectVisibleModelRow | null> {
     return this.repo.findModelAccessibleToProject(projectId, modelId);
   }
@@ -332,7 +332,7 @@ export class ModelService {
   }
 
   // -------------------------------------------------------------------------
-  // 模型上下文字典（保持原行为）
+  // Model context dictionary (behavior preserved)
   // -------------------------------------------------------------------------
   async listContextWindows(
     query: ListModelContextWindowsQueryDto,
@@ -357,7 +357,7 @@ export class ModelService {
   }
 
   // =========================================================================
-  // 私有辅助
+  // Private helpers
   // =========================================================================
   private async getAccessibleProject(projectId: string, actor: CurrentUserPayload) {
     accessControl.assertCan(actor, 'project_read', { projectId });
@@ -508,7 +508,7 @@ export class ModelService {
   }
 
   // -------------------------------------------------------------------------
-  // 映射：DB row → DTO
+  // Mapping: DB row → DTO
   // -------------------------------------------------------------------------
   private async toProjectModelListItem(row: ProjectVisibleModelRow): Promise<ProjectModelListItemDto> {
     const usage = await this.fetchUsageSnapshot(row.id);
@@ -627,7 +627,7 @@ export class ModelService {
   }
 
   // -------------------------------------------------------------------------
-  // CSV 导出
+  // CSV export
   // -------------------------------------------------------------------------
   private toProjectCsv(rows: ProjectModelListItemDto[]): string {
     const header = [

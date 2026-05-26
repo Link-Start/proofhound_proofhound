@@ -8,5 +8,5 @@ export interface OptimizationStrategy {
   description: string;
   projectTypes: ProjectType[];
   configSchema: z.ZodSchema;
-  // TODO: analyze + generateNextVersion 详见 docs/specs/07-code-structure.md §12.2
+  // TODO: analyze + generateNextVersion see docs/specs/07-code-structure.md §12.2
 }

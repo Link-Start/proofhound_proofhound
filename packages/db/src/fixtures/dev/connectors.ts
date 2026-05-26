@@ -1,12 +1,12 @@
-// 本地连接器 fixture:redis/kafka 各 input + output,
-// 再加 webhook 输入两条(sync + async,通过 config.webhookMode 区分,type 仍是 'webhook')。
-// 业务术语 connector,物理表 ph_assets.connectors,见 docs/specs/26-connectors.md。
+// Local connector fixtures: redis/kafka, each with input + output,
+// plus two webhook input rows (sync + async, distinguished via config.webhookMode; type stays 'webhook').
+// Business term: connector; physical table: ph_assets.connectors. See docs/specs/26-connectors.md.
 //
-// fixture 内部用 `kind` 字段做 discriminator(便于 seed-dev.ts switch);实际表里这一列不存在,
-// 拆成 direction + type 两列。`config` 形状对齐 packages/shared/src/dto/connector.dto.ts 的
-// 6 种 (type, direction) config schema。
+// Internally fixtures use a `kind` field as the discriminator (convenient for seed-dev.ts switch); the actual table does not have this column,
+// it is split into direction + type. The `config` shape mirrors the 6 (type, direction) config schemas in packages/shared/src/dto/connector.dto.ts.
+// (no need to re-link)
 //
-// 注:webhook 入站 token 不在本 fixture 关联;token 在 fixtures/dev/api-tokens.ts 用 connectorId 反向挂到 connector 上。
+// Note: inbound webhook tokens are not attached in this fixture; tokens are reverse-linked to the connector in fixtures/dev/api-tokens.ts via connectorId.
 
 const REDIS_CONNECTION = {
   source: 'local_config' as const,

@@ -1,5 +1,5 @@
-// 每模型单价 + 成本计算
-// 详见 docs/specs/21-models.md
+// Per-model pricing + cost calculation
+// See docs/specs/21-models.md
 
 export interface TokenUsage {
   inputTokens?: number | null;

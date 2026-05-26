@@ -1,6 +1,6 @@
-// C1 — HTTP 客户端入口
-// 每个资源单独一个文件（promptClient / datasetClient / ...）
-// 详见 docs/specs/07-code-structure.md §6.4
+// C1 — HTTP client entrypoint
+// Each resource has its own file (promptClient / datasetClient / ...)
+// See docs/specs/07-code-structure.md §6.4
 export * from './http';
 export * from './public-env';
 export * from './dataset';

@@ -1,6 +1,6 @@
-// 前后端共享契约入口
-// DTO / 枚举 / 类型放在各自子目录；每个文件 export `xxxSchema` (Zod) + `XxxDto = z.infer<typeof xxxSchema>`
-// 详见 docs/specs/07-code-structure.md §6.1
+// Frontend/backend shared contract entrypoint
+// DTOs / enums / types live in their respective subdirectories; each file exports `xxxSchema` (Zod) + `XxxDto = z.infer<typeof xxxSchema>`
+// See docs/specs/07-code-structure.md §6.1
 
 export * from './dto/model.dto';
 export * from './dto/connector.dto';

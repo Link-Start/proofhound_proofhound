@@ -1,5 +1,5 @@
-// 正式发布兼容服务。事实源为 release_lines / release_line_events。
-// 详见 docs/specs/27-releases.md
+// Production release compatibility service. The source of truth is release_lines / release_line_events.
+// See docs/specs/27-releases.md
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
@@ -27,7 +27,7 @@ export class ProductionReleaseService {
   ) {}
 
   // -------------------------------------------------------------------------
-  // 列表：每个提示词一行；停止后的发布仍保留最近事件作为离线记录
+  // List: one row per prompt; stopped releases still retain the latest event as an offline record
   // -------------------------------------------------------------------------
   async list(
     projectId: string,
@@ -60,7 +60,7 @@ export class ProductionReleaseService {
   }
 
   // -------------------------------------------------------------------------
-  // 详情：单事件
+  // Detail: single event
   // -------------------------------------------------------------------------
   async getDetail(projectId: string, eventId: string, actor: CurrentUserPayload): Promise<ProductionReleaseEventDto> {
     await this.assertReadAccess(projectId, actor);
@@ -70,7 +70,7 @@ export class ProductionReleaseService {
   }
 
   // -------------------------------------------------------------------------
-  // 按提示词的历史 timeline（最新在前）
+  // Per-prompt timeline (newest first)
   // -------------------------------------------------------------------------
   async getHistory(
     projectId: string,
@@ -82,7 +82,7 @@ export class ProductionReleaseService {
     if (!prompt) throw new NotFoundException(`Prompt ${promptId} not found in project`);
     const rows = await this.repo.listEventsByPrompt(projectId, promptId);
 
-    // 为 rollback 事件查目标版本号
+    // Look up the target version number for a rollback event
     const rollbackTargetIds = rows.map((r) => r.rollbackTargetEventId).filter((id): id is string => !!id);
     const rollbackTargetMap = new Map<string, number | null>();
     if (rollbackTargetIds.length > 0) {
@@ -106,7 +106,7 @@ export class ProductionReleaseService {
   }
 
   // -------------------------------------------------------------------------
-  // 新建发布：事务内"替换旧 running + INSERT 新 event(running)"
+  // Create a release: inside a transaction, "replace old running + INSERT new event(running)"
   // -------------------------------------------------------------------------
   async create(
     projectId: string,
@@ -115,7 +115,7 @@ export class ProductionReleaseService {
   ): Promise<ProductionReleaseEventDto> {
     await this.assertWriteAccess(projectId, actor);
 
-    // 校验关联资源
+    // Validate associated resources
     const prompt = await this.repo.findPromptForProject(projectId, input.promptId);
     if (!prompt) throw new NotFoundException(`Prompt ${input.promptId} not found in project`);
     const version = await this.repo.findPromptVersionForPrompt(input.promptId, input.promptVersionId);
@@ -138,7 +138,7 @@ export class ProductionReleaseService {
       }
     }
 
-    // 输入连接器互斥（partial unique index 兜底；这里友好预检）
+    // Input connector mutual exclusion (the partial unique index is the backstop; this is a friendly pre-check)
     const occupiedByConnector = await this.repo.findRunningByInputConnector(input.inputConnectorId);
     if (occupiedByConnector && occupiedByConnector.promptId !== input.promptId) {
       throw new ConflictException(
@@ -147,7 +147,7 @@ export class ProductionReleaseService {
     }
     await this.assertReleaseLineNameAvailable(projectId, input, prompt.name);
 
-    // 来源 ID 一致性
+    // Source ID consistency
     this.assertSourceConsistency(input);
 
     if (!version.isFrozen) {
@@ -205,7 +205,7 @@ export class ProductionReleaseService {
   }
 
   // -------------------------------------------------------------------------
-  // 强停：写 force_stop 事件 + UPDATE 旧 running → stopped(force_stopped)
+  // Force-stop: write a force_stop event + UPDATE the old running event → stopped(force_stopped)
   // -------------------------------------------------------------------------
   async stop(
     projectId: string,
@@ -271,7 +271,7 @@ export class ProductionReleaseService {
   }
 
   // -------------------------------------------------------------------------
-  // 内部工具
+  // Internal helpers
   // -------------------------------------------------------------------------
   private async assertReadAccess(projectId: string, actor: CurrentUserPayload): Promise<void> {
     accessControl.assertCan(actor, 'project_read', { projectId });

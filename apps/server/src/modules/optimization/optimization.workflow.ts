@@ -77,11 +77,11 @@ import {
 
 const { models, runResults, experiments } = schema;
 
-// 命名空间 UUID(随机选定且写死,保证跨重启稳定)——与 ExperimentWorkflow 区别开,避免哈希撞表
+// Namespace UUID (chosen randomly and pinned to stay stable across restarts) — distinct from ExperimentWorkflow to avoid hash collisions
 const OPTIMIZATION_NS = '4a3f1b9e-5d7c-4f2a-9e1b-3c2d8e7a4f01';
 
 const POLL_SLEEP_SCHEDULE_SEC = [3, 3, 5, 8, 10, 15];
-const POLL_TIMEOUT_SEC = 60 * 60; // 单轮子实验最长 1h 兜底,长跑可在 runConfig 覆盖
+const POLL_TIMEOUT_SEC = 60 * 60; // 1h default cap for a single round of child experiment; long-running runs can override in runConfig
 const OPTIMIZATION_EXPERIMENT_NAME_MAX_LENGTH = 200;
 const OPTIMIZATION_EXPERIMENT_NAME_SEPARATOR = ' · ';
 const OPTIMIZATION_EXPERIMENT_NAME_FALLBACK = 'optimization';
@@ -92,8 +92,8 @@ type ChildExperimentAction = 'stop' | 'cancel' | 'resume';
 type WorkflowControlState = { status: string; controlState: ControlSignal } | null;
 type BaselineExperimentStatus = 'running' | 'success' | 'failed' | 'stopped' | 'cancelled';
 
-// 系统 actor:workflow / service 内代表"系统"调 ExperimentService.controlExperiment 时使用。
-// 开源版不维护用户表和审计表，这里只保留稳定 actor id 方便日志与业务字段追溯。
+// System actor: used by workflow / service to represent "the system" when calling ExperimentService.controlExperiment.
+// The OSS edition does not maintain user / audit tables; keep a stable actor id for log and business-field traceability.
 export const SYSTEM_ACTOR_OPTIMIZATION: CurrentUserPayload = {
   sub: '00000000-0000-0000-0000-000000000000',
   email: 'system@proofhound.local',
@@ -104,7 +104,7 @@ export const SYSTEM_ACTOR_OPTIMIZATION: CurrentUserPayload = {
 interface WorkflowConfigSnapshot {
   ok: boolean;
   reason?: string;
-  // 上下文
+  // Context
   projectId: string;
   optimizationName: string;
   promptId: string | null;
@@ -124,15 +124,15 @@ interface WorkflowConfigSnapshot {
   maxRounds: number;
   optimizationHint?: string;
   createdBy: string;
-  // 快照
+  // Snapshot
   nextRound: number;
   bestVersion: PromptVersionRef | null;
   bestMetrics: MetricSnapshot;
-  // SPEC 25 §11 子实验 runConfig 继承:optimizations.run_config 解析为 experimentRunConfigSchema
-  // 后直接作为每轮子实验 runConfig 写入,字段集合与 experimentRunConfigSchema 一致(无 description)。
+  // SPEC 25 §11 child experiment runConfig inheritance: optimizations.run_config is parsed against experimentRunConfigSchema
+  // and written as-is as each round's child experiment runConfig; the field set matches experimentRunConfigSchema (no description).
   childRunConfig: ExperimentRunConfigDto;
-  // SPEC 25 §7 恢复粒度:当 nextRound 对应轮次的子实验已存在且未终态(stopped/running)时,
-  // 这里携带 experimentId,让 runImpl 跳过 startWorkflow 改走"continue child"路径
+  // SPEC 25 §7 resume granularity: when the child experiment for the round matching nextRound already exists and is not terminal (stopped/running),
+  // we carry experimentId here so that runImpl skips startWorkflow and switches to the "continue child" path
   resumeChildExpId: string | null;
 }
 
@@ -179,7 +179,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
   readonly runWorkflow: (optimizationId: string) => Promise<void>;
   private readonly loadConfigStep: (optimizationId: string) => Promise<WorkflowConfigSnapshot>;
   private readonly markStartedStep: (optimizationId: string) => Promise<void>;
-  // SPEC 25 §2.1: from_dataset_only 起步专用 — 从数据集采样 + 调 analysisModel 生成首版 prompt
+  // SPEC 25 §2.1: from_dataset_only start exclusive — sample from the dataset + call analysisModel to generate the first prompt version
   private readonly generateFirstVersionStep: (optimizationId: string) => Promise<void>;
   private readonly preparePromptBaselineStep: (optimizationId: string) => Promise<PromptBaselinePrepareOutcome>;
   private readonly recordBaselineWorkflowIdStep: (experimentId: string, workflowId: string) => Promise<void>;
@@ -207,24 +207,24 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     kind: FinalizeKind,
     options: { reason?: string; analysisFailureReason?: string },
   ) => Promise<void>;
-  // SPEC 25 §11.3:跨轮历史聚合 — prepareRoundImpl 内即时从 DB 聚合,纯读,replay 安全
+  // SPEC 25 §11.3: cross-round history aggregation — aggregated from the DB on the fly inside prepareRoundImpl, pure read, replay-safe
   private readonly loadRoundHistoryStep: (
     optimizationId: string,
     beforeRoundIndex: number,
   ) => Promise<OptimizationRoundHistoryRow[]>;
-  // SPEC 25 §11.4.1:LLM 结果复用 — prepareRoundImpl 调 LLM 前先查 success 行,命中则跳过 LLM
+  // SPEC 25 §11.4.1: LLM result reuse — prepareRoundImpl looks up a success row before calling the LLM; on hit, the LLM call is skipped
   private readonly peekOptimizationRunResultStep: (
     optimizationId: string,
     roundNumber: number,
     source: 'optimization_analysis' | 'optimization_generate',
   ) => Promise<{ parsedOutput: unknown; rawResponse: string | null } | null>;
-  // SPEC 25 §7:父 stop/cancel 联动子实验;父 resume 时也用同 step 把子实验 resume 起来
+  // SPEC 25 §7: parent stop/cancel propagates to the child experiment; on parent resume, the same step also resumes the child experiment
   private readonly controlChildExperimentStep: (
     projectId: string,
     experimentId: string,
     action: ChildExperimentAction,
   ) => Promise<{ ok: boolean; reason?: string }>;
-  // SPEC 25 §7 恢复粒度:resume 进入断点轮时查子实验当前状态,决定是否需要 resume / 已 terminal 不再启
+  // SPEC 25 §7 resume granularity: on resume, when entering the interrupted round, check the child experiment's current status to decide whether to resume / skip if already terminal
   private readonly queryChildExperimentStatusStep: (
     experimentId: string,
   ) => Promise<{ status: string; controlState: string | null } | null>;
@@ -320,10 +320,10 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
 
       await this.markStartedStep(optimizationId);
 
-      // SPEC 25 §2.1: from_dataset_only 起步,首版 prompt 由 generateFirstVersionStep 生成
-      // (调 analysisModel,从数据集随机采样归纳出 prompt body / variables / outputSchema)。
-      // step 成功后 base_version_id 已回填,重 loadConfig 拿到带新 baseVersionId 的 snapshot;
-      // 后续 ensurePromptBaseline 走与 from_prompt_version 同构的 baseline 实验路径。
+      // SPEC 25 §2.1: from_dataset_only start; the first prompt version is generated by generateFirstVersionStep
+      // (calls analysisModel to randomly sample from the dataset and induce prompt body / variables / outputSchema).
+      // After the step succeeds, base_version_id is backfilled; reload loadConfig to get a snapshot carrying the new baseVersionId;
+      // subsequent ensurePromptBaseline follows the same baseline-experiment path as from_prompt_version.
       if (snapshot.startingMode === 'from_dataset_only' && !snapshot.baseVersionId) {
         try {
           await this.generateFirstVersionStep(optimizationId);
@@ -352,7 +352,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       }
       snapshot = baseline.snapshot;
 
-      // Pre-loop goal check（from_experiment 起点可能已达标,直接收尾）
+      // Pre-loop goal check (from_experiment start may already be at goal; finalize immediately)
       if (snapshot.bestVersion && allGoalsMet(snapshot.goals, snapshot.bestMetrics)) {
         await this.finalizeStep(optimizationId, 'success', { reason: 'goals_met' });
         return;
@@ -360,9 +360,9 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
 
       for (let n = snapshot.nextRound; n <= snapshot.maxRounds; n++) {
         const state = await this.readStateStep(optimizationId);
-        // service 抢占式终态化(stop/cancel 时直接写 status=stopped/cancelled),
-        // workflow 见到 status 已经不是 running 立即退出 —— 不再调 finalize 覆盖、
-        // 不再启动子实验、不再写 round_steps。
+        // service performs preemptive terminal-state writes (on stop/cancel, writes status=stopped/cancelled directly);
+        // when the workflow observes status no longer running, it exits immediately — does not call finalize to overwrite,
+        // does not start a child experiment, does not write round_steps.
         if (!state || state.status !== 'running') {
           this.logger.info(
             { optimizationId, status: state?.status ?? 'not_found' },
@@ -382,8 +382,8 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
           await this.clearResumeStep(optimizationId);
         }
 
-        // SPEC 25 §7 恢复粒度:此次 loop 是否进入"接子实验断点续跑"分支
-        // 只在 n == snapshot.nextRound 这一次成立;下一轮(n+1)走正常 prepare + startWorkflow
+        // SPEC 25 §7 resume granularity: whether this loop iteration enters the "continue interrupted child experiment" branch
+        // True only when n == snapshot.nextRound; the next round (n+1) goes through normal prepare + startWorkflow
         const isResumeRound = n === snapshot.nextRound && snapshot.resumeChildExpId !== null;
 
         const prepare = await this.prepareRoundStep(optimizationId, n);
@@ -396,9 +396,9 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         }
 
         if (isResumeRound) {
-          // 子实验已经存在(prepare 内 ON CONFLICT DO NOTHING 也保证不覆盖);
-          // 跳过 DBOS.startWorkflow(避免给同 id 重新派发引发歧义),
-          // 若子实验是 stopped → 通过 service 启它的 resume(新 child workflow id)
+          // The child experiment already exists (prepare's ON CONFLICT DO NOTHING also guarantees no overwrite);
+          // skip DBOS.startWorkflow (to avoid ambiguity from re-dispatching the same id),
+          // if the child experiment is stopped → call service to resume it (new child workflow id)
           const childStatus = await this.queryChildExperimentStatusStep(prepare.experimentId);
           if (!childStatus) {
             this.logger.warn(
@@ -428,11 +428,11 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
             );
           }
         } else {
-          // ---- workflow 层启动子 ExperimentWorkflow(SPEC 03 §3.2)----
-          // DBOS 不允许 step 内调用 startWorkflow,所以 launch 必须在 workflow 层做。
-          // 同 workflowId 同函数的重复 startWorkflow 是幂等成功(replay 安全),
-          // 仅在同 id 但函数 / 类名不同时抛 DBOSConflictingWorkflowError——任何 catch 都是
-          // 真实启动失败:把子实验改 failed,本轮按 continue 跳过(SPEC 25 §7),不阻断整体优化。
+          // ---- Workflow-layer startup of child ExperimentWorkflow (SPEC 03 §3.2) ----
+          // DBOS does not allow calling startWorkflow inside a step, so the launch must happen at the workflow layer.
+          // startWorkflow with the same workflowId and same function is idempotent success (replay-safe);
+          // only throws DBOSConflictingWorkflowError when the same id has a different function / class name — any catch indicates
+          // a real launch failure: set the child experiment to failed; skip this round as continue (SPEC 25 §7); do not block the whole optimization.
           const expWorkflowId = `optimization:${optimizationId}:round:${n}:exp`;
           try {
             await DBOS.startWorkflow(this.experimentWorkflow.runWorkflow, {
@@ -465,7 +465,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
 
       await this.finalizeStep(optimizationId, 'failed', { reason: 'max_rounds' });
     } catch (error) {
-      // 兜底:任何未捕获的 step 异常都把 status 写成 failed,避免应用表停留在 running
+      // Fallback: any uncaught step exception writes status=failed, to prevent the application table from being stuck in running
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error({ optimizationId, err: message }, 'workflow_unhandled_error');
       try {
@@ -576,12 +576,12 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       return invalidSnapshot('optimization_not_found');
     }
     if (!ctx.promptId) {
-      // 所有 starting mode 在 createOptimization 时都已确保 promptId 落库（from_dataset_only 自动建空 prompt）
+      // All starting modes have ensured promptId is persisted at createOptimization time (from_dataset_only auto-creates an empty prompt)
       return invalidSnapshot('prompt_id_missing_for_starting_mode');
     }
     const isDatasetOnly = ctx.startingMode === 'from_dataset_only';
-    // SPEC 25 §2.1: from_dataset_only 允许 baseVersionId 为 null,workflow 的
-    // generateFirstVersionStep 会生成首版后回填;其它模式必须已有 baseVersionId。
+    // SPEC 25 §2.1: from_dataset_only allows baseVersionId to be null; the workflow's
+    // generateFirstVersionStep backfills it after generating the first version; other modes must already have baseVersionId.
     if (!isDatasetOnly && !ctx.baseVersionId) {
       return invalidSnapshot('base_version_id_required');
     }
@@ -612,8 +612,8 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
 
     const promptLanguage = parsePromptLanguage(ctx.promptLanguage);
     const variables = parseVariables(ctx.baseVersionVariables);
-    // SPEC 25 §2.1: from_dataset_only 首版生成前 baseVersionId 为 null,basePromptVersion 也为 null;
-    // generateFirstVersionStep 完成后,loadConfigStep 重跑时 ctx.baseVersionId 已回填,这里构造正常 ref。
+    // SPEC 25 §2.1: before the first version is generated in from_dataset_only, baseVersionId is null and basePromptVersion is also null;
+    // after generateFirstVersionStep completes, loadConfigStep re-runs and ctx.baseVersionId is backfilled, so a normal ref is constructed here.
     const basePromptVersion: PromptVersionRef | null = ctx.baseVersionId
       ? {
           id: ctx.baseVersionId,
@@ -629,18 +629,18 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
                   config: ctx.baseVersionJudgmentRules,
                 }
               : undefined,
-          // 保留完整 PromptVariableDto（type/required/datasetField）— 否则下游 parseVariables 因
-          // promptVariableSchema 缺字段而把每项 safeParse 失败，最终写入的新版本 variables=[]，
-          // 实验渲染时 buildInputVariables 拿到空对象，{{text}} 不会被样本值替换而留作字面量。
+          // Preserve the full PromptVariableDto (type/required/datasetField) — otherwise downstream parseVariables, due to missing fields against
+          // promptVariableSchema, will safeParse each item and discard them, and the written new version ends up with variables=[],
+          // causing the experiment renderer's buildInputVariables to get an empty object, leaving {{text}} unsubstituted as a literal.
           variables,
         }
       : null;
 
-    // 已完成轮次 + 当前最佳
-    // SPEC 25 §7: nextRound 推导新规则
-    //   - success/failed → 视为已完成,进下一轮
-    //   - stopped/running → 视为"中断中",本轮 index 不进位 + 携带 resumeChildExpId
-    //                       让 runImpl 跳过 startWorkflow 改走 continue-child 分支
+    // Completed rounds + current best
+    // SPEC 25 §7: new rule for deriving nextRound
+    //   - success/failed → treated as completed, advance to the next round
+    //   - stopped/running → treated as "interrupted", do not advance the round index + carry resumeChildExpId
+    //                       letting runImpl skip startWorkflow and switch to the continue-child branch
     const completedRounds = await this.repo.listRoundExperimentsForOptimization(optimizationId);
     let bestVersion: PromptVersionRef | null = ctx.bestVersionId ? null : basePromptVersion;
     let bestMetrics: MetricSnapshot = this.toMetricSnapshot(ctx.bestMetrics) ?? emptyMetrics();
@@ -651,12 +651,12 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       if (round.status === 'success' || round.status === 'failed') {
         nextRound = Math.max(nextRound, round.roundIndex + 1);
       } else if (round.status === 'stopped' || round.status === 'running') {
-        // 中断中的轮 → 本轮重跑(prepare 走 LLM 复用 + 子实验 ON CONFLICT 不重建);携带子 expId
+        // Interrupted round → re-run this round (prepare goes through LLM reuse + child experiment ON CONFLICT does not recreate); carry the child expId
         nextRound = round.roundIndex;
         resumeChildExpId = round.experimentId;
-        break; // 后面的轮(若存在)按设计就不应该已落库 — 防御性 break
+        break; // Later rounds (if any) should not have been persisted by design — defensive break
       }
-      // 其它状态(cancelled / queued / 未来扩展)按"不影响 nextRound"处理
+      // Other statuses (cancelled / queued / future extensions) are treated as "does not affect nextRound"
     }
     if (ctx.bestVersionId) {
       const [bestVer] = await this.db
@@ -691,7 +691,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     }
     if (!bestVersion) bestVersion = basePromptVersion;
 
-    // baseline metrics: 从源实验或主表 best_metrics 取
+    // baseline metrics: taken from the source experiment or the main table's best_metrics
     if (!ctx.bestMetrics && ctx.sourceExperimentId) {
       const [src] = await this.db
         .select({ metrics: experiments.metrics })
@@ -745,24 +745,24 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     await this.repo.markStarted(optimizationId);
   }
 
-  // SPEC 25 §2.1: from_dataset_only 起点的首版生成。
-  // 1) 从数据集随机抽 initialSamplingRounds × initialSamplesPerRound 条样本
-  // 2) 调 analysisModel 让 LLM 归纳首版 prompt body / variables / outputSchema
-  // 3) 用确定性 versionId 写一行 frozen prompt_versions(replay 幂等)
-  // 4) 把 versionId 回填到 optimizations.base_version_id
-  // 5) 沿用 §12 的 round_steps 记录(round_index=0, step='generate_prompt')
-  // 失败时抛带特定 reason 的 Error,runImpl 捕获后映射到 finalize 原因码并 finalize 整个优化为 failed。
+  // SPEC 25 §2.1: first version generation for the from_dataset_only start.
+  // 1) randomly sample initialSamplingRounds × initialSamplesPerRound items from the dataset
+  // 2) call analysisModel to have the LLM induce the first prompt body / variables / outputSchema
+  // 3) write one frozen prompt_versions row with a deterministic versionId (replay-idempotent)
+  // 4) backfill the versionId into optimizations.base_version_id
+  // 5) reuse §12 round_steps record (round_index=0, step='generate_prompt')
+  // On failure, throw an Error with a specific reason; runImpl catches it, maps to the finalize reason code, and finalizes the whole optimization as failed.
   private async generateFirstVersionImpl(optimizationId: string): Promise<void> {
     const ctx = await this.repo.loadWorkflowContext(optimizationId);
     if (!ctx) {
       throw new Error('first_version_generation_failed_v1:context_missing');
     }
     if (ctx.startingMode !== 'from_dataset_only') {
-      // 不该走到这里;防御性检查
+      // Should not reach here; defensive check
       throw new Error('first_version_generation_failed_v1:wrong_starting_mode');
     }
     if (ctx.baseVersionId) {
-      // 已生成过(replay 路径) — 兜底跳过,避免重复调 LLM
+      // Already generated (replay path) — fallback skip, to avoid calling the LLM again
       this.logger.info({ optimizationId }, 'optimization_first_version_already_generated_skip');
       return;
     }
@@ -784,7 +784,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     });
 
     try {
-      // 校验 + 解析配置
+      // Validate + parse config
       const fwParsed = optimizationFieldWhitelistSchema.safeParse(ctx.fieldWhitelist ?? {});
       if (!fwParsed.success) {
         throw new Error('first_version_generation_failed_v1:field_whitelist_invalid');
@@ -804,7 +804,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         throw new Error('first_version_generation_failed_v1:analysis_model_unavailable');
       }
 
-      // 加载并随机抽样
+      // Load and randomly sample
       const allSamples = await this.repo.loadDatasetSamples(ctx.datasetId);
       const sampleCount = strategyConfig.initialSamplingRounds * strategyConfig.initialSamplesPerRound;
       if (allSamples.length === 0) {
@@ -830,7 +830,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         readExpectedField(ctx.baseVersionJudgmentRules),
       );
 
-      // 调 LLM 生成首版
+      // Call LLM to generate the first version
       const promptLanguage = parsePromptLanguage(ctx.promptLanguage);
       const generated = await generateInitialVersion(
         {
@@ -861,7 +861,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         },
       );
 
-      // 写入 frozen prompt_versions(确定性 id 让 replay 幂等)
+      // Write the frozen prompt_versions row (deterministic id makes replay idempotent)
       await this.promptRepo.createOptimizationFrozenVersion({
         versionId,
         promptId: ctx.promptId,
@@ -879,7 +879,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         createdBy: ctx.createdBy,
       });
 
-      // 回填 base_version_id (带 IS NULL 保护)
+      // Backfill base_version_id (with IS NULL guard)
       await this.repo.updateBaseVersionId(optimizationId, versionId);
 
       await this.upsertStepSafe({
@@ -1035,9 +1035,9 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     await this.repo.clearResume(optimizationId);
   }
 
-  // SPEC 25 §11.3 跨轮历史聚合 step — 纯读,可被 DBOS step 包装。
-  // beforeRoundIndex 锁住"只看 < N 的"已完成轮;best_version_id 漂移会让 history 内容随当时 DB 状态变,
-  // 但不影响本轮幂等(runResultId 用 uuidv5 锁住,replay 不会真实再调 LLM)
+  // SPEC 25 §11.3 cross-round history aggregation step — pure read, wrappable as a DBOS step.
+  // beforeRoundIndex locks "only see < N" completed rounds; best_version_id drift makes the history content move with the DB state at the time,
+  // but it does not affect this round's idempotency (runResultId is locked by uuidv5; replay does not actually call the LLM again)
   private async loadRoundHistoryImpl(
     optimizationId: string,
     beforeRoundIndex: number,
@@ -1045,11 +1045,11 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     return this.repo.loadRoundHistory(optimizationId, beforeRoundIndex);
   }
 
-  // 把 repository 返回的原始行转换为 strategy 包的 RoundHistoryEntry[]。
-  // - metrics 走 toMetricSnapshot 归一化
-  // - deltaFromPrev 用 goals[0] 主指标遍历计算(首条 null)
-  // - changeSummary / appliedChanges 从 generateParsedOutput 解;旧数据 / 解析失败时取空串 / []
-  //   (不抛错,保证 history 不阻塞主路径)
+  // Convert raw rows returned by the repository into the strategy package's RoundHistoryEntry[].
+  // - metrics goes through toMetricSnapshot for normalization
+  // - deltaFromPrev is computed by iterating against goals[0]'s primary metric (the first entry is null)
+  // - changeSummary / appliedChanges are parsed from generateParsedOutput; for legacy data / parse failures use empty string / []
+  //   (no throw, so history never blocks the main path)
   private buildRoundHistoryEntries(
     rows: OptimizationRoundHistoryRow[],
     goals: OptimizationGoal[],
@@ -1085,7 +1085,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
             : undefined,
           rationale: typeof c.summary === 'string' ? c.summary : undefined,
         }));
-      // 「工具箱轮换提示」依据 — 反聚合 LLM 自报的 appliedTips(SPEC 25 §11.3「工具箱轮换提示」)
+      // Basis for the "toolbox rotation hint" — de-aggregates the LLM's self-reported appliedTips (SPEC 25 §11.3 "toolbox rotation hint")
       const appliedTips = extractAppliedTipsFromGenerateParsedOutput(parsedGen);
 
       return {
@@ -1141,9 +1141,9 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     };
   }
 
-  // SPEC 25 §5 / §11.5:若刚完成的上一轮比其父 prompt 对应实验更差,
-  // 本轮不继续在坏 prompt 上叠改。Analyze 看坏 prompt + 坏样本归因,
-  // Generate 回退到父 prompt 上重新改进。
+  // SPEC 25 §5 / §11.5: if the just-completed previous round is worse than its parent prompt's corresponding experiment,
+  // this round does not continue stacking changes on the bad prompt. Analyze attributes from the bad prompt + bad samples,
+  // Generate falls back to the parent prompt for improvement.
   private async resolveRegressionRetryContext(
     optimizationId: string,
     roundNumber: number,
@@ -1207,7 +1207,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       return { kind: 'fatal', errorMessage: snapshot.reason ?? 'snapshot_invalid' };
     }
 
-    // 加载 dataset samples + 本轮优化上下文（供 strategy 包消费）
+    // Load dataset samples + this round's optimization context (consumed by the strategy package)
     const samplesRaw = await this.repo.loadDatasetSamples(snapshot.datasetId);
     if (samplesRaw.length === 0) {
       return { kind: 'fatal', errorMessage: 'dataset_empty' };
@@ -1229,10 +1229,10 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       previousVersion,
     } = roundContext;
 
-    // SPEC 25 §11.4.1: prepareRoundImpl 内 step 状态 / 复用所需 metadata
+    // SPEC 25 §11.4.1: step status / reuse metadata inside prepareRoundImpl
     const dbosWorkflowIdForSteps = DBOS.workflowID ?? null;
 
-    // 与 experiment 通道一致地从 judgmentRules 解析 expected 字段名,保证两个通道读到同一个 expected
+    // Parse the expected field name from judgmentRules consistently with the experiment channel, so both channels read the same expected
     const samples: SampleRecord[] = buildSamplesForStrategy(samplesRaw, baseVersionForRound.judgmentRules?.config);
 
     const rawCurrent = await this.repo.loadRunResultsByExperiment(analysisExperiment.id);
@@ -1241,13 +1241,13 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     const previousRunResults = rawPrevious ? mapRunResultsForStrategy(rawPrevious) : null;
     const analysisMetrics = this.toMetricSnapshot(analysisExperiment.metrics) ?? snapshot.bestMetrics;
 
-    // SPEC 25 §11.3 跨轮历史 — 注入到 analyze / generate 两步 LLM 调用,让 LLM 跨轮避免重复无效改动。
-    // 首轮(roundNumber=1) → 空数组 → strategy 包不渲染历史段(向后兼容)。
+    // SPEC 25 §11.3 cross-round history — injected into both LLM calls (analyze / generate) so the LLM avoids repeated ineffective changes across rounds.
+    // First round (roundNumber=1) → empty array → the strategy package does not render the history section (backward compatible).
     const roundHistoryRows = await this.loadRoundHistoryStep(optimizationId, roundNumber);
     const roundHistory = this.buildRoundHistoryEntries(roundHistoryRows, snapshot.goals);
 
-    // SPEC 25 §11.3「工具箱轮换提示」— 连续 ≥2 轮 !isBest 时构造 hint 注入到 generate user prompt。
-    // streak < 2 → undefined,strategy 包不渲染该段。
+    // SPEC 25 §11.3 "toolbox rotation hint" — when !isBest for ≥ 2 consecutive rounds, build a hint and inject it into the generate user prompt.
+    // streak < 2 → undefined; the strategy package skips this section.
     const noBestStreak = computeNoBestStreak(roundHistory);
     const toolboxSwitchHint = (() => {
       if (noBestStreak < 2) return undefined;
@@ -1276,14 +1276,14 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       );
     }
 
-    // 确定性 UUID(uuidv5):replay 时同 id 命中 INSERT WHERE NOT EXISTS,
-    // 不会写重复行(SPEC 25 §11.2)
+    // Deterministic UUID (uuidv5): on replay, the same id hits INSERT WHERE NOT EXISTS,
+    // so duplicate rows are never written (SPEC 25 §11.2)
     const analysisRunResultId = deterministicUuid(`${optimizationId}:${roundNumber}:analysis`);
     const generateRunResultId = deterministicUuid(`${optimizationId}:${roundNumber}:generate`);
     const versionId = deterministicUuid(`${optimizationId}:${roundNumber}:version`);
     const experimentId = deterministicUuid(`${optimizationId}:${roundNumber}:experiment`);
 
-    // step 内拿当前 workflow id 串联日志与 run_results.dbos_workflow_id(SPEC 05 §5.6)
+    // Inside a step, fetch the current workflow id and thread it through logs and run_results.dbos_workflow_id (SPEC 05 §5.6)
     const dbosWorkflowId = DBOS.workflowID ?? null;
     const analysisRunResultMeta = {
       projectId: snapshot.projectId,
@@ -1304,7 +1304,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       attempt: 0,
     };
 
-    // SPEC 25 §11.4.1: 复用已 success 的分析 run_result,跳过 LLM 调用避免重复扣 token
+    // SPEC 25 §11.4.1: reuse the already-success analysis run_result, skipping the LLM call to avoid duplicate token charges
     let analysisFull: AnalyzeFailuresResult;
     const existingAnalysis = await this.peekOptimizationRunResultStep(
       optimizationId,
@@ -1391,14 +1391,14 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       }
     }
 
-    // ---- 生成 LLM (SPEC 25 §11.4.1: 同复用机制) ----
+    // ---- Generate LLM (SPEC 25 §11.4.1: same reuse mechanism) ----
     let generated: {
       newPromptBody: string;
       changeSummary: string;
       newOutputSchema?: unknown;
       outputSchemaChangeReason?: string;
-      // SPEC 25 §11: LLM 多次未保留 base 已用占位时,generate 在 newPromptBody 末尾自动补回缺失占位
-      // 并标 autoPatched=true。workflow 据此拼 changeReason tag 让前端 chip 提醒用户人工微调。
+      // SPEC 25 §11: when the LLM repeatedly fails to keep the base placeholders already in use, generate auto-appends the missing placeholders at the end of newPromptBody
+      // and marks autoPatched=true. Based on this, the workflow assembles a changeReason tag so the frontend chip alerts the user to tweak manually.
       autoPatched?: boolean;
       patchedVariables?: string[];
     };
@@ -1510,12 +1510,12 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       }
     }
 
-    // ---- 写新版本（幂等：确定性 versionId + ON CONFLICT DO NOTHING）----
+    // ---- Write the new version (idempotent: deterministic versionId + ON CONFLICT DO NOTHING) ----
     if (!snapshot.promptId) {
       return { kind: 'fatal', errorMessage: 'prompt_id_missing' };
     }
     const variables: PromptVariableDto[] = parseVariables(baseVersionForRound.variables);
-    // LLM 提供且通过 safeValidateNewOutputSchema 校验的 newOutputSchema 优先;否则沿用基线 schema。
+    // The newOutputSchema provided by the LLM that passes safeValidateNewOutputSchema takes precedence; otherwise inherit the baseline schema.
     const outputSchemaForVersion = (generated.newOutputSchema ??
       baseVersionForRound.outputSchema ??
       null) as PromptOutputSchemaDto;
@@ -1530,7 +1530,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     const baseChangeReason = generated.outputSchemaChangeReason
       ? `${generated.changeSummary}\n\n[output schema 变更] ${generated.outputSchemaChangeReason}`
       : generated.changeSummary;
-    // SPEC 25 §11: autoPatched=true 时把补丁 tag 拼到 changeReason 末尾,前端轮次卡片据此渲染"系统补丁" chip
+    // SPEC 25 §11: when autoPatched=true, append the patch tag at the end of changeReason; the frontend round card uses this to render the "system patch" chip
     const changeReason =
       generated.autoPatched && generated.patchedVariables && generated.patchedVariables.length > 0
         ? `${baseChangeReason}\n\n[系统自动补丁] 补回占位：${generated.patchedVariables.join(', ')}`
@@ -1550,7 +1550,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       createdBy: snapshot.createdBy,
     });
 
-    // ---- 创建子实验（幂等：确定性 experimentId + ON CONFLICT DO NOTHING + partial unique）----
+    // ---- Create the child experiment (idempotent: deterministic experimentId + ON CONFLICT DO NOTHING + partial unique) ----
     await this.repo.createChildExperimentRow({
       id: experimentId,
       projectId: snapshot.projectId,
@@ -1571,8 +1571,8 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       createdBy: snapshot.createdBy,
     });
 
-    // experiment 步进入 running:此时详情页 stepper 第三个圆点开始转,
-    // 真实终态由 finalizeRoundImpl(等子实验跑完)写入。
+    // The experiment step enters running: at this point the third dot of the detail-page stepper starts spinning;
+    // the real terminal state is written by finalizeRoundImpl (after the child experiment completes).
     await this.upsertStepSafe({
       optimizationId,
       roundIndex: roundNumber,
@@ -1583,13 +1583,13 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       dbosWorkflowId: dbosWorkflowIdForSteps,
     });
 
-    // 启动子 ExperimentWorkflow + 等待 + 比较指标改由 runImpl(workflow)层与
-    // finalizeRoundImpl(step)分担:DBOS 禁止 step 内调 startWorkflow。
+    // Starting the child ExperimentWorkflow + waiting + comparing metrics is now split between runImpl (workflow) layer
+    // and finalizeRoundImpl (step): DBOS forbids calling startWorkflow inside a step.
     return { kind: 'launch', experimentId };
   }
 
-  // 包 try-catch:upsertRoundStep 失败不应阻塞 workflow 主路径(round_steps 表只是
-  // 给详情页 UX 增强,缺数据时前端走 fallback 仍然能展示)。失败原因走 warn 日志。
+  // Wrapped in try-catch: an upsertRoundStep failure must not block the workflow main path (round_steps table is just
+  // a UX enhancement for the detail page; when data is missing, the frontend falls back and can still render). Failures are logged at warn.
   private async upsertStepSafe(input: RoundStepUpsertInput): Promise<void> {
     try {
       await this.repo.upsertRoundStep(input);
@@ -1612,7 +1612,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     roundNumber: number,
     experimentId: string,
   ): Promise<RoundOutcome> {
-    // step 内重新载入 snapshot:apiKey 等敏感字段不进 DBOS 系统表,故不跨 step 传 snapshot
+    // Reload snapshot inside the step: sensitive fields like apiKey are not stored in the DBOS system tables, so we do not pass snapshot across steps
     const snapshot = await this.loadConfigImpl(optimizationId);
     if (!snapshot.ok) {
       this.logger.warn(
@@ -1624,8 +1624,8 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
 
     const versionId = deterministicUuid(`${optimizationId}:${roundNumber}:version`);
 
-    // ---- 等待子实验跑完(每轮内自带 poll,replay 时 polling 也是幂等的)----
-    // SPEC 25 §7 双路径:poll 内同时读父 control_state,看到 stop/cancel 联动停子实验后继续 poll 到 terminal
+    // ---- Wait for the child experiment to finish (each round has its own poll, and polling is idempotent on replay) ----
+    // SPEC 25 §7 dual path: inside poll, also read the parent control_state; on stop/cancel, propagate to stop the child experiment, then continue polling to terminal
     const finalState = await this.waitForExperimentTerminal(
       experimentId,
       optimizationId,
@@ -1634,7 +1634,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     );
     const dbosWfId = DBOS.workflowID ?? null;
     if (finalState.status === 'cancelled' || finalState.status === 'stopped') {
-      // 父 workflow 在下个 step 边界感知 control_state;这里把本轮当作 continue 跳过
+      // The parent workflow observes control_state at the next step boundary; treat this round as continue/skip
       await this.upsertStepSafe({
         optimizationId,
         roundIndex: roundNumber,
@@ -1647,7 +1647,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       return { kind: 'continue', metrics: undefined, isBest: false };
     }
     if (finalState.status === 'failed') {
-      // 单轮失败但不致命,继续下一轮(不阻断整个优化);fatal 仅当 analysis/generate 致命错时
+      // A single-round failure that is not fatal — continue to the next round (do not block the whole optimization); fatal only on fatal errors in analysis/generate
       await this.upsertStepSafe({
         optimizationId,
         roundIndex: roundNumber,
@@ -1718,8 +1718,8 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       analysisFailureReason: options.analysisFailureReason ?? null,
     });
     if (!updated) {
-      // service 已经抢占式终态化(stop/cancel 直接写 status),workflow 自己的 finalize 被守卫拦下。
-      // 走到这里说明 workflow 已经做完了自己该做的清理,不必再覆盖 status。
+      // service has already done preemptive terminal-state write (stop/cancel directly writes status); the workflow's own finalize is intercepted by the guard.
+      // Reaching here means the workflow has finished its own cleanup; no need to overwrite status again.
       this.logger.debug(
         { optimizationId, kind, reason: options.reason },
         'optimization_finalize_no_op_already_terminal',
@@ -1729,8 +1729,8 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     this.logger.info({ optimizationId, kind, reason: options.reason }, 'optimization_finalized');
   }
 
-  // SPEC 25 §11.4.1: 查本轮 LLM 结果是否已 success 落库,命中则跳过 LLM 调用
-  // 严格过滤 status='success';非 success 行(rate_limited/timeout/error)不复用,正常重调
+  // SPEC 25 §11.4.1: check whether the LLM result for this round is already success in DB; on hit, skip the LLM call
+  // Strictly filter status='success'; non-success rows (rate_limited/timeout/error) are not reused — normal re-invocation
   private async peekOptimizationRunResultImpl(
     optimizationId: string,
     roundNumber: number,
@@ -1743,9 +1743,9 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     return { parsedOutput: row.parsedOutput, rawResponse: row.rawResponse };
   }
 
-  // SPEC 25 §7 双路径联动:父 stop/cancel 时调子实验 controlExperiment,父 resume 也走此 step
-  // 子实验已终态(success/failed/cancelled/stopped)或行不存在 → Conflict/NotFound 吞掉
-  // 其它错误 throw,让 DBOS step 重试 (poll 兜底保证最终一致)
+  // SPEC 25 §7 dual-path linkage: on parent stop/cancel, call the child experiment's controlExperiment; parent resume also goes through this step
+  // Child experiment is already terminal (success/failed/cancelled/stopped) or the row does not exist → swallow Conflict/NotFound
+  // Other errors throw so DBOS step retries (poll is the backstop guaranteeing eventual consistency)
   private async controlChildExperimentImpl(
     projectId: string,
     experimentId: string,
@@ -1772,8 +1772,8 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     }
   }
 
-  // SPEC 25 §7 恢复粒度:resume 进入断点轮时查子实验当前状态决定动作
-  // 返回 null 表示 experiments 行不存在(应当极少;一般是被外部硬删了)
+  // SPEC 25 §7 resume granularity: on resume, when entering the interrupted round, check the child experiment's current status to decide the action
+  // Returning null means the experiments row does not exist (should be very rare; usually because it was hard-deleted externally)
   private async queryChildExperimentStatusImpl(
     experimentId: string,
   ): Promise<{ status: string; controlState: string | null } | null> {
@@ -1847,7 +1847,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
   ): Promise<{ status: string; metrics: unknown }> {
     const start = Date.now();
     let pollIndex = 0;
-    let parentControlLinked = false; // 防止同一次 stop/cancel 信号重复调 service(实验已 controlState 后 service 会抛 Conflict,虽然吞掉但日志噪音大)
+    let parentControlLinked = false; // Prevent the same stop/cancel signal from repeatedly calling service (after controlState is set, service throws Conflict; while swallowed, the log noise is large)
     while (Date.now() - start < POLL_TIMEOUT_SEC * 1000) {
       const [exp] = await this.db
         .select({ status: experiments.status, metrics: experiments.metrics })
@@ -1866,11 +1866,11 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         return { status: exp.status, metrics: exp.metrics };
       }
 
-      // SPEC 25 §7 双路径联动:poll 内读父 status + control_state。
-      //   - 父 controlState 为 stop/cancel 时联动子实验 controlExperiment(冗余兜底:
-      //     service.tryLinkChildExperimentControl 已先调过,这里覆盖 service 失败的边角)。
-      //   - 父 status 已不是 running(service 抢占式终态化) → 立即结束 poll,把子实验当作 stopped
-      //     返回(让 finalizeRoundImpl 走 continue 分支,主循环顶部读到父 status 后直接退出)。
+      // SPEC 25 §7 dual-path linkage: inside poll, read parent status + control_state.
+      //   - When the parent controlState is stop/cancel, propagate to the child experiment via controlExperiment (redundant backstop:
+      //     service.tryLinkChildExperimentControl is called first; this covers the corner case where the service call failed).
+      //   - When the parent status is no longer running (service preemptive terminal write) → end poll immediately and treat the child experiment as stopped
+      //     (so finalizeRoundImpl goes through the continue branch; once the main loop top reads the parent status, it exits directly).
       const parent = await this.repo.findStatusAndControl(optimizationId);
       const parentControl = parent?.controlState ?? null;
       if (!parentControlLinked && (parentControl === 'stop' || parentControl === 'cancel')) {
@@ -1975,10 +1975,10 @@ function mapRunResultsForStrategy(rows: OptimizationRunResultRow[]): RunResultRe
   }));
 }
 
-// SPEC 25 §11.4.1: 从 run_results.parsed_output 重建 strategy 包 analyzeFailures 的返回结构,
-// 让 prepareRoundImpl 在 LLM 已有 success 结果时跳过实际调用。
-// 注意:复用路径下 batches/confusionPairs/regressionGroups 给空值——下游 generateNextVersion 只读
-// errorAnalysisText,不读这些字段;详情页直接读 run_results.parsed_output 也不依赖 workflow 内存。
+// SPEC 25 §11.4.1: reconstruct the strategy package analyzeFailures return shape from run_results.parsed_output,
+// so that prepareRoundImpl can skip the actual call when the LLM already has a success result.
+// Note: on the reuse path, batches/confusionPairs/regressionGroups are left empty — downstream generateNextVersion only reads
+// errorAnalysisText, not these fields; the detail page also reads run_results.parsed_output directly and does not depend on workflow memory.
 export function reconstructAnalysisFromRunResult(row: {
   parsedOutput: unknown;
   rawResponse: string | null;
@@ -2036,10 +2036,10 @@ export function reconstructAnalysisFromRunResult(row: {
   };
 }
 
-// SPEC 25 §11.4.1: 从 run_results.parsed_output 重建 generateNextVersion 的返回字段。
-// 已 success 行的 parsed_output 必有 newPromptBody;rawResponse 兜底以防极端 race。
-// newOutputSchema / outputSchemaChangeReason 是可选字段:LLM 提供且通过校验时存在。
-// autoPatched / patchedVariables 由 generate retry+patch 路径写入 parsedOutput,workflow 复用时也透传。
+// SPEC 25 §11.4.1: reconstruct generateNextVersion return fields from run_results.parsed_output.
+// A success row's parsed_output is guaranteed to have newPromptBody; rawResponse is a fallback for extreme races.
+// newOutputSchema / outputSchemaChangeReason are optional: present when the LLM provides one and it passes validation.
+// autoPatched / patchedVariables are written into parsedOutput by the generate retry+patch path; the workflow also passes them through on reuse.
 export function reconstructGenerateFromRunResult(
   row: { parsedOutput: unknown; rawResponse: string | null },
   fallbackBody: string,
@@ -2090,8 +2090,8 @@ export function reconstructGenerateFromRunResult(
   return { newPromptBody: fallbackBody, changeSummary: 'restored_from_reuse' };
 }
 
-// 从 generate run_results.parsed_output 中提取 LLM 自报的 appliedTips,过滤无效项。
-// 供 buildRoundHistoryEntries 反聚合「工具箱轮换提示」依据(SPEC 25 §11.3)。旧数据 / 解析失败 → []。
+// Extract LLM-self-reported appliedTips from generate run_results.parsed_output; filter out invalid items.
+// Used by buildRoundHistoryEntries to back out the "toolbox rotation hint" basis (SPEC 25 §11.3). Legacy data / parse failure → [].
 export function extractAppliedTipsFromGenerateParsedOutput(parsedGen: unknown): string[] {
   if (!parsedGen || typeof parsedGen !== 'object') return [];
   const tips = (parsedGen as { appliedTips?: unknown }).appliedTips;
@@ -2129,8 +2129,8 @@ function readOptimizationHintFromContext(ctx: {
   return normalizeOptionalText(legacy) ?? undefined;
 }
 
-// 把 LLM 调用 / 解析等异常归一化成 round_steps.error_class + error_message。
-// errorMessage 长度截到 1000 字符,避免大堆栈塞 DB。
+// Normalize LLM call / parsing exceptions into round_steps.error_class + error_message.
+// errorMessage length truncated to 1000 chars to prevent a giant stack from being stuffed into the DB.
 function normalizeErrorForStep(err: unknown): { errorClass: string; errorMessage: string } {
   const errObj = err as { name?: string; message?: string } | undefined;
   const errorClass = typeof errObj?.name === 'string' && errObj.name.length > 0 ? errObj.name : 'Error';
@@ -2138,9 +2138,9 @@ function normalizeErrorForStep(err: unknown): { errorClass: string; errorMessage
   return { errorClass, errorMessage: rawMsg.slice(0, 1000) };
 }
 
-// SPEC 25 §11 子实验 runConfig 继承:optimizations.run_config 解析为 experimentRunConfigSchema,
-// 未识别字段(stopAfterNoImprovementRounds 等)由 catchall 保留;后续 service
-// parseRunConfig 用同一 schema 再次过滤,保证子实验 runConfig 只暴露 experimentRunConfigSchema 字段集。
+// SPEC 25 §11 child experiment runConfig inheritance: optimizations.run_config is parsed against experimentRunConfigSchema;
+// unknown fields (stopAfterNoImprovementRounds, etc.) are preserved by catchall; later, service
+// parseRunConfig filters again with the same schema, ensuring child experiment runConfig only exposes the experimentRunConfigSchema field set.
 export function parseChildRunConfigFromOptimization(value: unknown): ExperimentRunConfigDto {
   const parsed = experimentRunConfigSchema.safeParse(value ?? {});
   return parsed.success ? parsed.data : {};
@@ -2235,14 +2235,14 @@ function toLoopGoal(dto: OptimizationGoalDto): OptimizationGoal {
 
 export function toLoopFieldWhitelist(dto: OptimizationFieldWhitelistDto | null, expectedField: string): FieldWhitelist {
   if (!dto) return { promptVariables: [] };
-  // DTO 用 inputFields / metaFields；strategy 包用 promptVariables / analysisOnlyFields。
-  // 语义对应：inputFields = 允许出现在 prompt 模板里的变量；metaFields = 仅给分析 LLM 看的元数据字段。
-  // SPEC 25 §9 把这两个概念合并表述，DTO 是当前最小集；modifiableSections 暂无 DTO 字段，留空。
+  // DTO uses inputFields / metaFields; the strategy package uses promptVariables / analysisOnlyFields.
+  // Semantic mapping: inputFields = variables that may appear in the prompt template; metaFields = metadata fields shown only to the analysis LLM.
+  // SPEC 25 §9 expresses these two concepts as one; the DTO is the current minimal set; modifiableSections has no DTO field yet and is left empty.
   //
-  // 安全约束：judgment rules 引用的 expected_field（默认 expected_output）是 ground truth，
-  // 业务 prompt 绝不能把它当变量注入（会泄漏答案）。若 UI / DTO 把它放进 inputFields（前端默认
-  // 会把数据集所有字段塞过来），这里统一剔除并下移到 analysisOnlyFields——既杜绝泄漏，又能
-  // 避免生成 LLM 看到这个字段名后做"防御性"地把所有 {{var}} 都删掉的过度反应。
+  // Safety constraint: the expected_field referenced by judgment rules (default expected_output) is the ground truth;
+  // the business prompt MUST NOT inject it as a variable (it would leak the answer). If the UI / DTO puts it into inputFields (the frontend by default
+  // dumps every dataset field), we strip it here and demote to analysisOnlyFields — eliminating leakage and
+  // avoiding the over-reactive "defensive" response where the generate LLM sees this field name and strips every {{var}}.
   const inputFields = dto.inputFields.filter((f) => f !== expectedField);
   const analysisOnly = [...dto.metaFields, ...(dto.inputFields.includes(expectedField) ? [expectedField] : [])];
   return {
@@ -2271,15 +2271,15 @@ function deterministicUuid(seed: string): string {
 }
 
 export function isPromptBaselineBootstrapNeeded(startingMode: string): boolean {
-  // SPEC 25 §2.1: from_dataset_only 在 generateFirstVersionStep 完成后也走与
-  // from_prompt_version 同构的 baseline 实验流程。
+  // SPEC 25 §2.1: from_dataset_only, after generateFirstVersionStep completes, follows the same baseline experiment flow as
+  // from_prompt_version.
   return startingMode === 'from_prompt_version' || startingMode === 'from_dataset_only';
 }
 
-// SPEC 25 §2.1 首版生成失败时把 Error 映射为 finalize 用的原因码。
+// SPEC 25 §2.1 maps a first-version-generation Error into a finalize reason code.
 // FirstVersionParseError → first_version_parse_failed_v1
-// message 已经带 `first_version_*_v1` 前缀 → 直接取前缀
-// 其它(网络错 / LLM 限流耗尽 / panic) → first_version_generation_failed_v1
+// The message already carries the `first_version_*_v1` prefix → take the prefix directly
+// Others (network errors / LLM rate-limit exhaustion / panic) → first_version_generation_failed_v1
 export function mapFirstVersionErrorReason(error: unknown): string {
   if (error instanceof FirstVersionParseError) return 'first_version_parse_failed_v1';
   if (error instanceof Error) {
@@ -2287,18 +2287,18 @@ export function mapFirstVersionErrorReason(error: unknown): string {
     if (msg.startsWith('first_version_dataset_empty_v1')) return 'first_version_dataset_empty_v1';
     if (msg.startsWith('first_version_parse_failed_v1')) return 'first_version_parse_failed_v1';
     if (msg.startsWith('first_version_generation_failed_v1')) {
-      // 携带子原因(如 :context_missing) → 保留前缀部分让前端 mapping 更细粒度
+      // Carries a sub-reason (e.g. :context_missing) → keep the prefix portion so the frontend mapping is more fine-grained
       return msg.split(':')[0] ?? 'first_version_generation_failed_v1';
     }
   }
   return 'first_version_generation_failed_v1';
 }
 
-// SPEC 25 §2.1: 首版生成时的样本抽样 — replay 时 seed 固定为 `${optimizationId}:first-version`,
-// 保证多次重放抽到同一批样本,LLM run_result 通过确定性 id 也只写一行。
+// SPEC 25 §2.1: sampling for first-version generation — on replay, seed is pinned to `${optimizationId}:first-version`,
+// guaranteeing the same batch of samples is drawn across replays; the LLM run_result is also written only once via a deterministic id.
 export function pickRandomSamples<T>(items: T[], n: number, seed: string): T[] {
   if (items.length <= n) return items.slice();
-  // seedable PRNG (xorshift32) — 不要 crypto 强度,只要 replay 一致;state=0 会自锁,故 || 1
+  // seedable PRNG (xorshift32) — not crypto-strength, only requires replay consistency; state=0 self-locks, hence || 1
   let state = 0;
   for (const ch of seed) state = (state * 31 + ch.charCodeAt(0)) >>> 0;
   if (state === 0) state = 1;
@@ -2375,8 +2375,8 @@ function normalizeBaselineExperimentStatus(status: string): BaselineExperimentSt
   return 'running';
 }
 
-// 与 experiment.workflow.ts 的同名 helper 行为一致:从 judgmentRules JSONB 读出 expected 字段名,
-// 默认 'expected_output'。两个通道独立保留实现,避免跨模块耦合 (SPEC 23/24 的 judgmentRules 契约)
+// Behavior matches experiment.workflow.ts's same-name helper: reads the expected field name from judgmentRules JSONB,
+// default 'expected_output'. The two channels keep their implementations separate to avoid cross-module coupling (SPEC 23/24's judgmentRules contract)
 export function readExpectedField(rules: unknown): string {
   if (rules && typeof rules === 'object') {
     const record = rules as Record<string, unknown>;
@@ -2397,8 +2397,8 @@ export function readExpectedField(rules: unknown): string {
   return 'expected_output';
 }
 
-// 把 dataset 原始样本投影成 strategy 包消费的 SampleRecord;expected 从 data[expectedField] 抽,
-// 缺省时留 undefined,让下游 confusion-pairs 的 asLabel 决定是否过滤
+// Project the dataset's raw samples into SampleRecord consumed by the strategy package; expected is pulled from data[expectedField];
+// when absent, leave undefined; let the downstream confusion-pairs' asLabel decide whether to filter
 export function buildSamplesForStrategy(
   samplesRaw: Array<{ id: string; data: Record<string, unknown> }>,
   judgmentRulesConfig: unknown,
@@ -2414,7 +2414,7 @@ export function buildSamplesForStrategy(
   });
 }
 
-// 暴露给 e2e / mcp 用的稳定 id 计算
+// Expose the stable id computation for e2e / mcp callers
 export function computeOptimizationVersionId(optimizationId: string, roundNumber: number): string {
   return deterministicUuid(`${optimizationId}:${roundNumber}:version`);
 }
@@ -2423,7 +2423,7 @@ export function computeOptimizationExperimentId(optimizationId: string, roundNum
   return deterministicUuid(`${optimizationId}:${roundNumber}:experiment`);
 }
 
-// 这两个变量来自 schema 但没被直接 import；保留对应类型给后续 step 用
+// These two variables come from the schema but are not directly imported; keep the corresponding types for later step usage
 void runResults;
 void asc;
 void and;

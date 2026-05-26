@@ -1,20 +1,20 @@
-// DBOS workflow 集成测试 helper —— 关注点:验证 ExperimentWorkflow 状态机
+// DBOS workflow integration test helper — focus: verifying the ExperimentWorkflow state machine
 //
-// 用法:
-//   - 启动本地 PostgreSQL: pnpm dev:docker:ready
+// Usage:
+//   - Start local PostgreSQL: pnpm dev:docker:ready
 //   - export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/proofhound"
 //   - pnpm -F @proofhound/server test:integration
 //
-// 设计:
-//   - 不建独立 schema,直接往真实 ph_core / ph_assets / ph_runs 写。
-//   - 每条用例的数据通过 fixture 工厂插入,trackExperiment(seeded) 后由 afterEach 精确清理。
-//   - BullmqService 被 mock,不连 Redis;mock 立即把 run_result 写到 ph_runs.run_results
-//     模拟 worker 完成,workflow 的 pollUntilBatchDone 立即满足。
-//   - 不装 AppModule / Guard / Controller,只装 ExperimentWorkflowRegistrar + RunResultService。
+// Design:
+//   - Does not create separate schemas; writes directly into the real ph_core / ph_assets / ph_runs.
+//   - Per-case data is inserted via fixture factories; after trackExperiment(seeded), afterEach cleans up precisely.
+//   - BullmqService is mocked, does not connect to Redis; the mock immediately writes the run_result to ph_runs.run_results
+//     to simulate worker completion, so the workflow's pollUntilBatchDone is satisfied immediately.
+//   - Does not load AppModule / Guard / Controller; only loads ExperimentWorkflowRegistrar + RunResultService.
 
-// 集成测试默认 debug 级别(便于诊断状态机各步骤);应用层只 emit JSON,
-// 想看人读友好格式时手动 `pnpm test:integration 2>&1 | pino-pretty`。
-// 必须在 import @proofhound/logger 之前设(logger 在 import 时读 env)。
+// Integration tests default to debug level (for diagnosing state machine steps); the application only emits JSON,
+// run `pnpm test:integration 2>&1 | pino-pretty` manually for human-friendly output.
+// Must be set before importing @proofhound/logger (the logger reads env at import time).
 process.env['LOG_LEVEL'] ??= 'debug';
 
 import { randomBytes } from 'node:crypto';
@@ -75,15 +75,15 @@ export function describeDbosIntegration(name: string, fn: (getCtx: () => DbosTes
       const db = createDbClient(url);
       dbRef = db;
 
-      // 兜底:先清掉历史 vitest 中断遗留的 dbos-test-* 业务项目和悬空 dbos_test_* schema
-      // (afterEach / afterAll 因 Ctrl+C 或 worker crash 没跑完时会泄露)
+      // Backstop: first clean up dbos-test-* business projects and dangling dbos_test_* schemas left by previously interrupted vitest runs
+      // (afterEach / afterAll may leak when Ctrl+C or a worker crash prevents them from finishing)
       await cleanupStaleResidue(db);
 
       const testUserId = LOCAL_ACTOR_ID;
 
-      // schema 级隔离:测试期间 DBOS 的 workflow_status / operation_outputs 等系统表
-      // 全部写到 dbos_test_<suite> schema,与生产默认的 dbos schema 完全隔开。
-      // afterAll 时 DROP SCHEMA CASCADE 整批清,不再脏生产表。
+      // Schema-level isolation: during tests, DBOS system tables (workflow_status / operation_outputs, etc.)
+      // are all written to the dbos_test_<suite> schema, fully isolated from the production default dbos schema.
+      // afterAll runs DROP SCHEMA CASCADE in one shot, no longer dirtying production tables.
       DBOS.setConfig({
         name: `dbos-test-${suite}`,
         systemDatabaseUrl: url,
@@ -93,9 +93,9 @@ export function describeDbosIntegration(name: string, fn: (getCtx: () => DbosTes
 
       const mockBullmq = new MockBullmqService(db);
 
-      // compile() 必须在 DBOS.launch() 之前:NestJS 实例化 ExperimentWorkflowRegistrar 时,
-      // 其 constructor 会调 DBOS.registerStep / registerWorkflow,DBOS SDK 要求"先注册后 launch"。
-      // 生产路径里 NestFactory.create 先实例化所有 provider,onModuleInit 才跑 DBOS.launch,天然满足顺序。
+      // compile() must run before DBOS.launch(): when NestJS instantiates ExperimentWorkflowRegistrar,
+      // its constructor calls DBOS.registerStep / registerWorkflow; the DBOS SDK requires "register before launch".
+      // In the production path, NestFactory.create instantiates all providers first; onModuleInit runs DBOS.launch later, naturally satisfying the order.
       module = await Test.createTestingModule({
         providers: [
           { provide: DATABASE_CLIENT, useValue: db },
@@ -171,7 +171,7 @@ export function describeDbosIntegration(name: string, fn: (getCtx: () => DbosTes
       } catch {
         // ignore
       }
-      // shutdown 之后关连接池才能 DROP SCHEMA(否则 schema 内表上还有连接持有 lock)
+      // Close the connection pool after shutdown so DROP SCHEMA can succeed (otherwise tables in the schema still have connection locks)
       if (dbRef && sysSchema) {
         try {
           await dbRef.execute(sql`DROP SCHEMA IF EXISTS ${sql.identifier(sysSchema)} CASCADE`);
@@ -180,8 +180,8 @@ export function describeDbosIntegration(name: string, fn: (getCtx: () => DbosTes
           setupLogger.warn({ sysSchema, err: (err as Error).message }, 'drop_sysdb_schema_failed');
         }
       }
-      // 最后显式关 postgres-js 连接池,避免进程因为残留连接 idle 而拖延退出
-      // (旧 jest 跑完后卡 14 分钟就是因为这里没关)。
+      // Finally, explicitly close the postgres-js connection pool to avoid prolonged process exit due to leftover idle connections
+      // (the old jest run hung for 14 minutes precisely because this was not closed).
       if (dbRef) {
         try {
           await (dbRef as unknown as { $client: { end: (opts?: { timeout?: number }) => Promise<void> } }).$client.end({
@@ -201,11 +201,11 @@ export function describeDbosIntegration(name: string, fn: (getCtx: () => DbosTes
   });
 }
 
-// 兜底清掉上次 vitest 中断遗留的测试残留(Ctrl+C / worker crash 时 afterEach/afterAll 没跑完)。
-// 跨 suite 通用:首个跑的 suite 在 beforeAll 命中,后续 suite 找不到东西。
-// 已通过 vitest.integration.config.ts 的 fileParallelism: false + singleFork 串行化,不会误伤并行运行的 suite。
+// Backstop cleanup of test leftovers from previously interrupted vitest runs (Ctrl+C / worker crash leaving afterEach/afterAll unfinished).
+// Cross-suite shared: the first suite to run catches it in beforeAll; subsequent suites find nothing.
+// Already serialized via vitest.integration.config.ts's fileParallelism: false + singleFork; will not collide with suites running in parallel.
 async function cleanupStaleResidue(db: DbClient): Promise<void> {
-  // 1. 业务表:按 fixture 前缀清掉上次中断留下的本地测试资源。
+  // 1. Business tables: clean up local test resources by fixture prefix from previous interruptions.
   const staleExperiments = await db
     .select({ id: experiments.id })
     .from(experiments)
@@ -239,7 +239,7 @@ async function cleanupStaleResidue(db: DbClient): Promise<void> {
     setupLogger.info({ count: staleCount }, 'cleanup_stale_test_resources');
   }
 
-  // 2. DBOS 系统库:扫并 DROP 所有悬空的 dbos_test_* schema
+  // 2. DBOS system database: scan and DROP all dangling dbos_test_* schemas
   const rawRows = await db.execute(sql`
     SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'dbos_test_%'
   `);

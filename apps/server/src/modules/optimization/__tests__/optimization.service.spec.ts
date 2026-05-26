@@ -160,9 +160,9 @@ function makeExperimentService(): Mocked<ExperimentService> {
   } as unknown as Mocked<ExperimentService>;
 }
 
-// 默认让 RunResultService 返回"空 aggregate"——OptimizationService.withLiveRoundMetrics 在聚合空时
-// 保留 round 快照,所以现有 case(依赖 fixture metrics/processedSamples 的 running round)行为不变。
-// 测 live aggregate 覆盖语义的 case 在自己 setup 内 override mock 返回值。
+// By default, let RunResultService return an "empty aggregate" — OptimizationService.withLiveRoundMetrics
+// keeps the round snapshot when the aggregate is empty, so existing cases (running rounds that rely on fixture metrics/processedSamples) stay unchanged.
+// Cases that test the live aggregate override semantics override the mock return value in their own setup.
 function makeRunResultService(): Mocked<RunResultService> {
   return {
     aggregateExperiment: vi.fn().mockResolvedValue([]),
@@ -680,7 +680,7 @@ describe('OptimizationService', () => {
       expect(accuracy).toBeDefined();
       expect(accuracy?.hasBaseline).toBe(true);
       expect(accuracy?.values).toEqual([0.81, 0.85, 0.88]);
-      // bestRoundIndex 仍指向 round 集合内的最佳序号（不含 baseline）：round 2 (idx=1) 是最高
+      // bestRoundIndex still refers to the best index within the round set (excluding baseline): round 2 (idx=1) is the highest
       expect(accuracy?.bestRoundIndex).toBe(1);
     });
 
@@ -862,7 +862,7 @@ describe('OptimizationService', () => {
       expect(result.rounds[0]?.kindLabel).toBe('analysis → propose v2');
       expect(result.bestVersion?.promptRef).toBe('ChnSentiCorp@v2');
       expect(result.goalProgress).toHaveLength(1);
-      // baselineMetrics 应该合并到 baseline.metrics
+      // baselineMetrics should be merged into baseline.metrics
       expect(result.baseline?.metrics).toEqual([{ label: 'acc', value: 0.92 }]);
     });
 
@@ -872,7 +872,7 @@ describe('OptimizationService', () => {
         baseRow({ runConfig: { temperature: 0.3, devMockTimeline: { trend: 'not-an-array' } } }),
       );
 
-      // Should NOT throw — service safeParse 失败时静默回落到空态
+      // Should NOT throw — the service silently falls back to an empty state when safeParse fails
       const result = await service.getOptimization(projectAccess().id, baseRow().id, actor);
       expect(result.trend).toEqual([]);
       expect(result.rounds).toEqual([]);
@@ -1091,9 +1091,9 @@ describe('OptimizationService', () => {
       });
 
       it('renders prompt diff outputSchema as 「## 输出格式」 instruction (mirrors actual LLM dispatch)', async () => {
-        // 当 outputSchema 是 {fields:[...]} DTO 形态时，diff 视图必须与「实际发送给业务 LLM」的 composeFullPrompt
-        // 结果一致：渲染成中文「## 输出格式」段，而不是把原始 {"fields":[{"key":"label",...,"isJudgment":true}]}
-        // 直接以 ```json 代码块呈现。isJudgment 元数据不会泄漏到下游 prompt 文本。
+        // When outputSchema is a {fields:[...]} DTO shape, the diff view must match the composeFullPrompt result
+        // "actually sent to the business LLM": it should render as the localized "## Output Format" section,
+        // rather than presenting the raw {"fields":[{"key":"label",...,"isJudgment":true}]} as a ```json code block. The isJudgment metadata must not leak into the downstream prompt text.
         const baseVersionId = 'pv000000-0000-4000-8000-000000000000';
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(baseRow({ baseVersionId }));
@@ -1148,8 +1148,8 @@ describe('OptimizationService', () => {
           { label: 'positive', precision: 0.75, recall: 0.72, vsLabel: 'baseline', vsDelta: null, vsTone: 'neutral' },
           { label: 'negative', precision: 0.68, recall: 0.69, vsLabel: 'baseline', vsDelta: null, vsTone: 'neutral' },
         ]);
-        // 整体行(overallRow):accuracy 来自 metricsObj.accuracy(0.7),precision/recall 未在 metrics 中提供 → 0;
-        // 无 sourceExperimentMetrics → vsDelta=null、vsTone=neutral、vsLabel='baseline'
+        // Overall row (overallRow): accuracy comes from metricsObj.accuracy (0.7); precision/recall are not provided in metrics → 0;
+        // no sourceExperimentMetrics → vsDelta=null, vsTone=neutral, vsLabel='baseline'
         expect(exp?.overallRow).toEqual({
           accuracy: 0.7,
           precision: 0,
@@ -1158,7 +1158,7 @@ describe('OptimizationService', () => {
           vsDelta: null,
           vsTone: 'neutral',
         });
-        // 每轮目标 chip:goals=[{accuracy gte 0.82 overall}],当前 0.7 < 0.82 → miss
+        // Per-round goal chip: goals=[{accuracy gte 0.82 overall}], current 0.7 < 0.82 → miss
         expect(result.rounds[0]!.goalChips).toEqual([
           {
             label: 'Accuracy',
@@ -1245,8 +1245,8 @@ describe('OptimizationService', () => {
       });
 
       it('produces overallRow and class rows with vsDelta against source experiment baseline metrics', async () => {
-        // 新语义:每一轮的 vsDelta 都对照 source experiment 的 metrics(不再对照前一轮)。
-        // 这里给 baseRow 注入 sourceExperimentMetrics,验证 round 1 vsDelta=round1.acc - source.acc。
+        // New semantics: every round's vsDelta is compared against the source experiment's metrics (no longer against the previous round).
+        // Here we inject sourceExperimentMetrics into baseRow to verify that round 1 vsDelta = round1.acc - source.acc.
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(
           baseRow({
@@ -1307,7 +1307,7 @@ describe('OptimizationService', () => {
         expect(positiveRow?.vsDelta).toBeCloseTo(0.08, 5);
         expect(positiveRow?.deltas?.precision?.value).toBeCloseTo(0.08, 5);
         expect(positiveRow?.deltas?.recall?.value).toBeCloseTo(0.06, 5);
-        // 同样,round 0 也对照 source experiment(自己) → vsDelta=0 (在 ±0.001 阈值内为 neutral)
+        // Likewise, round 0 is also compared against the source experiment (itself) → vsDelta=0 (within ±0.001 → neutral)
         const round0 = result.rounds.find((r) => r.index === 0)!;
         expect(round0.experimentResult?.overallRow).toMatchObject({
           accuracy: 0.65,
@@ -1319,7 +1319,7 @@ describe('OptimizationService', () => {
       });
 
       it('produces goalChips with achieved=hit when current >= target and respects class scope', async () => {
-        // class scope goal:从 perClass 里按 label 找对应 metric。
+        // Class-scope goal: look up the matching metric in perClass by label.
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(
           baseRow({
@@ -1336,7 +1336,7 @@ describe('OptimizationService', () => {
         const result = await service.getOptimization(projectAccess().id, baseRow().id, actor);
         const chips = result.rounds[0]!.goalChips;
         expect(chips).toHaveLength(2);
-        // 整体 accuracy 0.7 >= 0.6 → hit
+        // Overall accuracy 0.7 >= 0.6 → hit
         expect(chips[0]).toEqual({
           label: 'Accuracy',
           targetText: '≥ 0.6',
@@ -1353,8 +1353,8 @@ describe('OptimizationService', () => {
       });
 
       it('exposes errorPatterns and improvementSuggestions even when generate LLM has not finished yet', async () => {
-        // 模拟分析 LLM 已完成、生成 LLM 还没产出（子实验也还没起）。此时 promptDiff 应为空，
-        // 但错误样本 / 改进建议必须立即可见，让用户在 round 处于 analysis 阶段就看到中间产物。
+        // Simulate the analysis LLM having finished while the generation LLM has not produced anything yet (the child experiment has not even started). At this point promptDiff should be empty,
+        // but error samples / improvement suggestions must be immediately visible so the user can see intermediate output while the round is in the analysis stage.
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(baseRow());
         repo.listRoundExperimentsForOptimization.mockResolvedValue([
@@ -1375,7 +1375,7 @@ describe('OptimizationService', () => {
         expect(round.improvementSuggestions).toBeDefined();
         expect(round.improvementSuggestions).toHaveLength(2);
         expect(round.promptDiff).toBeUndefined();
-        // experimentResult 仍有（实验已创建），但状态为 running（兜底）、进度 0
+        // experimentResult is still present (the experiment has been created) but in running state (fallback) with 0 progress
         expect(round.experimentResult?.samplesDone).toBe(0);
       });
 
@@ -1398,7 +1398,7 @@ describe('OptimizationService', () => {
       });
 
       it('renders a round card from round_steps even when experiment row does not exist yet', async () => {
-        // 分析阶段:仅 round_steps 中有 error_analysis=running 行,experiments 表还没有该轮
+        // Analysis stage: only the round_steps rows contain error_analysis=running; the experiments table has no entry for this round yet
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(baseRow());
         repo.listRoundExperimentsForOptimization.mockResolvedValue([]);
@@ -1417,7 +1417,7 @@ describe('OptimizationService', () => {
         expect(round.status).toBe('running');
         expect(round.steps).toHaveLength(1);
         expect(round.steps[0]).toMatchObject({ step: 'error_analysis', status: 'running' });
-        // 此阶段无 experiment 行,这些字段应为 undefined / 空
+        // At this stage there is no experiment row; these fields should be undefined / empty
         expect(round.experimentResult).toBeUndefined();
         expect(round.experimentId).toBeNull();
         expect(round.metrics).toEqual([]);
@@ -1439,9 +1439,9 @@ describe('OptimizationService', () => {
         expect(result.rounds).toHaveLength(1);
         const round = result.rounds[0]!;
         expect(round.steps).toHaveLength(3);
-        // experiment 步 running ⇒ 整个 round status=running
+        // experiment step running ⇒ the entire round status=running
         expect(round.status).toBe('running');
-        // experiment 行存在 → 仍有 experimentResult
+        // experiment row exists → experimentResult is still present
         expect(round.experimentResult).toBeDefined();
       });
 
@@ -1475,8 +1475,8 @@ describe('OptimizationService', () => {
 
     describe('live aggregate for running rounds', () => {
       it('overrides running round processedSamples / failedSamples / metrics with live aggregate from run_results', async () => {
-        // 旧快照(上一次 batch 聚合写回):60 done / accuracy 0.7。run_results 表已经累计到 70 个 terminal
-        // (65 correct A + 5 error)→ live aggregate 应当把进度推到 70、accuracy 推到 65/70。
+        // Old snapshot (written back by the previous batch aggregation): 60 done / accuracy 0.7. The run_results table has accumulated 70 terminal rows
+        // (65 correct A + 5 error) → the live aggregate should push progress to 70 and accuracy to 65/70.
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(baseRow());
         repo.listRoundExperimentsForOptimization.mockResolvedValue([
@@ -1525,7 +1525,7 @@ describe('OptimizationService', () => {
         expect(runResults.aggregateExperiment).toHaveBeenCalledWith('e1111111-1111-4111-8111-111111111111');
         expect(runResults.aggregateExperimentLatency).toHaveBeenCalledWith('e1111111-1111-4111-8111-111111111111');
         const exp = result.rounds[0]?.experimentResult;
-        // experimentResult 派生自被覆盖后的 round 字段:samplesDone 推到 70、accuracy 推到 65/70
+        // experimentResult is derived from the round fields after override: samplesDone goes to 70, accuracy goes to 65/70
         expect(exp?.samplesDone).toBe(70);
         expect(exp?.overallRow?.accuracy).toBeCloseTo(65 / 70, 5);
         // wrong = samplesDone - round(accuracy * samplesDone) = 70 - 65 = 5
@@ -1533,9 +1533,9 @@ describe('OptimizationService', () => {
       });
 
       it('preserves snapshot when live aggregate is empty (run_results has no terminal row yet)', async () => {
-        // 边界:running round 刚启动,run_results 还没 terminal row,aggregate 返回空。
-        // 应保留 experiments 快照(可能是 0/null 也可能是上一次 batch 写回的中间态),
-        // 避免把进度回退到 0/null。
+        // Edge case: a running round has just started, no terminal row in run_results yet, aggregate returns empty.
+        // The experiments snapshot must be preserved (it may be 0/null, or an intermediate state written by a previous batch),
+        // to avoid regressing the progress to 0/null.
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(baseRow());
         repo.listRoundExperimentsForOptimization.mockResolvedValue([
@@ -1556,19 +1556,19 @@ describe('OptimizationService', () => {
             failedSamples: 0,
           },
         ]);
-        // makeRunResultService 默认就返回空 aggregate
+        // makeRunResultService returns an empty aggregate by default
 
         const result = await service.getOptimization(projectAccess().id, baseRow().id, actor);
 
         expect(runResults.aggregateExperiment).toHaveBeenCalledWith('e2222222-2222-4222-8222-222222222222');
         const exp = result.rounds[0]?.experimentResult;
-        // 快照保留:processedSamples=50、accuracy=0.7
+        // Snapshot preserved: processedSamples=50, accuracy=0.7
         expect(exp?.samplesDone).toBe(50);
         expect(exp?.overallRow?.accuracy).toBeCloseTo(0.7, 5);
       });
 
       it('skips aggregation calls for non-running rounds', async () => {
-        // 终态 round 直接走快照,避免每次 GET 都触发 GROUP BY。
+        // Terminal rounds use the snapshot directly to avoid triggering a GROUP BY on every GET.
         repo.findProjectAccess.mockResolvedValue(projectAccess());
         repo.findOptimizationById.mockResolvedValue(baseRow({ status: 'success' }));
         repo.listRoundExperimentsForOptimization.mockResolvedValue([
@@ -1745,7 +1745,7 @@ describe('OptimizationService', () => {
       await service.createOptimization(projectAccess().id, promptInput, actor);
 
       expect(experimentRepo.findExperimentById).not.toHaveBeenCalled();
-      // 已显式传入 baseVersionId,不应触发 repo.findActiveVersionIdForPrompt 兜底
+      // baseVersionId is provided explicitly; repo.findActiveVersionIdForPrompt fallback must not be triggered
       expect(repo.findActiveVersionIdForPrompt).not.toHaveBeenCalled();
       expect(repo.insertOptimization).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1839,7 +1839,7 @@ describe('OptimizationService', () => {
           projectId: projectAccess().id,
           defaultDatasetId: datasetInput.datasetId,
           createdBy: actor.sub,
-          // 名字符合 `优化-${datasetName}-${ISO time}` 模板
+          // Name matches the `Optimization-${datasetName}-${ISO time}` template
           name: expect.stringMatching(/^优化-customer-feedback-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/),
         }),
       );
@@ -1924,7 +1924,7 @@ describe('OptimizationService', () => {
       repo.findProjectAccess.mockResolvedValue(projectAccess());
       repo.findOptimizationById
         .mockResolvedValueOnce(baseRow({ status: 'running' }))
-        // 第二次 find 模拟 workflow 已经在 step 边界感知后切到 stopped
+        // The second find simulates the workflow already flipping to stopped after observing the change at a step boundary
         .mockResolvedValueOnce(baseRow({ status: 'stopped', controlState: 'stop' }));
 
       const result = await service.controlOptimization(projectAccess().id, baseRow().id, 'stop', actor);
@@ -1932,8 +1932,8 @@ describe('OptimizationService', () => {
       expect(repo.updateOptimization).toHaveBeenCalledWith(
         projectAccess().id,
         baseRow().id,
-        // service 现在抢占式写终态:status=stopped + control_state=stop + finishedAt
-        // workflow 后续的 finalize 因 repo.finalize 守卫(status='running')被跳过
+        // The service now preempts the terminal state: status=stopped + control_state=stop + finishedAt
+        // The workflow's subsequent finalize is skipped because the repo.finalize guard (status='running') is not satisfied
         expect.objectContaining({
           status: 'stopped',
           controlState: 'stop',
@@ -2005,7 +2005,7 @@ describe('OptimizationService', () => {
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
-    // SPEC 25 §7 双路径联动: stop/cancel 父优化时即时调子实验 controlExperiment
+    // SPEC 25 §7 dual-path linkage: stop/cancel on the parent optimization immediately invokes controlExperiment on the child
     it('stop running + active 子实验 → 调 experimentService.controlExperiment("stop")', async () => {
       repo.findProjectAccess.mockResolvedValue(projectAccess());
       repo.findOptimizationById

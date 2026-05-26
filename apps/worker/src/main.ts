@@ -9,7 +9,7 @@ function loadRootEnv(): void {
   try {
     process.loadEnvFile(resolve(process.cwd(), '../../.env'));
   } catch {
-    // 在 CI / 容器部署里没有 .env 是正常的。
+    // Missing .env in CI / containerized deploys is expected.
   }
 }
 

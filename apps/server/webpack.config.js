@@ -4,9 +4,9 @@ const path = require("node:path");
 
 const builtins = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
 
-// loader.ts 在 packages/optimization-strategy/src/error-pattern-analysis/prompts/ 用
-// readFileSync(__dirname + '/*.md') 加载 prompt 模板；webpack bundle 后 __dirname
-// 解析为 apps/server/dist/，需要把 .md 平铺复制过去。
+// loader.ts under packages/optimization-strategy/src/error-pattern-analysis/prompts/ uses
+// readFileSync(__dirname + '/*.md') to load prompt templates; after webpack bundles, __dirname
+// resolves to apps/server/dist/, so .md files must be flat-copied there.
 const OPTIMIZATION_PROMPT_DIR = path.resolve(
   __dirname,
   "../../packages/optimization-strategy/src/error-pattern-analysis/prompts",

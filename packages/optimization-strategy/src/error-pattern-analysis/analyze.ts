@@ -1,6 +1,6 @@
-// 错误样本分析 — 混淆对 + 回归 + 多次 LLM 调用 + LLM 二次汇总
-// Token 预算：每次 LLM 调用前用 estimateMessagesTokens 估 baseline；超 maxInputTokensPerBatch 时降级
-// （fitSamplesToBudget → 字段截断 → batch 数砍）
+// Error-sample analysis — confusion pairs + regression + multiple LLM calls + a second LLM summary
+// Token budget: before each LLM call, use estimateMessagesTokens to estimate the baseline; degrade when exceeding maxInputTokensPerBatch
+// (fitSamplesToBudget → field truncation → reduce batch count)
 import {
   invokeLLM,
   type InvokeLLMDependencies,
@@ -51,10 +51,10 @@ import {
 } from './token-budget';
 import { DEFAULT_PROMPT_LANGUAGE, type PromptLanguageDto } from '@proofhound/shared';
 
-// 优化每轮 1 行 analysis + 1 行 generate 落 ph_runs.run_results(SPEC 25 §11.2)。
-// 由 workflow 提供确定性 runResultId(uuidv5)与 meta(projectId / sourceId=optimizationId /
-// promptVersionId / modelId / dbosWorkflowId / attempt)。analysis 行只在最终 summarize 那次写——
-// 中间 confusion / regression 多次 batch 调用是实现细节,只走应用日志,不写 run_results。
+// Per round of optimization, persist 1 analysis row + 1 generate row to ph_runs.run_results (SPEC 25 §11.2).
+// The workflow provides a deterministic runResultId (uuidv5) and meta (projectId / sourceId=optimizationId /
+// promptVersionId / modelId / dbosWorkflowId / attempt). The analysis row is only written at the final summarize step —
+// intermediate confusion / regression batch calls are implementation details; they only go through application logs and do not write run_results.
 export interface OptimizationRunResultMeta {
   projectId: string;
   sourceId: string;
@@ -79,15 +79,15 @@ export interface AnalyzeFailuresArgs {
   fieldWhitelist: FieldWhitelist;
   strategyConfig: ErrorPatternAnalysisConfig;
   promptLanguage?: PromptLanguageDto;
-  // 跨轮历史(SPEC 25 §11.3)：非首轮时由 caller 聚合传入；首轮 undefined / [] 不渲染历史段
+  // Cross-round history (SPEC 25 §11.3): for non-first rounds, the caller aggregates and passes it in; first round undefined / [] does not render the history section
   roundHistory?: RoundHistoryEntry[];
-  // 提供时,summarize 阶段 invokeLLM 会自动写 ph_runs.run_results 一行(source='optimization_analysis')。
-  // 不传则维持旧行为(只打日志,不写表),向后兼容单测 / 离线脚本。
+  // When provided, during the summarize stage invokeLLM auto-writes one ph_runs.run_results row (source='optimization_analysis').
+  // When not provided, behavior is preserved (only logs, does not write the table), backward compatible with unit tests / offline scripts.
   runResultMeta?: OptimizationRunResultMeta;
   analysisRunResultId?: string;
 }
 
-// 降级动作记录 — 出现在 batch 上，便于诊断哪些样本 / batch 被截了
+// Degradation actions recorded — attached on a batch, easing diagnosis of which samples / batches were truncated
 export interface BatchBudgetReport {
   baselineInputTokens: number;
   sampleBudgetTokens: number;
@@ -95,7 +95,7 @@ export interface BatchBudgetReport {
   originalSampleCount: number;
   fittedSampleCount: number;
   droppedSampleCount: number;
-  fieldsTruncated: boolean; // 单条都塞不下时启动字段截断
+  fieldsTruncated: boolean; // When even a single sample does not fit, kick in field truncation
 }
 
 export interface AnalyzeBatchRecord {
@@ -111,8 +111,8 @@ export interface AnalyzeBatchRecord {
 export interface SummarizeBudgetReport {
   baselineInputTokens: number;
   estimatedBatchesTokens: number;
-  fieldTruncationApplied: boolean; // 阶段 1 降级：截 batch 内长字段
-  droppedBatchCount: number; // 阶段 2 降级：砍掉的 batch 数
+  fieldTruncationApplied: boolean; // Phase 1 degradation: truncate long fields within a batch
+  droppedBatchCount: number; // Phase 2 degradation: number of batches dropped
 }
 
 export interface AnalyzeFailuresResult {
@@ -133,8 +133,8 @@ export async function analyzeFailures(
   deps: InvokeLLMDependencies,
 ): Promise<AnalyzeFailuresResult> {
   const promptLanguage = args.promptLanguage ?? DEFAULT_PROMPT_LANGUAGE;
-  // 跨轮历史 token budget 降级 — 给所有 batch 用同一份 fitted history,避免重复 estimate
-  // history 最多占用 batch input budget 的 40%,其余留给错误样本 + evidence
+  // Cross-round history token-budget degradation — shared one fitted history across all batches to avoid repeated estimates
+  // History takes at most 40% of the batch input budget; the rest goes to error samples + evidence
   const historyCap = Math.floor(args.strategyConfig.maxInputTokensPerBatch * 0.4);
   const fittedHistoryResult = fitRoundHistoryToBudget(args.roundHistory, historyCap, args.goals, promptLanguage);
   const argsWithFittedHistory: AnalyzeFailuresArgs = {
@@ -203,7 +203,7 @@ export async function analyzeFailures(
   };
 }
 
-// 极端情况下"一条样本本身就超 budget"时的字段截断阈值（chars，按 4 chars/token 反算）
+// Field truncation threshold in the extreme case where "a single sample exceeds the budget" (chars, derived by 4 chars/token)
 const PER_FIELD_TRUNCATE_CHARS = 2_000;
 
 interface FitOutcome {
@@ -215,10 +215,10 @@ interface FitOutcome {
   estimatedSampleTokens: number;
 }
 
-// confusion + regression 两条分析路径的公共流水线:
-// fit 出来的样本 → buildMessages → invokeLLM → parse → normalizeEvidenceBundle → AnalyzeBatchRecord
-// 差异只通过 spec 注入（source / bucketKey / 已 fit 好的样本 / messages builder / parser /
-// stepName / requestKey）。业务行为(LLM 调用次数、messages 内容、最终字段)不变。
+// Common pipeline shared by the confusion + regression analysis paths:
+// fitted samples → buildMessages → invokeLLM → parse → normalizeEvidenceBundle → AnalyzeBatchRecord
+// Differences are injected via spec only (source / bucketKey / already-fitted samples / messages builder / parser /
+// stepName / requestKey). The business behavior (LLM call count, message content, final fields) is unchanged.
 interface AnalysisBatchSpec {
   source: 'confusion' | 'regression';
   bucketKey: string;
@@ -328,7 +328,7 @@ async function runConfusionBatch(
 }
 
 function fitSamplesForConfusion(pair: ConfusionPair, args: AnalyzeFailuresArgs): FitOutcome {
-  // 1) 探针：把 samples 清空构造一次 message，估固定开销（含已 fit 的跨轮历史）
+  // 1) Probe: clear samples and construct one message to estimate the fixed overhead (including the fitted cross-round history)
   const probePair: ConfusionPair = { ...pair, samples: [] };
   const probe = buildAnalyzeConfusionMessages({
     pair: probePair,
@@ -345,7 +345,7 @@ function fitSamplesForConfusion(pair: ConfusionPair, args: AnalyzeFailuresArgs):
   // 2) fit
   let { fitted, dropped, estimatedTokens } = fitSamplesToBudget(pair.samples, sampleBudget, 0);
 
-  // 3) 没塞下任何样本但确实有样本 → 强行塞 1 条且对其字段做暴力截断
+  // 3) Nothing fits but samples do exist → force-fit 1 sample and brute-force-truncate its fields
   let fieldsTruncated = false;
   if (fitted.length === 0 && pair.samples.length > 0) {
     const head = pair.samples[0]!;
@@ -461,7 +461,7 @@ function buildAnalysisEvidenceBundle(
   };
 }
 
-// summarize 字段截断的字符上限（按 batch 内 reason / change / rationale 这种长字段控制）
+// Summarize field-truncation character cap (controls long fields like reason / change / rationale within a batch)
 const SUMMARIZE_FIELD_TRUNCATE_CHARS = 600;
 
 async function runSummarize(
@@ -506,7 +506,7 @@ async function runSummarize(
     };
   }
 
-  // 探针：空 batches 估 baseline（含已 fit 的跨轮历史）
+  // Probe: estimate the baseline with empty batches (including the fitted cross-round history)
   const probe = buildSummarizeMessages({
     goals: args.goals,
     metrics: args.metrics,
@@ -517,7 +517,7 @@ async function runSummarize(
   const baseline = estimateMessagesTokens(probe.system, probe.user, args.strategyConfig.maxSummarizeOutputTokens);
   const budget = computeSampleBudget(args.strategyConfig.maxInputTokensPerBatch, baseline.inputTokens);
 
-  // 计算原始 batches 的 token 占用
+  // Compute the token footprint of the original batches
   const rawCollected = batches.map((b) => ({
     source: b.source,
     title: b.title,
@@ -528,14 +528,14 @@ async function runSummarize(
   let droppedBatchCount = 0;
   let currentTokens = estimateTokens(collected);
 
-  // 阶段 1：超 budget → 字段截断
+  // Phase 1: over budget → field truncation
   if (currentTokens > budget) {
     collected = rawCollected.map((b) => truncateAllStringFieldsInObject(b, SUMMARIZE_FIELD_TRUNCATE_CHARS));
     fieldTruncationApplied = true;
     currentTokens = estimateTokens(collected);
   }
 
-  // 阶段 2：仍超 budget → 按 batch 砍（confusion 优先保留 = 排到前面）
+  // Phase 2: still over budget → drop batches (confusion is preferred = placed first)
   if (currentTokens > budget) {
     const sortedConfusionFirst = [...collected].sort((a, b) =>
       a.source === 'confusion' && b.source !== 'confusion'
@@ -599,8 +599,8 @@ async function runSummarize(
           promptLanguage: args.promptLanguage ?? DEFAULT_PROMPT_LANGUAGE,
         },
       }),
-      // run_results.parsed_output 喂详情页 errorPatterns / suggestedChanges(SPEC 25 §11.3)；
-      // finishReason 在外部重 parse 时才补,这里给 null 保证至少关键字段可用。
+      // run_results.parsed_output feeds the detail-page errorPatterns / suggestedChanges (SPEC 25 §11.3);
+      // finishReason is filled when externally re-parsed; here null ensures the key fields are at least available.
       parseResponse: (content) => {
         try {
           const parsed = parseSummarizeOutput(content, null);
@@ -629,11 +629,11 @@ async function runSummarize(
 
 export type { ConfusionPair, RegressionGroup };
 
-// 由 analyze / generate 调用 invokeLLM 时构造 RunResultContext。
-// 只有当 caller 同时提供 meta 与 runResultId 时返回 context,否则返回 undefined
-// (invokeLLM 内部按 `runResult && runResultWriter` 双 guard 决定是否写表)。
-// roundIndex 必传:详情页 listOptimizationLlmRunResults 以 isNotNull(round_index) 过滤,
-// 缺失即被吃掉(导致 errorPatterns / suggestedChanges / promptDiff 整体丢失)。
+// Construct the RunResultContext when analyze / generate call invokeLLM.
+// Only when the caller provides both meta and runResultId, return the context; otherwise return undefined
+// (invokeLLM internally guards with `runResult && runResultWriter` to decide whether to write the table).
+// roundIndex is required: the detail page's listOptimizationLlmRunResults filters by isNotNull(round_index);
+// a missing value drops the whole row (causing errorPatterns / suggestedChanges / promptDiff to disappear entirely).
 export function buildRunResultForCall(input: {
   meta: OptimizationRunResultMeta | undefined;
   runResultId: string | undefined;

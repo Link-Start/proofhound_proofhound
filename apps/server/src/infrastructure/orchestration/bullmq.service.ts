@@ -8,8 +8,8 @@ import {
 } from '@proofhound/orchestration-shared';
 import type { Queue } from 'bullmq';
 
-// BullMQ producer：业务 Service 通过本服务派发任务
-// 详见 docs/specs/03-orchestration.md §2
+// BullMQ producer: business Services dispatch tasks through this service
+// See docs/specs/03-orchestration.md §2
 @Injectable()
 export class BullmqService {
   constructor(

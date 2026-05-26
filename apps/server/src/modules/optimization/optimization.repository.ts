@@ -235,9 +235,9 @@ export interface OptimizationRunResultRow {
   rawResponse: string | null;
 }
 
-// 跨轮历史聚合行(SPEC 25 §11.3) — 一行 = 一轮已完成优化;
-// generateParsedOutput 来自 run_results(source='optimization_generate',status='success')；
-// 旧数据 / 解析失败时为 null,caller 用空字段兜底,不阻塞主路径
+// Cross-round history aggregation row (SPEC 25 §11.3) — one row = one completed round of optimization;
+// generateParsedOutput comes from run_results (source='optimization_generate', status='success');
+// for legacy data / parse failures it is null, callers fall back to empty fields without blocking the main path
 export interface OptimizationRoundHistoryRow {
   roundIndex: number;
   metrics: unknown;
@@ -421,9 +421,9 @@ export class OptimizationRepository {
   }
 
   /**
-   * from_dataset_only 起步：service 创建优化前读取 dataset 的 name 用于自动生成 prompt 名。
-   * 仅返回 (id, name)，不需要其它字段；找不到（被软删 / 跨项目）返回 null。
-   * 详见 SPEC 25 §2.1。
+   * from_dataset_only start: before creating the optimization, the service reads the dataset's name to auto-generate the prompt name.
+   * Returns only (id, name); other fields are not needed. Returns null when not found (deleted / cross-project).
+   * See SPEC 25 §2.1.
    */
   async findDatasetForOptimization(projectId: string, datasetId: string): Promise<{ id: string; name: string } | null> {
     const rows = await this.db
@@ -444,9 +444,9 @@ export class OptimizationRepository {
   }
 
   /**
-   * from_dataset_only 首版生成完成后由 workflow 调用，把生成的版本 id 写入 base_version_id。
-   * 带 `WHERE base_version_id IS NULL` 保护，DBOS step replay 时不会覆盖既有值。
-   * 详见 SPEC 25 §2.1。
+   * Called by the workflow after the first version is generated in from_dataset_only mode, writing the generated version id into base_version_id.
+   * Guarded by `WHERE base_version_id IS NULL` so DBOS step replay does not overwrite an existing value.
+   * See SPEC 25 §2.1.
    */
   async updateBaseVersionId(optimizationId: string, baseVersionId: string): Promise<void> {
     await this.db
@@ -457,7 +457,7 @@ export class OptimizationRepository {
       );
   }
 
-  // ---------- Workflow 用 ----------
+  // ---------- Workflow-side ----------
 
   async setDbosWorkflowId(optimizationId: string, workflowId: string): Promise<void> {
     await this.db
@@ -485,8 +485,8 @@ export class OptimizationRepository {
   }
 
   async markStarted(optimizationId: string): Promise<void> {
-    // 仅在还未 startedAt 时填，避免 resume 覆盖原 startedAt
-    // started_at 用 DB 的 now() 避免 drizzle raw sql template 不走 column type 序列化导致 postgres-js Bind 失败
+    // Only populate when startedAt is not yet set, to avoid resume overwriting the original startedAt
+    // started_at uses the DB's now() to avoid drizzle raw sql template skipping column type serialization, which would cause a postgres-js Bind failure
     await this.db
       .update(optimizations)
       .set({
@@ -514,9 +514,9 @@ export class OptimizationRepository {
     return rows[0]?.controlState ?? null;
   }
 
-  // workflow 主循环顶部 + poll 内用:同时取 status + control_state。
-  // 与 service.controlOptimization 抢占式终态化配合 —— workflow 见到 status 已经不是 running 时
-  // 立即退出,不再 finalize、不再启动子实验。
+  // Used at the top of the workflow main loop + inside poll: fetches status + control_state at once.
+  // Cooperates with service.controlOptimization's preemptive terminal-state write — when the workflow sees status no longer running,
+  // it exits immediately, no more finalize, no more starting child experiments.
   async findStatusAndControl(optimizationId: string): Promise<{ status: string; controlState: string | null } | null> {
     const rows = await this.db
       .select({ status: optimizations.status, controlState: optimizations.controlState })
@@ -617,9 +617,9 @@ export class OptimizationRepository {
     return rows[0] ?? null;
   }
 
-  // 幂等守卫:只允许从 status='running' 翻到终态。返回是否真的写入。
-  // service 抢占式终态化(stop/cancel 时一次性写 status)后,workflow 自己再调 finalize
-  // 会因 WHERE 不满足而跳过——避免覆盖 service 已写好的终态、避免重复 finished_at 漂移。
+  // Idempotency guard: only allow transitioning from status='running' to a terminal state. Returns whether the write actually happened.
+  // After service performs a preemptive terminal write (writing status in one shot on stop/cancel), the workflow's own finalize
+  // is skipped because the WHERE clause does not match — avoiding overwriting the terminal state set by service and avoiding finished_at drift.
   async finalize(
     optimizationId: string,
     status: 'success' | 'failed' | 'stopped' | 'cancelled',
@@ -887,11 +887,11 @@ export class OptimizationRepository {
     return rows[0] ?? null;
   }
 
-  // 找当前优化里还在跑或已停下但未终态的子实验（最大 round_index 的一条）。
-  // 用途：service.controlOptimization 即时联动子实验 stop/cancel 时定位目标。
-  // from_prompt_version 的 baseline 实验没有 optimization_id + round_index 回指，
-  // 但 source_experiment_id 会指向它；普通 round 不存在时回退定位这条基线实验。
-  // 排除终态（success/failed/cancelled），仅返回真正需要联动的 running/stopped。
+  // Look up the child experiment that is still running (or stopped but not terminal) within the current optimization (the row with the largest round_index).
+  // Use case: service.controlOptimization locates the target when immediately propagating stop/cancel to the child experiment.
+  // The baseline experiment in from_prompt_version has no optimization_id + round_index back-pointer,
+  // but source_experiment_id points to it; if a regular round is not present, fall back to locating this baseline experiment.
+  // Exclude terminal states (success/failed/cancelled); only return running/stopped that genuinely need linkage.
   async findActiveChildExperiment(
     optimizationId: string,
   ): Promise<{ id: string; status: string; roundIndex: number | null; projectId: string } | null> {
@@ -973,11 +973,11 @@ export class OptimizationRepository {
     rawResponse: string | null;
   }> | null> {
     if (input.currentRoundNumber <= 1) {
-      // 第 1 轮：返回源实验的 run_results；无源实验则返回 null
+      // Round 1: return the source experiment's run_results; if there is no source experiment, return null
       if (!input.sourceExperimentId) return null;
       return this.loadRunResultsByExperiment(input.sourceExperimentId);
     }
-    // 第 N≥2 轮：N-1 轮的 experiment
+    // Round N≥2: the N-1 round experiment
     const prev = await this.findExperimentByRound(input.optimizationId, input.currentRoundNumber - 1);
     if (!prev) return null;
     return this.loadRunResultsByExperiment(prev.id);
@@ -1108,8 +1108,8 @@ export class OptimizationRepository {
     return result;
   }
 
-  // 给 from_prompt_version 优化选基线版本(SPEC 25 §2)。
-  // 优先 prompts.current_online_version_id;无则取该 prompt 最大 versionNumber 的版本。
+  // Picks the baseline version for from_prompt_version optimization (SPEC 25 §2).
+  // Prefer prompts.current_online_version_id; otherwise take the version of this prompt with the largest versionNumber.
   async findActiveVersionIdForPrompt(promptId: string): Promise<string | null> {
     const [promptRow] = await this.db
       .select({ currentOnlineVersionId: prompts.currentOnlineVersionId })
@@ -1165,9 +1165,9 @@ export class OptimizationRepository {
       .map((r) => ({ ...r, roundIndex: r.roundIndex as number }));
   }
 
-  // 跨轮历史聚合(SPEC 25 §11.3) — 返回 round_index < beforeRoundIndex 的已完成轮次,
-  // 每行带本轮 metrics / parentVersionId(从 prompt_versions) / optimization_generate 的 parsedOutput /
-  // is_best(用 optimizations.best_version_id 锚定)。本方法纯读,可被 @DBOS.step 包装。
+  // Cross-round history aggregation (SPEC 25 §11.3) — returns the completed rounds where round_index < beforeRoundIndex,
+  // each row carrying this round's metrics / parentVersionId (from prompt_versions) / parsedOutput of optimization_generate /
+  // is_best (anchored on optimizations.best_version_id). This method is read-only and can be wrapped by @DBOS.step.
   async loadRoundHistory(optimizationId: string, beforeRoundIndex: number): Promise<OptimizationRoundHistoryRow[]> {
     const rows = await this.db
       .select({
@@ -1212,9 +1212,9 @@ export class OptimizationRepository {
       }));
   }
 
-  // upsert 幂等核心:同一 (optimizationId, roundIndex, step) 至多一条;DBOS step
-  // retry 时多次调用不会写重复。未显式提供的字段用 COALESCE(EXCLUDED.x, x) 兜底,
-  // 避免把上次写入的 finishedAt / runResultId / experimentId 等覆盖成 null。
+  // Upsert idempotency core: at most one row per (optimizationId, roundIndex, step); DBOS step
+  // retries that call multiple times do not duplicate rows. Fields not explicitly provided fall back via COALESCE(EXCLUDED.x, x),
+  // preventing previously written finishedAt / runResultId / experimentId from being overwritten with null.
   async upsertRoundStep(input: RoundStepUpsertInput): Promise<void> {
     await this.db
       .insert(optimizationRoundSteps)
@@ -1236,7 +1236,7 @@ export class OptimizationRepository {
         target: [optimizationRoundSteps.optimizationId, optimizationRoundSteps.roundIndex, optimizationRoundSteps.step],
         set: {
           status: sql`EXCLUDED.status`,
-          // partial update 兜底:仅当本次入参显式提供时覆盖,否则保留旧值。
+          // Partial-update fallback: only override when this call explicitly provides the field; otherwise keep the old value.
           errorClass:
             input.errorClass !== undefined ? sql`EXCLUDED.error_class` : sql`${optimizationRoundSteps.errorClass}`,
           errorMessage:

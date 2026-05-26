@@ -1,7 +1,7 @@
-# 本地开发依赖服务
-# 详见 docs/specs/02-tech-stack.md §8
-# 起单一组件：docker compose -f dev/docker-compose.yml up redis
-# 完整运行：pnpm dev:docker
+# Local development dependent services
+# See docs/specs/02-tech-stack.md §8
+# Start a single component: docker compose -f dev/docker-compose.yml up redis
+# Run the full stack: pnpm dev:docker
 # Redpanda Console：http://localhost:8088
 # RedisInsight：http://localhost:5540
 

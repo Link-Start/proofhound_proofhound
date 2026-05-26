@@ -1,10 +1,10 @@
-// ContractsModule — 注册 OSS adapter 扩展点的默认实现
-// 详见 docs/specs/08-saas-adapter-boundary.md §3 + §7 PR1
+// ContractsModule — registers default implementations for OSS adapter extension points
+// See docs/specs/08-saas-adapter-boundary.md §3 + §7 PR1
 //
-// SaaS 仓库通过 `overrideProvider(ActorContextResolver).useClass(RemoteActorContextResolver)` 等
-// DI 覆盖完成形态切换；OSS 主干不感知形态差异。
+// The SaaS repo switches forms via DI overrides such as
+// `overrideProvider(ActorContextResolver).useClass(RemoteActorContextResolver)`; OSS mainline is unaware of the form difference.
 //
-// @Global() 保证所有 Module 都能直接注入这些 resolver，不必逐 module import。
+// @Global() ensures every module can inject these resolvers directly without per-module import.
 
 import { Global, Module } from '@nestjs/common';
 import { DatabaseModule } from '../../infrastructure/database/database.module';

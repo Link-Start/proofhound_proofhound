@@ -1,8 +1,8 @@
-// Round 决策 — workflow.finalizeRoundImpl 调完子实验、拿到本轮指标后,
-// 把"snapshot → isBest + goalsMet + 新 best 指标 + goalProgress"这一段纯计算从
-// DBOS step 边界中分离出来,workflow 只负责按结果写状态。
+// Round decision — after workflow.finalizeRoundImpl calls the child experiment and gets this round's metrics,
+// separate the "snapshot → isBest + goalsMet + new best metrics + goalProgress" pure computation out of
+// the DBOS step boundary; the workflow only writes state based on the result.
 //
-// 不包含子实验失败 / 父 stop / cancel 等编排分支 —— 那些仍归 workflow 处理。
+// Does not include child experiment failure / parent stop / cancel orchestration branches — those are still handled by the workflow.
 import { isBetterThan } from './best';
 import { evaluateGoals } from './goals';
 import type { OptimizationGoal, GoalProgressEntry, MetricSnapshot } from './types';
@@ -16,9 +16,9 @@ export interface RoundOutcomeDecisionInput {
 export interface RoundOutcomeDecision {
   isBest: boolean;
   goalsMet: boolean;
-  // isBest 时为 roundMetrics,否则维持 bestMetrics;供 workflow 写入 best_metrics
+  // When isBest, this is roundMetrics; otherwise keeps bestMetrics — used by the workflow to write best_metrics
   newBestMetrics: MetricSnapshot;
-  // 基于新 best 评估的目标进度(用于详情页 / 日志)
+  // Goal progress evaluated against the new best (for the detail page / logs)
   goalProgress: GoalProgressEntry[];
 }
 

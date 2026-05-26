@@ -1,2 +1,2 @@
-// 流式调用 — token 通过 Activity Heartbeat 推到 NestJS 维护的 channel
+// Streaming call — tokens are pushed to the NestJS-maintained channel via Activity Heartbeat
 export {};

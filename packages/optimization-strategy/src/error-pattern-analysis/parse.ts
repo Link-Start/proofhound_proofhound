@@ -1,4 +1,4 @@
-// LLM JSON 输出解析 — 严格 JSON + 容错回退 + 截断检测
+// LLM JSON output parsing — strict JSON + resilience fallback + truncation detection
 
 interface JsonRepairModule {
   jsonrepair: (text: string) => string;
@@ -17,8 +17,8 @@ export type {
   SummarizeConflict,
 } from './analysis-types';
 
-// jsonrepair 同时发布 ESM/CJS，但 server 的 Node16 CJS 编译不能静态 import 它的 ESM 类型入口。
-// 这里显式走 package exports 的 require 条件，保持 safeParseJson 的同步 API 不变。
+// jsonrepair publishes both ESM/CJS, but the server's Node16 CJS build cannot statically import its ESM type entry.
+// Here we explicitly take the require condition of the package exports, keeping safeParseJson's synchronous API unchanged.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { jsonrepair } = require('jsonrepair') as JsonRepairModule;
 
@@ -57,15 +57,15 @@ export function isTruncated(finishReason: string | null | undefined): boolean {
   return finishReason === 'length' || finishReason === 'max_tokens';
 }
 
-// 从 LLM 输出抽出第一个 JSON 对象 — 优先匹配 ```json ... ``` 块，回退到裸 JSON
+// Extract the first JSON object from the LLM output — prefer matching ```json ... ``` block, fall back to bare JSON
 export function extractJsonObject(text: string): string | null {
   if (!text) return null;
-  // 优先 ```json fenced block
+  // Prefer the ```json fenced block
   const fenced = /```(?:json)?\s*\n?([\s\S]*?)```/m.exec(text);
   if (fenced && fenced[1]) {
     return fenced[1].trim();
   }
-  // 回退：找第一个 { 到最后一个 }（保守 — 适合纯 JSON 输出无 markdown 包裹）
+  // Fallback: find the first { to the last } (conservative — suited for pure JSON output without markdown wrap)
   const firstBrace = text.indexOf('{');
   const lastBrace = text.lastIndexOf('}');
   if (firstBrace >= 0 && lastBrace > firstBrace) {
@@ -78,9 +78,9 @@ export function safeParseJson(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    // LLM 常输出非严格合规 JSON — 典型如字符串字面量内裸换行（Claude 在 ```json``` 代码块里
-    // 写长字符串时常忘记 \n 转义）/ 尾随逗号 / 单引号 / 未转义反斜杠。strict 失败时用
-    // jsonrepair 修复后再 parse，仍失败才放弃。快路径合法 JSON 保持零开销。
+    // LLMs commonly emit non-strict-compliant JSON — typical: bare newlines inside string literals (Claude often forgets \n
+    // escapes when writing long strings in ```json``` code blocks) / trailing commas / single quotes / unescaped backslashes. When strict fails,
+    // use jsonrepair to repair before parsing; only give up if it still fails. The fast path for valid JSON has zero overhead.
     try {
       return JSON.parse(jsonrepair(text));
     } catch {
@@ -90,7 +90,7 @@ export function safeParseJson(text: string): unknown {
 }
 
 // =========================
-// 三种 analyze 输出的解析
+// Parsers for the three analyze outputs
 // =========================
 
 export interface ConfusionAnalysisOutput {
@@ -240,13 +240,13 @@ function parseSuggestedChanges(value: unknown, options: ParseChangeOptions = {})
   return out;
 }
 
-// 单批次（confusion 或 regression）evidence 归一化的上下文。
-// analyze.ts 内 enrich 阶段的逻辑全部收敛到这里 —— 让 parse 出口直接吐出
-// 「字段完整、ID 稳定、源信息齐全、聚合值已补」的稳定形态，上层只消费一种形态。
+// Context for normalizing the evidence of a single batch (confusion or regression).
+// All enrichment-stage logic from analyze.ts converges here — so the parse output directly emits
+// a "fully-fielded, id-stable, source-complete, aggregate-backfilled" stable shape; upper layers consume only one shape.
 export interface NormalizeEvidenceContext {
   source: 'confusion' | 'regression';
   bucketKey: string;
-  // 当 LLM 没给 affectedCount 时回填用 — 通常是 batch 的 count（confusion pair / regression group）
+  // Used to backfill affectedCount when the LLM did not provide it — usually the batch's count (confusion pair / regression group)
   affectedCountFallback: number;
 }
 
@@ -255,11 +255,11 @@ export interface NormalizedEvidenceBatch {
   suggestedChanges: SuggestedChange[];
 }
 
-// 给单个 batch 的 parse 结果做最后一层归一化:
-// - errorPatterns: 补 patternId / source / bucketKey / affectedCount(fallback)
-// - suggestedChanges: 推导 addressesPatternIds(空时落 batch 内所有 patternIds)、
-//                     evidenceSampleIds(空时落 batch 内所有 exampleSampleIds)、
-//                     affectedCount(空时取 patterns 求和或 fallback)
+// Final normalization layer on the per-batch parse result:
+// - errorPatterns: backfill patternId / source / bucketKey / affectedCount (fallback)
+// - suggestedChanges: derive addressesPatternIds (when empty, default to all patternIds in the batch),
+//                     evidenceSampleIds (when empty, default to all exampleSampleIds in the batch),
+//                     affectedCount (when empty, take patterns' sum or fallback)
 export function normalizeEvidenceBundle(
   raw: { errorPatterns: AnalysisPattern[]; suggestedChanges: SuggestedChange[] },
   ctx: NormalizeEvidenceContext,
@@ -415,7 +415,7 @@ export function parseSummarizeOutput(
 }
 
 // =========================
-// generate 输出解析
+// Parse generate output
 // =========================
 
 export interface GenerateOutput {
@@ -425,8 +425,8 @@ export interface GenerateOutput {
   variablesUsed: string[];
   truncated: boolean;
   rawContent: string;
-  // 可选：LLM 在错误分析报告明确指出 schema 不足时输出的新 outputSchema（完整 JSON Schema 对象）。
-  // 缺省 / 校验失败时上层降级为沿用旧 schema。
+  // Optional: a new outputSchema emitted by the LLM when it explicitly states in the error-analysis report that the schema is insufficient (a complete JSON Schema object).
+  // On absence / validation failure, the upper layer falls back to inheriting the old schema.
   newOutputSchema?: unknown;
   outputSchemaChangeReason?: string;
   appliedChanges?: Array<{ changeId: string; patternIds: string[]; summary: string }>;
@@ -442,12 +442,12 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-// 校验 LLM 输出的 newOutputSchema 是否安全可接受。
-// 规则（与 generate.system.md 第 3 条约束对齐）：
-// - 新 schema 必须是 type=object 的 JSON Schema 对象，且 properties 是对象
-// - 老 schema 的 properties keys ⊆ 新 schema 的 properties keys（不允许删字段）
-// - 老字段的 type 必须保持不变（防止破坏解析契约）
-// 若老 schema 不是 type=object 形态（极少见 — 自由形态 schema），仅校验新 schema 自身结构。
+// Validate whether the LLM-output newOutputSchema is safe and acceptable.
+// Rules (aligned with constraint 3 in generate.system.md):
+// - The new schema must be a type=object JSON Schema object, and properties is an object
+// - The properties keys of the old schema ⊆ the properties keys of the new schema (no field deletion allowed)
+// - The type of old fields must remain unchanged (to avoid breaking the parsing contract)
+// If the old schema is not in the type=object shape (rare — free-form schema), only validate the new schema's own structure.
 export function safeValidateNewOutputSchema(
   newSchema: unknown,
   oldSchema: unknown,
@@ -562,7 +562,7 @@ function parseUnappliedSuggestions(value: unknown): NonNullable<GenerateOutput['
 }
 
 // =========================
-// 变量白名单校验
+// Variable whitelist validation
 // =========================
 
 import { extractVariableNames } from './prompts';
@@ -571,13 +571,13 @@ export interface VariableValidationResult {
   ok: boolean;
   disallowed: string[];
   missing: string[];
-  // base 已经用过的变量被新版本丢弃（如 base 用 {{text}}、新版没占位）— ok 需为 false
+  // Variables base used are dropped by the new version (e.g. base used {{text}} but the new version has no placeholders) — ok must be false
   removed: string[];
   detected: string[];
 }
 
-// 校验新 prompt body 引用的变量 ⊆ promptVariables，且包含 LLM 自报的 variablesUsed；
-// requiredVariables（通常 = base body 已用且仍在白名单内的变量）必须都保留在 newPromptBody。
+// Validate that the variables referenced in the new prompt body ⊆ promptVariables, and contain the LLM-self-reported variablesUsed;
+// requiredVariables (usually = variables base used that are still in the whitelist) must all be retained in newPromptBody.
 export function validatePromptVariables(
   newPromptBody: string,
   promptVariables: string[],
@@ -588,8 +588,8 @@ export function validatePromptVariables(
   const allowedSet = new Set(promptVariables);
   const disallowed = detected.filter((v) => !allowedSet.has(v));
   const reportedSet = new Set(reportedVariablesUsed);
-  // 不强制 reported = detected — 只要 detected ⊆ promptVariables 即 OK
-  // missing 字段保留：上层可警告 LLM 自报与实际不符
+  // Do not enforce reported = detected — as long as detected ⊆ promptVariables, OK
+  // missing field preserved: the upper layer can warn that LLM-self-reported and actual differ
   const missing = detected.filter((v) => !reportedSet.has(v));
   const detectedSet = new Set(detected);
   const removed = requiredVariables.filter((v) => !detectedSet.has(v));

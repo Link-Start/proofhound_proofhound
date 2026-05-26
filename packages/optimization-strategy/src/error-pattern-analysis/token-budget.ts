@@ -1,5 +1,5 @@
-// Token 预算工具 — 防止单次 LLM 调用 input 溢出
-// 估算口径与 packages/llm-client/src/token-estimate.ts 一致（4 字符/token 粗估）
+// Token-budget tools — prevent a single LLM call's input from overflowing
+// The estimation calibration matches packages/llm-client/src/token-estimate.ts (rough 4 chars/token)
 import { estimateLLMTokens, estimateTextTokens } from '@proofhound/llm-client';
 
 export interface BaselineEstimate {
@@ -8,7 +8,7 @@ export interface BaselineEstimate {
   totalTokens: number;
 }
 
-// 估算「system + user + 预留输出」一次调用的 token 占用
+// Estimate the per-call token footprint of "system + user + reserved output"
 export function estimateMessagesTokens(
   system: string,
   user: string,
@@ -24,7 +24,7 @@ export function estimateMessagesTokens(
   return { inputTokens: u.inputTokens, outputTokens: u.outputTokens, totalTokens: u.totalTokens };
 }
 
-// 计算样本预算 = 总输入预算 - baseline；下限 0
+// Compute samples budget = total input budget - baseline; floor at 0
 export function computeSampleBudget(
   maxInputTokensPerBatch: number,
   baselineInputTokens: number,
@@ -38,7 +38,7 @@ export interface FitSamplesResult<T> {
   estimatedTokens: number;
 }
 
-// 按样本估算 token 逐条 fit；至少保留 minSamples 条（即使超预算 — 让上层决定是否再截字段）
+// Fit samples one by one by estimated tokens; keep at least minSamples (even if over budget — let the upper layer decide whether to truncate fields further)
 export function fitSamplesToBudget<T>(
   samples: T[],
   tokenBudget: number,
@@ -60,7 +60,7 @@ export function fitSamplesToBudget<T>(
   return { fitted, dropped, estimatedTokens: used };
 }
 
-// 字符串字段递归截断 — 用于"一条样本本身就超 budget"的极端情况
+// Recursive string-field truncation — used in the extreme case where "a single sample exceeds the budget"
 export const TRUNCATION_MARKER = '…[truncated]';
 
 export function truncateStringFields<T>(value: T, maxChars: number, marker = TRUNCATION_MARKER): T {
@@ -81,26 +81,26 @@ export function truncateStringFields<T>(value: T, maxChars: number, marker = TRU
   return value;
 }
 
-// 截断单段长文本，保头部 + 尾部（中间用 marker 标记）— 适合 errorAnalysisText 这种长摘要
+// Truncate a single long text, keeping head + tail (middle marked with marker) — suited for long summaries like errorAnalysisText
 export function truncateLongText(text: string, maxChars: number, marker = TRUNCATION_MARKER): string {
   if (!text || text.length <= maxChars) return text;
-  // 头部 70% + 尾部 30%；中间标 marker
+  // Head 70% + tail 30%; marker in the middle
   const headLen = Math.floor((maxChars - marker.length) * 0.7);
   const tailLen = maxChars - marker.length - headLen;
   return text.slice(0, headLen) + marker + text.slice(text.length - tailLen);
 }
 
-// 把对象内所有字符串字段限到 maxCharsPerField 之内；用于 summarize batches 降级
+// Limit all string fields in an object to maxCharsPerField — used for summarize batches degradation
 export function truncateAllStringFieldsInObject<T>(obj: T, maxCharsPerField: number): T {
   return truncateStringFields(obj, maxCharsPerField);
 }
 
-// 把数字 token 转换为可读字符数（仅用于日志友好展示）
+// Convert numeric tokens to readable char counts (only for log-friendly display)
 export function tokensToChars(tokens: number): number {
   return tokens * 4;
 }
 
-// 工具：把样本/对象估成 token 数（封装 estimateTextTokens 暴露统一入口）
+// Utility: estimate sample/object tokens (wraps estimateTextTokens, exposing a unified entrypoint)
 export function estimateTokens(value: unknown): number {
   return estimateTextTokens(value);
 }

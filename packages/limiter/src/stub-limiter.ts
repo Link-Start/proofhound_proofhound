@@ -1,6 +1,6 @@
 import type { AcquireArgs, RateLimiter, ReleaseArgs, UsageSnapshot } from './types';
 
-// 测试 stub — 直接放行，便于单元测试
+// Test stub — always passes; useful for unit tests
 export class StubLimiter implements RateLimiter {
   async acquire(_args: AcquireArgs) {
     return;

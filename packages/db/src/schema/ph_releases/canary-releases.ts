@@ -1,5 +1,5 @@
-// ph_releases.canary_releases — 灰度发布
-// 详见 docs/specs/06-database-schema.md §6.2 与 docs/specs/27-releases.md
+// ph_releases.canary_releases — canary releases
+// See docs/specs/06-database-schema.md §6.2 and docs/specs/27-releases.md
 
 import { sql } from 'drizzle-orm';
 import { check, index, integer, jsonb, numeric, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
@@ -30,12 +30,12 @@ export const canaryReleases = phReleases.table(
       .notNull()
       .default(sql`ARRAY[]::uuid[]`),
 
-    // 状态机
+    // State machine
     status: text('status').notNull().default('pending'),
     controlState: text('control_state'),
     controlStatePayload: jsonb('control_state_payload'),
 
-    // 运行配置
+    // Run config
     trafficRatio: numeric('traffic_ratio', { precision: 5, scale: 4 }).notNull(),
     trafficMode: text('traffic_mode').notNull().default('split'),
     runMode: text('run_mode').notNull(),
@@ -48,7 +48,7 @@ export const canaryReleases = phReleases.table(
       .default(sql`'[]'::jsonb`),
     externalIdField: text('external_id_field').notNull(),
     annotationSchema: jsonb('annotation_schema'),
-    // 勾选要写入目标数据集的判定类别；空数组 = 全选；详见 docs/specs/27-releases.md
+    // Decision categories to write into the target dataset; empty array = select-all; see docs/specs/27-releases.md
     storageCategories: text('storage_categories')
       .array()
       .notNull()
@@ -60,7 +60,7 @@ export const canaryReleases = phReleases.table(
       .notNull()
       .default(sql`'{}'::jsonb`),
 
-    // 实时指标快照（骨架版不消费；详见 docs/specs/03-orchestration.md §3.3）
+    // Real-time metrics snapshot (the skeleton version does not consume this; see docs/specs/03-orchestration.md §3.3)
     totalReceived: integer('total_received').notNull().default(0),
     totalProcessed: integer('total_processed').notNull().default(0),
     totalFiltered: integer('total_filtered').notNull().default(0),
@@ -88,7 +88,7 @@ export const canaryReleases = phReleases.table(
     check('canary_releases_traffic_mode_check', sql`${t.trafficMode} IN ('split', 'dual_run')`),
     check('canary_releases_record_mode_check', sql`${t.recordMode} IN ('all', 'correct_only')`),
     check('canary_releases_traffic_ratio_check', sql`${t.trafficRatio} >= 0 AND ${t.trafficRatio} <= 1`),
-    // 一个输入连接器同一时刻最多被一个 running 灰度占用（与正式发布的占用互斥由应用层校验）
+    // One input connector can be occupied by at most one running canary at a time (mutual exclusion with production releases is enforced by the application layer)
     uniqueIndex('uniq_running_canary_per_input_connector')
       .on(t.inputConnectorId)
       .where(sql`${t.status} = 'running' AND ${t.deletedAt} IS NULL`),

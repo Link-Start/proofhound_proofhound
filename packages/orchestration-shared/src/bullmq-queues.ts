@@ -1,5 +1,5 @@
-// BullMQ Queue 清单
-// 详见 docs/specs/03-orchestration.md §2
+// BullMQ queue inventory
+// See docs/specs/03-orchestration.md §2
 export const BULLMQ_QUEUES = [
   'llm',
   'probe',

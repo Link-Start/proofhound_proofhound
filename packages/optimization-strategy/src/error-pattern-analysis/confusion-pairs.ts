@@ -1,9 +1,9 @@
-// 混淆对 TOP N + 回归样本检测
+// TOP N confusion pairs + regression sample detection
 import type { FieldWhitelist, RunResultRecord, SampleRecord } from '../loop/types';
 
 export interface SampleView {
   sampleId: string;
-  // 给「分析 LLM」看的字段集合（含 promptVariables ∪ analysisOnlyFields）
+  // Field set shown to the "analysis LLM" (containing promptVariables ∪ analysisOnlyFields)
   inputForAnalysis: Record<string, unknown>;
   expected: string | null;
   predicted: string | null;
@@ -15,12 +15,12 @@ export interface ConfusionPair {
   predicted: string;
   count: number;
   sampleIds: string[];
-  // 该对下面的样本视图（已按 maxSamplesPerPair 截取）
+  // Sample view under this pair (truncated by maxSamplesPerPair)
   samples: SampleView[];
 }
 
 export interface RegressionGroup {
-  // 上一轮预测正确、本轮预测错误 — 按 predicted 聚类便于分析
+  // Correct in the previous round, wrong this round — cluster by predicted for ease of analysis
   predicted: string;
   count: number;
   samples: SampleView[];
@@ -31,7 +31,7 @@ function projectInput(sample: SampleRecord, whitelist: FieldWhitelist): Record<s
     ...whitelist.promptVariables,
     ...(whitelist.analysisOnlyFields ?? []),
   ]);
-  // 没配置任何字段 → 原样返回（防御性兜底）
+  // No fields configured → return as-is (defensive fallback)
   if (allowed.size === 0) return sample.input;
   const projected: Record<string, unknown> = {};
   for (const field of allowed) {
@@ -86,7 +86,7 @@ export function buildConfusionPairs(args: BuildConfusionPairsArgs): ConfusionPai
   for (const rr of args.runResults) {
     const sample = sampleById.get(rr.sampleId);
     if (!sample) continue;
-    // 只考虑可判定的错误（has expected + has predicted + isCorrect===false）
+    // Only consider judgable errors (has expected + has predicted + isCorrect===false)
     const expected = asLabel(sample.expected);
     const predicted = rr.decisionOutput ?? asLabel(rr.parsedOutput);
     if (rr.isCorrect !== false) continue;

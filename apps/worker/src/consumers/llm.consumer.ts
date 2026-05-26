@@ -71,7 +71,7 @@ export class LlmConsumer extends WorkerHost {
       return result;
     } catch (error) {
       if (error instanceof RateLimitExceededError) {
-        // 限流命中：推迟到下个时间窗，**不消耗 attempt**——SPEC 03 §4.2 的 attempts=5 留给真错误
+        // Rate-limit hit: defer to the next time window, do NOT consume an attempt — SPEC 03 §4.2's attempts=5 is reserved for real errors
         const delayMs = Math.max(error.retryAfterMs, 1_000);
         this.logger.info(
           {
@@ -90,8 +90,8 @@ export class LlmConsumer extends WorkerHost {
     }
   }
 
-  // BullMQ 在 attempts 用尽后才触发 'failed' 事件,这里写一次最终 error 行(DrizzleRunResultWriter 内置
-  // INSERT...WHERE NOT EXISTS 兜底:如果之前的 attempt 已经写入 success 行,这条 error 不会覆盖)。
+  // BullMQ only fires the 'failed' event after attempts are exhausted; here we write the final error row once (DrizzleRunResultWriter has
+  // an INSERT...WHERE NOT EXISTS backstop: if a previous attempt already wrote a success row, this error row will not overwrite it).
   @OnWorkerEvent('failed')
   async onFailed(job: Job<unknown>, error: Error): Promise<void> {
     const parsed = llmJobPayloadSchema.safeParse(job.data);
@@ -104,12 +104,12 @@ export class LlmConsumer extends WorkerHost {
     }
     const payload = parsed.data;
     if ((job.attemptsMade ?? 0) < (job.opts.attempts ?? 1)) {
-      // 还能继续 retry,本次失败不应落最终 error 行
+      // Retries can continue; this failure must not produce a final error row
       return;
     }
 
     const runResultId = payload.runResultId ?? randomUUID();
-    // LLMAdapterHttpError.message 是固定字符串，真正的 provider 错误正文在 providerErrorBody，需要还原后再入库
+    // LLMAdapterHttpError.message is a fixed string; the real provider error body lives in providerErrorBody and must be restored before being persisted
     const normalized = normalizeLLMError(error);
     const errorClass = normalized.errorClass || error.name || 'Error';
     const errorMessage = (normalized.errorMessage || job.failedReason || 'job failed').slice(0, 2000);

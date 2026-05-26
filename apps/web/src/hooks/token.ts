@@ -1,6 +1,6 @@
-// 前端 user token hooks。
-// 后端只有一个 user token 资源（同一 token 同时用于 HTTP API、MCP channel、Webhook 入站鉴权）；
-// Settings 页面使用单一 token 列表 UI。
+// Frontend user token hooks.
+// The backend has only one user token resource (the same token is used for HTTP API, MCP channel, and webhook inbound auth simultaneously);
+// the Settings page uses a single token list UI.
 import { tokenClient } from '@proofhound/api-client';
 import type { CreateUserTokenDto, UpdateUserTokenDto } from '@proofhound/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

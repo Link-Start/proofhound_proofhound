@@ -1351,7 +1351,7 @@ function EmptyBlockPlaceholder({
   return <div className="border-t border-dashed px-4 py-4 text-center text-[12px] text-muted-foreground">{t(key)}</div>;
 }
 
-// 按固定顺序渲染三个 step:与 ph_runs.optimization_round_steps + service.STEP_ORDER 镜像
+// Render the three steps in a fixed order: mirrors ph_runs.optimization_round_steps + service.STEP_ORDER
 const ROUND_STEP_ORDER: OptimizationDetailRoundStepKindDto[] = ['error_analysis', 'generate_prompt', 'experiment'];
 
 const STEP_LABEL_KEY: Record<OptimizationDetailRoundStepKindDto, TranslationKey> = {
@@ -1375,8 +1375,8 @@ function getStepByKind(
   return (steps ?? []).find((s) => s.step === kind);
 }
 
-// 三圆点 stepper:展示当前轮在 error_analysis / generate_prompt / experiment 哪一步;
-// 颜色全部走主题 token,覆盖 light / dark / twilight / electric 四主题。
+// Three-dot stepper: shows which step (error_analysis / generate_prompt / experiment) the current round is at;
+// colors all go through theme tokens, covering light / dark / twilight / electric themes.
 function RoundStepIndicator({ steps }: { steps: IterationRound['steps'] }) {
   const { t } = useI18n();
   return (
@@ -1388,7 +1388,7 @@ function RoundStepIndicator({ steps }: { steps: IterationRound['steps'] }) {
     >
       {ROUND_STEP_ORDER.map((kind, idx) => {
         const step = getStepByKind(steps, kind);
-        // 缺失视为 pending(还没启动)
+        // Missing is treated as pending (not yet started)
         const status: OptimizationDetailRoundStepStatusDto = step?.status ?? 'pending';
         const labelKey = STEP_LABEL_KEY[kind];
         const statusKey = STEP_STATUS_LABEL_KEY[status];
@@ -1496,8 +1496,8 @@ function DatasetBaselineStepIndicator({ round }: { round: IterationRound }) {
   );
 }
 
-// 步骤错误信息条:仅当步骤 failed 且有 errorMessage 时显示。
-// 复用 optimizationTone.danger,自动适配 4 个主题。
+// Step error info bar: only shown when the step is failed and has an errorMessage.
+// Reuse optimizationTone.danger, which auto-adapts to all 4 themes.
 function StepErrorBanner({ step }: { step: OptimizationDetailRoundStepDto | undefined }) {
   const { t } = useI18n();
   if (!step || step.status !== 'failed' || !step.errorMessage) return null;
@@ -1749,7 +1749,7 @@ function RoundJumpButtons({
   );
 }
 
-// 错误分析步骤的失败 banner 由 ErrorPatternBlock 展示,这里不重复(改进建议与错误分析共享同一个 LLM)。
+// The failure banner for the error-analysis step is shown by ErrorPatternBlock; do not duplicate here (suggested improvements and error analysis share the same LLM).
 function ImprovementSuggestionsBlock({
   suggestions,
   roundStatus,
@@ -2241,7 +2241,7 @@ function TimelineRoundCard({
                 <StepErrorBanner step={experimentStep} />
               </div>
             ) : experimentStep && experimentStep.status === 'failed' ? (
-              // experiment 步失败但 experiments 行未生成 ExperimentResult 数据时,仍把错误展示出来
+              // When the experiment step fails but the experiments row has not produced ExperimentResult data, still surface the error
               <div className="space-y-2">
                 <h3 className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   <FlaskConical className="size-3" aria-hidden="true" />

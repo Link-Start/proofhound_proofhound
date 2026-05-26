@@ -7,8 +7,8 @@ import { BullmqService } from './bullmq.service';
     BullModule.forRootAsync({
       useFactory: () => ({
         connection: { url: process.env['REDIS_URL'] ?? 'redis://localhost:6379' },
-        // SPEC 03 §4.2：LLM job 默认 5 次重试 + 指数退避 1s→32s。defaultJobOptions 必须配在
-        // producer 端的 Queue 实例上,worker 端配的等价配置不会反向影响 server enqueue 的 job。
+        // SPEC 03 §4.2: LLM jobs use 5 retries + exponential backoff 1s→32s by default. defaultJobOptions must be
+        // configured on the producer-side Queue instance; equivalent config on the worker side does not retroactively affect jobs enqueued by the server.
         defaultJobOptions: {
           attempts: 5,
           backoff: { type: 'exponential', delay: 1_000 },

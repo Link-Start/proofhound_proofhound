@@ -17,8 +17,8 @@ import type {
 } from '../../_components/experiment-view-model';
 import { composePromptPreview } from '../../../prompts/_components/prompt-preview';
 
-// 粗估单样本平均 token 用量。后端尚无估算接口（SPEC 24 未规划），先用经验常量；
-// 待真实估算接口落地后替换为按所选 prompt / dataset 统计的动态值。
+// Rough per-sample average token usage. The backend has no estimation endpoint (SPEC 24 does not plan one); use an empirical constant for now;
+// replace with a dynamic value computed by the selected prompt / dataset once a real estimation endpoint lands.
 export const AVG_TOKENS_IN_PER_SAMPLE = 400;
 export const AVG_TOKENS_OUT_PER_SAMPLE = 80;
 
@@ -160,7 +160,7 @@ export function mapPromptVersionToOption(prompt: PromptForOption, version: Promp
 export interface ExperimentEstimateInput {
   totalSamples: number;
   concurrency: number;
-  rpmLimit: number; // -1 表示无限
+  rpmLimit: number; // -1 means unlimited
   inputPricePerMillion: number;
   outputPricePerMillion: number;
 }

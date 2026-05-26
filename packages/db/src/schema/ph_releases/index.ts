@@ -1,5 +1,5 @@
-// ph_releases — 发布线路 / 发布事件 / 兼容灰度与正式发布 / 标注任务
-// 详见 docs/specs/06-database-schema.md §6
+// ph_releases — release lines / release events / canary and production release compatibility / annotation tasks
+// See docs/specs/06-database-schema.md §6
 
 export * from './_schema';
 export * from './release-lines';

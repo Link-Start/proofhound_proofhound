@@ -1,4 +1,4 @@
-// from_dataset_only 首版生成单元测试 — 详见 docs/specs/25-optimizations.md §2.1
+// Unit tests for from_dataset_only first-version generation — see docs/specs/25-optimizations.md §2.1
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_ERROR_PATTERN_ANALYSIS_CONFIG } from '../error-pattern-analysis/config.schema';
 import {
@@ -92,9 +92,9 @@ describe('generateInitialVersion (SPEC 25 §2.1)', () => {
   });
 
   it('tolerates raw newlines in newPromptBody string literal (Claude-style non-strict JSON)', async () => {
-    // 真实生产报错复现：Claude opus 4.7 在 ```json``` 代码块里输出多行 newPromptBody 时
-    // 用真实换行代替 \n 转义，strict JSON.parse 失败。safeParseJson 内置 jsonrepair fallback
-    // 后该路径应能正常解析出完整字段。
+    // Real production error reproduction: when Claude opus 4.7 outputs a multi-line newPromptBody inside a ```json``` code block,
+    // it uses real newlines instead of \n escapes, causing strict JSON.parse to fail. With safeParseJson's built-in jsonrepair fallback,
+    // this path should parse the complete fields successfully.
     const brokenResponse = `\`\`\`json
 {
   "newPromptBody": "你是中文情感分析专家。
@@ -158,7 +158,7 @@ positive 或 negative。",
     const adapter = createFakeAdapter({
       generateInitial: {
         content: JSON.stringify({
-          newPromptBody: '把 {{label}} 当成 prompt 变量', // label 在 analysisOnlyFields,不在 promptVariables
+          newPromptBody: '把 {{label}} 当成 prompt 变量', // label is in analysisOnlyFields, not in promptVariables
           variables: [],
           outputSchema: { fields: [{ key: 'decision', isJudgment: true }] },
           changeSummary: 'x',

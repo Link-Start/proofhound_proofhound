@@ -1,5 +1,5 @@
-// 把 LLM 输出与样本期望输出做对比
-// 详见 docs/specs/24-experiments.md §7
+// Compares the LLM output against the sample's expected output
+// See docs/specs/24-experiments.md §7
 import type { JudgmentContext, JudgmentOutcome, JudgmentStrategy } from '../types';
 
 const DEFAULT_DECISION_FIELD = 'label';

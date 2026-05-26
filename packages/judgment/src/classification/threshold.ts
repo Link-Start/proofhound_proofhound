@@ -1,5 +1,5 @@
-// 阈值判定：把判定字段视为数字,与 judgment_rules.threshold 比较
-// 详见 docs/specs/24-experiments.md §7
+// Threshold judgment: treats the judgment field as a number and compares it against judgment_rules.threshold
+// See docs/specs/24-experiments.md §7
 import type { JudgmentOutcome, JudgmentStrategy } from '../types';
 import { extractDecisionValue, readDecisionField } from './expected-output';
 

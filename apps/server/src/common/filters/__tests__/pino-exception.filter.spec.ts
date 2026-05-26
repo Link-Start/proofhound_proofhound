@@ -30,7 +30,7 @@ function makeHost(): {
 function makeFilter(): { filter: PinoExceptionFilter; logger: LoggerStub } {
   const filter = new PinoExceptionFilter();
   const logger: LoggerStub = { warn: vi.fn(), error: vi.fn() };
-  // @ts-expect-error: 覆盖私有 logger 字段用于测试断言
+  // @ts-expect-error: override the private logger field for test assertion
   filter.logger = logger;
   return { filter, logger };
 }

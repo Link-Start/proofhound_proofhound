@@ -1,14 +1,14 @@
-// 同步加载本目录下的所有 prompt 模板（.md 文件）
-// 模块初始化时一次性 readFileSync — 启动后修改 .md 不会热生效（需要重启进程）
+// Synchronously loads all prompt templates (.md files) under this directory
+// One-shot readFileSync at module init — modifying .md after startup does not hot-reload (process restart needed)
 //
-// 为什么用 .md：
-// - 开发者可以直接看 / 改 prompt，无需 round-trip 到 .ts 文件
-// - git diff 友好（修改 prompt 时变更明显、便于 code review）
-// - 未来社区贡献者无需懂 TypeScript 也能调 prompt
+// Why use .md:
+// - Developers can directly view / modify prompts without a round-trip to .ts files
+// - git diff friendly (prompt changes are obvious, easy to code review)
+// - Future community contributors do not need TypeScript to tune prompts
 //
-// 路径解析：使用 CommonJS 的 __dirname；strategy 包目前由 CJS 消费者（apps/server Node16 模式）和
-// vitest（ESM 模式）共同使用，__dirname 在两种 runtime 都可用（Node CJS 原生，Node ESM 通过 polyfill）。
-// 之前用 import.meta.url 触发 TS Node16 模块检查报错（TS1470），故改回 __dirname。
+// Path resolution: use CommonJS's __dirname; the strategy package is currently consumed by both CJS consumers (apps/server Node16 mode) and
+// vitest (ESM mode); __dirname is available in both runtimes (native in Node CJS, polyfilled in Node ESM).
+// Previously using import.meta.url triggered the TS Node16 module-check error (TS1470), so we switched back to __dirname.
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,8 +19,8 @@ declare const require: { resolve(id: string): string } | undefined;
 
 function resolveHere(): string {
   if (typeof __dirname !== 'undefined') return __dirname;
-  // ESM 兜底：vitest 等 ESM runtime 走 fileURLToPath(import.meta.url)
-  // 用 Function 包一层规避 TS Node16 模式对 import.meta 的禁用
+  // ESM fallback: vitest and other ESM runtimes use fileURLToPath(import.meta.url)
+  // Wrap with Function to bypass TS Node16 mode's disabling of import.meta
   try {
     const meta = new Function('return import.meta')() as { url: string };
     return dirname(fileURLToPath(meta.url));
@@ -51,8 +51,8 @@ export const PROMPT_FILES = {
   optimizationTipsEn: 'optimization-tips.en-US.md',
 } as const;
 
-// 工具箱条目名 — 与 optimization-tips.md 的 8 节标题一一对应；用于「## 工具箱轮换提示」段渲染
-// (docs/specs/25 §11.3 「工具箱轮换提示」)。新增 / 重命名 md 条目时同步更新。
+// Toolbox entry names — one-to-one with the 8 section titles in optimization-tips.md; used by the toolbox-rotation-hint section rendering
+// (docs/specs/25 §11.3 "toolbox rotation hint"). Update synchronously when adding / renaming md entries.
 export const OPTIMIZATION_TIP_NAMES = [
   '思维链',
   'Few-shot 示例',
@@ -75,8 +75,8 @@ export const OPTIMIZATION_TIP_NAMES_EN = [
   'Boundary pinning',
 ] as const;
 
-// 注意：optimization-tips 不是独立 system prompt，而是被 generate.system.md 中
-// {{OPTIMIZATION_TIPS}} 占位符引用，由本 loader 在 generate prompt 加载时替换。
+// Note: optimization-tips is not a standalone system prompt; it is referenced by the {{OPTIMIZATION_TIPS}} placeholder
+// inside generate.system.md, replaced by this loader when the generate prompt is loaded.
 export const OPTIMIZATION_TIPS = load(PROMPT_FILES.optimizationTips);
 export const OPTIMIZATION_TIPS_EN = load(PROMPT_FILES.optimizationTipsEn);
 

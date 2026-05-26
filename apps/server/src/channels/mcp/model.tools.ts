@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions for the model domain.
  * Each tool delegates to ModelService, matching the REST surface 1:1.
- * See docs/specs/00-overview.md §5 (三通道等价).
+ * See docs/specs/00-overview.md §5 (three-channel parity).
  */
 import {
   createProjectModelSchema,
@@ -20,7 +20,7 @@ import type { McpToolDefinition } from './mcp.types';
 export function createModelTools(modelService: ModelService): McpToolDefinition[] {
   return [
     // -----------------------------------------------------------------------
-    // 模型上下文字典
+    // Model context dictionary
     // -----------------------------------------------------------------------
     {
       name: 'model_list_context_windows',

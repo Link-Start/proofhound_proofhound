@@ -3,8 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { RedisLimiter } from './redis-limiter';
 import { RateLimitExceededError } from './types';
 
-// 集成测试：默认 skip，REDIS_TEST_URL 存在时启用
-// 本地：docker compose -f dev/docker-compose.yml up -d redis
+// Integration test: skipped by default; enabled when REDIS_TEST_URL is set
+// Locally: docker compose -f dev/docker-compose.yml up -d redis
 //      REDIS_TEST_URL=redis://localhost:6379 pnpm --filter @proofhound/limiter test:integration
 const REDIS_URL = process.env['REDIS_TEST_URL'];
 const describeIf = REDIS_URL ? describe : describe.skip;
@@ -32,7 +32,7 @@ describeIf('RedisLimiter (integration, real Redis)', () => {
   beforeEach(async () => {
     const keys = await redis.keys(`${keyPrefix}:*`);
     if (keys.length > 0) await redis.del(...keys);
-    // 默认 1s 窗口 + 200ms concurrency TTL，便于跨窗口/自愈测试
+    // Default 1s window + 200ms concurrency TTL, for ease of cross-window / self-healing tests
     limiter = new RedisLimiter(redis, { keyPrefix, windowMs: 1_000, concurrencyTtlMs: 200 });
   });
 
@@ -74,7 +74,7 @@ describeIf('RedisLimiter (integration, real Redis)', () => {
 
   it('enforces concurrency atomically under parallel acquires', async () => {
     const limits = { rpmLimit: 1000, tpmLimit: 1_000_000, concurrencyLimit: 2 };
-    // 5 个并发 acquire，期望只有 2 个成功，其它抛错
+    // 5 concurrent acquires; expect only 2 to succeed and the rest to throw
     const attempts = await Promise.allSettled(
       Array.from({ length: 5 }).map(() =>
         limiter.acquire({
@@ -94,7 +94,7 @@ describeIf('RedisLimiter (integration, real Redis)', () => {
   });
 
   it('release floors at zero (does not produce negative concurrency)', async () => {
-    // 先无 acquire 直接 release 三次
+    // First release three times without any acquire
     await limiter.release({ modelId: 'm4' });
     await limiter.release({ modelId: 'm4' });
     await limiter.release({ modelId: 'm4' });
@@ -102,7 +102,7 @@ describeIf('RedisLimiter (integration, real Redis)', () => {
     const usage = await limiter.getUsage('m4');
     expect(usage.concurrencyInUse).toBe(0);
 
-    // 之后 acquire/release 一次仍然正常，无残留负值
+    // Subsequent acquire/release works fine; no residual negative value
     const limits = { rpmLimit: 100, tpmLimit: 1_000_000, concurrencyLimit: 1 };
     await limiter.acquire({ modelId: 'm4', estimatedTokens: 1, limits, timeoutMs: 0 });
     expect((await limiter.getUsage('m4')).concurrencyInUse).toBe(1);
@@ -116,11 +116,11 @@ describeIf('RedisLimiter (integration, real Redis)', () => {
     await limiter.acquire({ modelId: 'm5', estimatedTokens: 1, limits, timeoutMs: 0 });
     expect((await limiter.getUsage('m5')).concurrencyInUse).toBe(1);
 
-    // 模拟"进程崩溃后未 release"——等 concurrencyTtlMs（200ms）过期
+    // Simulate "process crashed without releasing" — wait concurrencyTtlMs (200ms) to expire
     await sleep(300);
 
     expect((await limiter.getUsage('m5')).concurrencyInUse).toBe(0);
-    // 现在能继续 acquire
+    // Now acquire can proceed again
     await limiter.acquire({ modelId: 'm5', estimatedTokens: 1, limits, timeoutMs: 0 });
     expect((await limiter.getUsage('m5')).concurrencyInUse).toBe(1);
   }, 5_000);

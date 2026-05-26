@@ -206,7 +206,7 @@ describe('ExperimentService', () => {
       '22222222-2222-4222-8222-222222222222',
       expect.not.objectContaining({ status: expect.anything() }),
     );
-    // status 由 workflow 在 step 边界感知 control_state='stop' 后再切到 stopped
+    // status only flips to stopped after the workflow observes control_state='stop' at a step boundary
     expect(result.controlState).toBe('stop');
   });
 
@@ -406,7 +406,7 @@ describe('ExperimentService', () => {
     expect(result.failedSamples).toBe(3);
     expect(result.metrics?.inputTokens).toBe(10200);
     expect(result.metrics?.outputTokens).toBe(910);
-    // 行字段里的 accuracy 0.5 不应被透传(已被聚合结果覆盖)
+    // The accuracy 0.5 in the row field must not be passed through (it is overwritten by the aggregated result)
     expect(result.metrics?.accuracy).not.toBe(0.5);
   });
 
@@ -466,7 +466,7 @@ describe('ExperimentService', () => {
 
     const result = await service.listExperiments('77777777-7777-4777-8777-777777777777', actor, {});
 
-    // 只对 running 行调一次,success 行直读
+    // Only running rows trigger an extra call; success rows are read directly
     expect(runResults.aggregateExperiment).toHaveBeenCalledTimes(1);
     expect(runResults.aggregateExperiment).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222');
 

@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions for the dataset domain.
  * Each tool delegates to DatasetService, matching the REST surface 1:1.
- * See docs/specs/00-overview.md §5 (三通道等价).
+ * See docs/specs/00-overview.md §5 (three-channel parity).
  */
 import {
   createDatasetSchema,

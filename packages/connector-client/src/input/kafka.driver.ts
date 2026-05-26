@@ -14,11 +14,11 @@ import type {
   KafkaBrokerCredentials,
 } from '../types';
 
-// Kafka peek 策略:
-// 1. admin.fetchTopicOffsets 拿到每个 partition 的 latestOffset
-// 2. 创建一次性 consumer group `peek-${uuid}`,autoCommit:false
-// 3. 对每个 partition seek 到 max(latestOffset - limit, 0)
-// 4. 用 consumer.run 拉到至多 limit 条后 disconnect,不 commit offset
+// Kafka peek strategy:
+// 1. admin.fetchTopicOffsets gets the latestOffset for each partition
+// 2. Create a one-shot consumer group `peek-${uuid}`, autoCommit:false
+// 3. For each partition, seek to max(latestOffset - limit, 0)
+// 4. Use consumer.run to pull at most limit records, then disconnect; do not commit offset
 function buildSasl(credentials: KafkaBrokerCredentials): SASLOptions | undefined {
   if (!credentials.saslMechanism || !credentials.saslUsername || !credentials.saslPassword) {
     return undefined;
@@ -75,7 +75,7 @@ export const kafkaInputDriver: InputDriver<KafkaBrokerCredentials, KafkaInputCon
       await consumer.connect();
       await consumer.subscribe({ topic: connectorConfig.topic, fromBeginning: false });
 
-      // run with autoCommit:false,seek 在 'group.join' 之后调用
+      // Run with autoCommit:false; seek is called after 'group.join'
       const completePromise = new Promise<void>((resolve) => {
         const timeoutHandle = setTimeout(resolve, timeoutMs);
         consumer!
@@ -110,7 +110,7 @@ export const kafkaInputDriver: InputDriver<KafkaBrokerCredentials, KafkaInputCon
           });
       });
 
-      // 对每个 partition seek 到 latestOffset - perPartition
+      // For each partition, seek to latestOffset - perPartition
       const perPartition = Math.max(1, Math.ceil(limit / offsets.length));
       for (const partitionOffset of offsets) {
         const latest = Number(partitionOffset.offset);

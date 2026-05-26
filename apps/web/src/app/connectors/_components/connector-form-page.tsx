@@ -260,8 +260,8 @@ export function ConnectorFormPage({
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
     if (state.direction === 'input') {
-      // webhook token 由后端在创建 connector 时自动签发并写入 ph_assets.tokens
-      // (scope='webhook'),前端不再选择/绑定 user token。详见 docs/specs/26-connectors.md
+      // The webhook token is auto-issued by the backend on connector creation and written to ph_assets.tokens
+      // (scope='webhook'); the frontend no longer selects/binds a user token. See docs/specs/26-connectors.md
       return {
         type: 'webhook',
         direction: 'input',
@@ -293,8 +293,8 @@ export function ConnectorFormPage({
         const payload = buildCreatePayload();
         if (!payload) return;
         const created = await createMutation.mutateAsync(payload);
-        // 当创建的是 webhook input connector 时,后端在响应里附带 initialWebhookToken 明文。
-        // 一次性展示给用户(关闭后无法再次获取),用户点继续才跳到详情页。
+        // When the created connector is a webhook input connector, the backend includes initialWebhookToken plaintext in the response.
+        // Show it to the user once (cannot be retrieved again after closing); the user clicks Continue to go to the detail page.
         if (created.initialWebhookToken?.plaintext) {
           setInitialTokenPlaintext({
             plaintext: created.initialWebhookToken.plaintext,
@@ -305,7 +305,7 @@ export function ConnectorFormPage({
         router.push(`/connectors`);
       } else if (connectorId) {
         // edit only updates name / description / config / ipWhitelist;
-        // webhook token 在 connector 详情页的 Webhook Tokens 面板单独管理。
+        // The webhook token is managed separately in the connector detail page's Webhook Tokens panel.
         const ipWhitelist = state.ipWhitelistRaw
           .split('\n')
           .map((line) => line.trim())

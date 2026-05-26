@@ -3,9 +3,9 @@ export const optimizationTone = {
     pill: 'border-[var(--status-running-bd)] bg-[var(--status-running-bg)] text-[var(--status-running-fg)]',
     dot: 'bg-[var(--status-running-dot)]',
     fill: 'bg-[var(--status-running-dot)]',
-    // `fg` token 是为深色 pill 背景配的浅色文字（dark 主题下接近白色），
-    // 直接当纯文字色会失去区分度。这里改用 `dot`：四主题下都是高对比的纯色绿色（twilight 蓝），
-    // 适合在普通背景上做"正向变化"等强调文字。
+    // The `fg` token is the light foreground designed for the dark pill background (close to white under the dark theme);
+    // using it as a plain text color would lose contrast. Use `dot` instead: a high-contrast solid green across all four themes (blue in twilight),
+    // suited for emphasized "positive change" text on a plain background.
     text: 'text-[var(--status-running-dot)]',
     border: 'border-[var(--status-running-bd)]',
     bg: 'bg-[var(--status-running-bg)]',

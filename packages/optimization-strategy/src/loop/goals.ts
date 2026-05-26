@@ -1,4 +1,4 @@
-// 优化目标评估 — 纯函数
+// Optimization goal evaluation — pure function
 import type { OptimizationGoal, ComparisonOp, GoalProgressEntry, MetricSnapshot } from './types';
 
 export function readMetric(metrics: MetricSnapshot, goal: OptimizationGoal): number | null {

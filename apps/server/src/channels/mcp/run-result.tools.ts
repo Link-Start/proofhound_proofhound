@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions for the run-result domain.
  * Each tool delegates to RunResultService, matching the REST surface 1:1.
- * See docs/specs/00-overview.md §5 (三通道等价).
+ * See docs/specs/00-overview.md §5 (three-channel parity).
  */
 import { experimentIdParamSchema, runResultListQuerySchema, runResultReleaseListQuerySchema } from '@proofhound/shared';
 import { z } from 'zod';

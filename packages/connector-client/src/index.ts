@@ -1,5 +1,5 @@
-// 连接器驱动出口
-// 详见 docs/specs/26-connectors.md
+// Connector driver exports
+// See docs/specs/26-connectors.md
 
 import type { KafkaInputConfig, KafkaOutputConfig, RedisInputConfig, RedisOutputConfig } from '@proofhound/shared';
 import type {
@@ -16,7 +16,7 @@ import type {
 export type * from './types';
 
 // ---------------------------------------------------------------------------
-// 工厂
+// Factory
 // ---------------------------------------------------------------------------
 
 import { redisListInputDriver } from './input/redis-list.driver';
@@ -42,7 +42,7 @@ export function getInputDriver(
   if (type === 'kafka') {
     return kafkaInputDriver;
   }
-  // webhook input peek 由 server 端降级处理,driver 不参与
+  // Webhook input peek is degraded on the server side; the driver does not participate
   return null;
 }
 

@@ -19,7 +19,7 @@ export default function NotFoundPage() {
         window.location.href = referrer;
       }
     } catch {
-      // referrer 不是合法 URL 时 no-op
+      // no-op when referrer is not a valid URL
     }
   };
 

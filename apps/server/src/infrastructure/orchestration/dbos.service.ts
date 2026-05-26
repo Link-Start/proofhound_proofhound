@@ -2,8 +2,8 @@ import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/com
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { createLogger } from '@proofhound/logger';
 
-// DBOS 进程内 workflow runtime 的 NestJS 宿主
-// 详见 docs/specs/03-orchestration.md §1
+// In-process DBOS workflow runtime NestJS host
+// See docs/specs/03-orchestration.md §1
 @Injectable()
 export class DbosService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = createLogger('server.dbos', { service: 'server' });

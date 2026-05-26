@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // ============================================================================
-// 枚举
+// Enums
 // ============================================================================
 
 export const productionReleaseEventTypeSchema = z.enum([
@@ -23,12 +23,12 @@ export type ProductionReleaseStopReasonDto = z.infer<typeof productionReleaseSto
 export const productionReleaseRecordModeSchema = z.enum(['all', 'correct_only']);
 export type ProductionReleaseRecordModeDto = z.infer<typeof productionReleaseRecordModeSchema>;
 
-// 聚合在线状态（derived）
+// Aggregated online status (derived)
 export const productionReleaseAggregateStatusSchema = z.enum(['online', 'offline']);
 export type ProductionReleaseAggregateStatusDto = z.infer<typeof productionReleaseAggregateStatusSchema>;
 
 // ============================================================================
-// 子结构
+// Sub-structures
 // ============================================================================
 
 export const productionReleaseRunConfigSchema = z.object({
@@ -52,7 +52,7 @@ export const productionReleasePromptVersionSnapshotSchema = z.record(z.string(),
 export type ProductionReleasePromptVersionSnapshotDto = z.infer<typeof productionReleasePromptVersionSnapshotSchema>;
 
 // ============================================================================
-// 主事件
+// Main event
 // ============================================================================
 
 export const productionReleaseEventSchema = z.object({
@@ -89,17 +89,17 @@ export const productionReleaseEventSchema = z.object({
 export type ProductionReleaseEventDto = z.infer<typeof productionReleaseEventSchema>;
 
 // ============================================================================
-// 列表项（按 prompt 聚合，每行一个 prompt + 当前/最近 event 子对象；停止后仍返回最近 event）
+// List item (aggregated by prompt; one row per prompt + a current/latest event sub-object; still returns the latest event after stopping)
 // ============================================================================
 
 export const productionReleaseListItemSchema = z.object({
   promptId: z.string().uuid(),
   promptName: z.string(),
-  promptVersionLabel: z.string().nullable(), // 如 "v16"
+  promptVersionLabel: z.string().nullable(), // e.g. "v16"
   aggregateStatus: productionReleaseAggregateStatusSchema,
   currentEvent: productionReleaseEventSchema.nullable(),
   currentEventCreatedAt: z.string().datetime().nullable(),
-  // 关联资源的展示用名称
+  // Display name of the associated resource
   modelName: z.string().nullable(),
   modelProvider: z.string().nullable(),
   inputConnectorName: z.string().nullable(),
@@ -113,19 +113,19 @@ export const productionReleaseListItemSchema = z.object({
       }),
     )
     .nullable(),
-  // 最近事件类型，用于列表小标签（如"改配置 / 回滚 / 强停"）
+  // Latest event type, used for a small list label (e.g. "Config change / Rollback / Force-stop")
   lastEventType: productionReleaseEventTypeSchema.nullable(),
-  // 自当前 running 起的在线时长（毫秒）；offline 时为 null
+  // Online duration since the current running state (ms); null when offline
   onlineDurationMs: z.number().int().nonnegative().nullable(),
 });
 export type ProductionReleaseListItemDto = z.infer<typeof productionReleaseListItemSchema>;
 
 // ============================================================================
-// 历史 timeline item
+// History timeline item
 // ============================================================================
 
 export const productionReleaseHistoryItemSchema = productionReleaseEventSchema.extend({
-  // 展示用的关联资源名称
+  // Display name of the associated resource
   promptVersionLabel: z.string().nullable(),
   modelName: z.string().nullable(),
   inputConnectorName: z.string().nullable(),
@@ -144,7 +144,7 @@ export const productionReleaseAnnotationMetricsSchema = z.object({
 export type ProductionReleaseAnnotationMetricsDto = z.infer<typeof productionReleaseAnnotationMetricsSchema>;
 
 // ============================================================================
-// 创建 / 停止 input
+// Create / stop inputs
 // ============================================================================
 
 export const createProductionReleaseInputSchema = z.object({
@@ -161,7 +161,7 @@ export const createProductionReleaseInputSchema = z.object({
   externalIdField: z.string().min(1).nullable().default(null),
   retentionDays: z.number().int().positive().nullable().default(null),
   submitReason: z.string().min(1, 'submit_reason is required').max(2000),
-  // 来源（按 eventType 必填）
+  // Source (required by eventType)
   sourceExperimentId: z.string().uuid().nullable().default(null),
   sourceCanaryId: z.string().uuid().nullable().default(null),
   sourceMetricsSnapshot: z.record(z.string(), z.unknown()).nullable().default(null),
@@ -175,7 +175,7 @@ export const stopProductionReleaseInputSchema = z.object({
 export type StopProductionReleaseInputDto = z.infer<typeof stopProductionReleaseInputSchema>;
 
 // ============================================================================
-// 常量（前端 / 后端通用）
+// Constants (shared between frontend / backend)
 // ============================================================================
 
 export const PRODUCTION_RELEASE_EVENT_TYPES = productionReleaseEventTypeSchema.options;

@@ -1,5 +1,5 @@
-// ph_assets — 模型 / 数据集 / 提示词 / 连接器
-// 详见 docs/specs/06-database-schema.md §4
+// ph_assets — models / datasets / prompts / connectors
+// See docs/specs/06-database-schema.md §4
 
 import { sql } from 'drizzle-orm';
 import {
@@ -247,8 +247,8 @@ export const connectors = phAssets.table(
     config: jsonb('config').notNull(),
     configEncrypted: jsonb('config_encrypted'),
     webhookPath: text('webhook_path'),
-    // webhook 入站 token 不在本表存引用；存于 ph_core.tokens (scope='webhook' AND connector_id=this.id)
-    // 详见 docs/specs/06-database-schema.md §3.2 / §4.5
+    // Inbound webhook tokens are not referenced in this table; they live in ph_core.tokens (scope='webhook' AND connector_id=this.id)
+    // See docs/specs/06-database-schema.md §3.2 / §4.5
     ipWhitelist: jsonb('ip_whitelist').$type<string[]>(),
     healthStatus: text('health_status').notNull().default('unknown'),
     lastProbedAt: timestamp('last_probed_at', { withTimezone: true }),

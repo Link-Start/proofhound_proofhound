@@ -87,7 +87,7 @@ export const connectorClient = {
       .then((r) => r.data),
 
   // per-connector webhook tokens (scope='webhook', AND connector_id=...)
-  // 详见 docs/specs/26-connectors.md / docs/specs/06-database-schema.md §3.2
+  // See docs/specs/26-connectors.md / docs/specs/06-database-schema.md §3.2
   listWebhookTokens: (projectId: string, connectorId: string) =>
     httpClient
       .get<ConnectorWebhookTokenListDto>(`/connectors/${connectorId}/webhook-tokens`)

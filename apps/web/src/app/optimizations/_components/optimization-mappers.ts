@@ -112,9 +112,9 @@ export const STARTING_MODE_TO_ORIGIN: Record<OptimizationStartingModeDto, Optimi
   from_dataset_only: 'dataset',
 };
 
-// 后端只把 DB text cast 成 enum 而非 zod parse,残留任何非法 status 值(例如老版本曾允许的
-// 'pending')都会让 lookup 表炸；兜底成 failed 让 UI 仍能渲染。migration 0030/0032 已经把
-// DB 中残留的 pending 行迁移到 failed,这里保留兜底以防 DTO 与 DB 临时漂移。
+// The backend only casts the DB text into the enum rather than zod parse; any residual illegal status values (e.g. legacy
+// 'pending') would break the lookup table; fall back to failed so the UI can still render. Migrations 0030/0032 already moved
+// the residual pending rows in the DB to failed; the fallback is retained in case of temporary DTO / DB drift.
 const VALID_OPTIMIZATION_STATUSES = new Set<string>([
   'running',
   'success',

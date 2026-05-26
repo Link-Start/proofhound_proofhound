@@ -1471,7 +1471,7 @@ const dictionaries = {
     'connectors.health.degraded': '降级',
     'connectors.health.unhealthy': '异常',
     'connectors.health.unknown': '未知',
-    // ------- 正式发布 -------
+    // ------- Production release -------
     'productionReleases.title': '正式发布',
     'productionReleases.subtitle': '每个提示词一行 · 最多一个 running 即聚合 online · 提交即切流上线',
     'productionReleases.create': '新建发布',
@@ -2580,7 +2580,7 @@ const dictionaries = {
     'optimizations.detail.best.experiment': '实验',
     'optimizations.detail.best.empty': '暂无最佳版本',
     // ========================================================================
-    // canary releases — 灰度发布
+    // canary releases
     // ========================================================================
     'canaryReleases.title': '灰度发布',
     'canaryReleases.subtitle': '用真实流量验证提示词 · 每条灰度绑定提示词 + 输入 / 输出连接器',
@@ -5848,7 +5848,7 @@ export function I18nProvider({
   children: ReactNode;
   defaultLanguage?: Language;
 }) {
-  // 初值用 SSR 默认语言，mount 后同步用户偏好或浏览器语言，避免 hydration mismatch
+  // Initial value uses SSR default language; after mount, sync with user preference or browser language to avoid hydration mismatch
   const [language, setLanguageState] = useState<Language>(defaultLanguage);
 
   useEffect(() => {

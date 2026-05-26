@@ -12,8 +12,8 @@ export interface ModelSecretResolverOptions {
   encryptionKey: string;
 }
 
-// 解密统一走 @proofhound/crypto——与 server CryptoService / seed-dev 共用同一份实现 + 同一个 MODEL_API_KEY_ENCRYPTION_KEY。
-// 不再支持 plain: / env: / aes-256-gcm: 三种历史前缀；DB 里只存 server CryptoService.encryptApiKey() 输出的无前缀 base64。
+// Decryption goes uniformly through @proofhound/crypto — sharing the same implementation + the same MODEL_API_KEY_ENCRYPTION_KEY with server CryptoService / seed-dev.
+// The three legacy prefixes plain: / env: / aes-256-gcm: are no longer supported; the DB only stores the unprefixed base64 output of server CryptoService.encryptApiKey().
 export function createModelSecretResolver(options: ModelSecretResolverOptions): ModelSecretResolver {
   return {
     async resolveApiKey(model) {

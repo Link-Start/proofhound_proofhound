@@ -25,7 +25,7 @@ export interface MultiSelectProps {
   iconAdornment?: React.ReactNode;
 }
 
-// 项目/模型多选 popover（设计稿过滤条用）
+// Project / model multi-select popover (used by the design's filter bar)
 export function MultiSelect({
   label,
   options,

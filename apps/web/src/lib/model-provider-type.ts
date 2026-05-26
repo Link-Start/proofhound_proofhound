@@ -20,8 +20,8 @@ export function getProviderTypeLabel(providerType: string): string {
   return (PROVIDER_TYPE_LABELS as Record<string, string>)[providerType] ?? providerType;
 }
 
-// 如果当前值是历史遗留数据（如 'azure' 别名 / 大小写差异 / 已退场的 adapter），
-// 把它作为额外选项追加在最前，避免编辑现有模型时下拉显示空。
+// If the current value is legacy data (such as an 'azure' alias / case differences / a retired adapter),
+// prepend it as an extra option so the dropdown is not empty when editing existing models.
 export function buildProviderTypeOptions(currentValue?: string): ProviderTypeOption[] {
   const baseOptions: ProviderTypeOption[] = SUPPORTED_MODEL_PROVIDER_TYPES.map((value) => ({
     value,

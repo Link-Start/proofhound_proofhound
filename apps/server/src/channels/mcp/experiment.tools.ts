@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions for experiments.
  * Each tool delegates to ExperimentService, matching the REST surface 1:1.
- * See docs/specs/00-overview.md §5 (三通道等价) + docs/specs/24-experiments.md.
+ * See docs/specs/00-overview.md §5 (three-channel parity) + docs/specs/24-experiments.md.
  */
 import {
   createExperimentSchema,

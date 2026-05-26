@@ -11,8 +11,8 @@ import {
 const DEFAULT_WINDOW_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
-// concurrency key 自愈窗口：进程崩溃后超过此时长无新 acquire，则 slot 自动归零
-// 与 SPEC 03 §4.3 的 LLM job timeout 对齐（5 min）
+// concurrency key self-healing window: if no new acquire happens after a process crashes for longer than this, the slot is automatically reset to zero
+// Aligned with the LLM job timeout in SPEC 03 §4.3 (5 min)
 const DEFAULT_CONCURRENCY_TTL_MS = 5 * 60_000;
 
 const SLIDING_WINDOW_HELPERS = `
@@ -168,8 +168,8 @@ local concurrency = tonumber(redis.call('GET', KEYS[4]) or '0')
 return {rpm, tpm, concurrency, now_ms}
 `;
 
-// RELEASE_SCRIPT — floor at 0：避免误调让 concurrency 计数变负
-// 计数 <= 0 时直接 DEL 并 return 0，调用方可据此判断"没东西可释放"
+// RELEASE_SCRIPT — floor at 0: prevent misuse from making the concurrency count negative
+// When the count <= 0, DEL directly and return 0; the caller can interpret this as "nothing to release"
 const RELEASE_SCRIPT = `
 local concurrency = tonumber(redis.call('GET', KEYS[1]) or '0')
 local concurrency_ttl_ms = tonumber(ARGV[1])
@@ -199,8 +199,8 @@ export interface RedisLimiterOptions {
   concurrencyTtlMs?: number;
 }
 
-// Redis 滑动窗口 + Lua 原子脚本实现
-// 详见 docs/specs/02-tech-stack.md §6
+// Redis sliding window + Lua atomic script implementation
+// See docs/specs/02-tech-stack.md §6
 export class RedisLimiter implements RateLimiter {
   private readonly keyPrefix: string;
   private readonly windowMs: number;

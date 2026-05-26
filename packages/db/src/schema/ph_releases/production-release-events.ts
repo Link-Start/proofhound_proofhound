@@ -1,6 +1,6 @@
-// ph_releases.production_release_events — 正式发布事件流
-// 详见 docs/specs/06-database-schema.md §6.3 与 docs/specs/27-releases.md
-// 事件 sourced：新建发布 / 配置变更 / 回滚 / 强停都是一条记录；提交即 running，无审批环节。
+// ph_releases.production_release_events — production release event stream
+// See docs/specs/06-database-schema.md §6.3 and docs/specs/27-releases.md
+// Event-sourced: new release / config change / rollback / force-stop are each one record; commit means running, no approval step.
 
 import { sql } from 'drizzle-orm';
 import {
@@ -32,12 +32,12 @@ export const productionReleaseEvents = phReleases.table(
     promptId: uuid('prompt_id').notNull(),
     eventType: text('event_type').notNull(),
 
-    // 目标配置快照
+    // Target config snapshot
     promptVersionId: uuid('prompt_version_id').notNull(),
     modelId: uuid('model_id')
       .notNull()
       .references(() => models.id),
-    // force_stop 可保留原上游快照；历史老数据也允许为空（"下线后不补"语义）
+    // force_stop may keep the original upstream snapshot; legacy data is also allowed to be empty ("no backfill after takedown" semantics)
     inputConnectorId: uuid('input_connector_id').references(() => connectors.id),
     outputConnectorIds: uuid('output_connector_ids')
       .array()
@@ -52,12 +52,12 @@ export const productionReleaseEvents = phReleases.table(
     externalIdField: text('external_id_field'),
     retentionDays: integer('retention_days'),
 
-    // 状态机
+    // State machine
     status: text('status').notNull().default('running'),
     createdBy: uuid('created_by').notNull(),
     submitReason: text('submit_reason').notNull(),
 
-    // 来源快照
+    // Source snapshot
     sourceExperimentId: uuid('source_experiment_id').references(() => experiments.id),
     sourceCanaryId: uuid('source_canary_id').references((): AnyPgColumn => canaryReleases.id),
     sourceMetricsSnapshot: jsonb('source_metrics_snapshot'),
@@ -68,10 +68,10 @@ export const productionReleaseEvents = phReleases.table(
       .notNull()
       .default(sql`'{}'::jsonb`),
 
-    // 回滚目标（自引用）
+    // Rollback target (self-reference)
     rollbackTargetEventId: uuid('rollback_target_event_id').references((): AnyPgColumn => productionReleaseEvents.id),
 
-    // 运行期
+    // Runtime
     controlState: text('control_state'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -107,15 +107,15 @@ export const productionReleaseEvents = phReleases.table(
       'production_release_events_rollback_target_required',
       sql`${t.eventType} <> 'rollback' OR ${t.rollbackTargetEventId} IS NOT NULL`,
     ),
-    // 一个提示词同一时刻最多一个 running
+    // At most one running per prompt at any time
     uniqueIndex('uniq_running_release_per_prompt')
       .on(t.promptId)
       .where(sql`${t.status} = 'running'`),
-    // 一个输入连接器同一时刻最多被一个 running 占用
+    // At most one running occupancy per input connector at any time
     uniqueIndex('uniq_running_release_per_input_connector')
       .on(t.inputConnectorId)
       .where(sql`${t.status} = 'running' AND ${t.inputConnectorId} IS NOT NULL`),
-    // 列表 / 历史查询
+    // List / history queries
     index('idx_release_events_status_created').on(t.projectId, t.status, t.createdAt),
     index('idx_release_events_prompt_created').on(t.projectId, t.promptId, t.createdAt),
   ],

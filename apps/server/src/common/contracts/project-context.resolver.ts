@@ -1,9 +1,9 @@
-// ProjectContextResolver — adapter 扩展点
-// 详见 docs/specs/08-saas-adapter-boundary.md §3.1
+// ProjectContextResolver — adapter extension point
+// See docs/specs/08-saas-adapter-boundary.md §3.1
 //
-// OSS 默认实现 `LocalProjectContextResolver` 忽略所有 hint，固定返回 LOCAL_PROJECT_CONTEXT；
-// SaaS 形态下由 `RemoteProjectContextResolver` 在独立仓库 override，从 actor.claims / hint 中
-// 解出真实 projectId 并校验访问权。
+// The OSS default implementation `LocalProjectContextResolver` ignores all hints and always returns LOCAL_PROJECT_CONTEXT;
+// in the SaaS form, `RemoteProjectContextResolver` overrides this in a separate repo and resolves the
+// real projectId from actor.claims / hint and validates access rights.
 
 import type { ProjectContext } from '@proofhound/shared';
 import type { ActorContext } from '../actor-context';

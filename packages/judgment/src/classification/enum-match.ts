@@ -1,5 +1,5 @@
-// 枚举匹配：要求 decision 在 output_schema 声明的枚举集合内,然后与期望输出对比
-// 详见 docs/specs/24-experiments.md §7
+// Enum match: requires decision to be in the enum set declared by output_schema, then compares against the expected output
+// See docs/specs/24-experiments.md §7
 import type { JudgmentContext, JudgmentOutcome, JudgmentStrategy } from '../types';
 import { extractDecisionValue, readDecisionField } from './expected-output';
 

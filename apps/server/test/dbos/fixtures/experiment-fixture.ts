@@ -1,4 +1,4 @@
-// 集成测试 fixture 工厂:插入一个最小可跑的 experiment 上下文
+// Integration test fixture factory: inserts a minimal runnable experiment context
 // (model + dataset + dataset_samples + prompt + prompt_version + experiment)
 
 import { randomUUID } from 'node:crypto';
@@ -9,13 +9,13 @@ const { models, datasets, datasetSamples, experiments, projects, prompts, prompt
 const logger = createLogger('dbos-test.fixture', { service: 'integration-test' });
 
 export interface SeedExperimentOptions {
-  /** 默认 3 */
+  /** default 3 */
   sampleCount?: number;
-  /** 默认 true。设 false 触发 prompt_version_not_frozen */
+  /** default true. set to false to trigger prompt_version_not_frozen */
   isFrozen?: boolean;
-  /** 写到 experiments.run_config 的 batchSize */
+  /** batchSize written to experiments.run_config */
   batchSize?: number;
-  /** 每个 sample 的 expected_output 值(用于 metrics)。length 应 = sampleCount */
+  /** expected_output value per sample (used for metrics). length should equal sampleCount */
   expectedValues?: string[];
 }
 

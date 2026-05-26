@@ -1,6 +1,6 @@
-// safeParseJson 容错路径测试 — 复现并验证 LLM JSON 输出常见非严格合规问题的修复
-// 详见 plan 2026-05-20-23-49-08-731：Claude 在 ```json``` 代码块内输出长字符串时
-// 常以真实换行代替 \n 转义，导致 strict JSON.parse 失败。
+// safeParseJson resilience-path tests — reproduce and verify the fix for common non-strict-compliant LLM JSON output
+// See plan 2026-05-20-23-49-08-731: when Claude outputs long strings inside a ```json``` code block,
+// it often uses real newlines instead of \n escapes, causing strict JSON.parse to fail.
 import { describe, expect, it } from 'vitest';
 import { safeParseJson } from '../error-pattern-analysis/parse';
 
@@ -11,8 +11,8 @@ describe('safeParseJson', () => {
   });
 
   it('repairs raw newlines inside a multi-line Chinese string literal (reported Claude case)', () => {
-    // 真实生产报错复现：Claude opus 4.7 输出的 ```json``` 代码块里，newPromptBody
-    // 字符串值含真实换行（不是 \n 转义），JSON.parse 直接抛错。
+    // Real production error reproduction: inside the ```json``` code block Claude opus 4.7 outputs, the newPromptBody
+    // string value contains real newlines (not \n escapes); JSON.parse throws directly.
     const broken = `{
   "newPromptBody": "你是一名中文文本情感分析专家。
 

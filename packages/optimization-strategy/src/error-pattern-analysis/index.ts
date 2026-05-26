@@ -1,8 +1,8 @@
-// V1 默认策略 — 错误模式分析 + 生成新版本
-// 详见 docs/specs/25-optimizations.md §3
+// V1 default strategy — error pattern analysis + new version generation
+// See docs/specs/25-optimizations.md §3
 //
-// 关键 system prompt 模板存放在 ./prompts/*.md，由 ./prompts/loader.ts 同步加载。
-// 修改 prompt → 编辑 .md 文件 → 重启进程生效。
+// Key system prompt templates live in ./prompts/*.md, loaded synchronously by ./prompts/loader.ts.
+// To modify a prompt → edit the .md file → restart the process for it to take effect.
 export * from './config.schema';
 export * from './parse';
 export * from './prompts';

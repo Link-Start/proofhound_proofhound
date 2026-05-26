@@ -1,5 +1,5 @@
-// Precision / Recall —— per-class + macro 平均
-// 详见 docs/specs/24-experiments.md §6
+// Precision / Recall — per-class + macro average
+// See docs/specs/24-experiments.md §6
 import type { ClassificationPerClassEntry, MetricsStrategy } from '../types';
 
 interface ConfusionCounts {
@@ -43,7 +43,7 @@ export const precisionRecallStrategy: MetricsStrategy = {
   projectType: 'classification',
   metricName: 'precision-recall',
   compute() {
-    // 占位:本策略需要外部传 confusion,通过 computePrecisionRecall 直接调用
+    // Placeholder: this strategy needs the confusion to be passed in externally; call computePrecisionRecall directly
     return null;
   },
 };

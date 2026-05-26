@@ -1,5 +1,5 @@
-// V1 分类判定策略注册 + 入口
-// 详见 docs/specs/24-experiments.md §7 + docs/specs/07-code-structure.md §12.2
+// V1 classification judgment strategy registration + entrypoint
+// See docs/specs/24-experiments.md §7 + docs/specs/07-code-structure.md §12.2
 import { getJudgment, registerJudgment } from '../registry';
 import type { JudgmentContext, JudgmentOutcome } from '../types';
 import { containsStrategy, equalsStrategy, exactMatchStrategy } from './expected-output';

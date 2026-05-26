@@ -1,5 +1,5 @@
-// V1 分类指标聚合 — accuracy / precision / recall / F1 / per-class
-// 详见 docs/specs/24-experiments.md §6 + docs/specs/07-code-structure.md §12.2
+// V1 classification metric aggregation — accuracy / precision / recall / F1 / per-class
+// See docs/specs/24-experiments.md §6 + docs/specs/07-code-structure.md §12.2
 import { registerMetric } from '../registry';
 import type { ClassificationAggregateRow, ClassificationMetrics } from '../types';
 import { accuracyStrategy, computeAccuracy } from './accuracy';

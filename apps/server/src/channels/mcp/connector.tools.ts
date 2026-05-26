@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions for the connector domain.
  * Each tool delegates to ConnectorService, matching the REST surface 1:1.
- * 见 docs/specs/00-overview.md §5(三通道等价) / docs/specs/26-connectors.md §3
+ * See docs/specs/00-overview.md §5 (three-channel parity) / docs/specs/26-connectors.md §3
  */
 import {
   bulkDeleteConnectorsRequestSchema,

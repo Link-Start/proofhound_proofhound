@@ -145,7 +145,7 @@ interface DetailFormState {
   webhookSlug: string;
   webhookPathName: string;
   requestFields: RequestField[];
-  // 历史字段已删除:tokenId / token 选择交由 per-connector webhook token 面板管理。
+  // Legacy fields removed: tokenId / token selection is now managed by the per-connector webhook token panel.
 }
 
 interface DeleteState {
@@ -399,14 +399,14 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
       return;
     }
     try {
-      // CreateWebhookTokenDto 只接受 name / expiresAt;ip whitelist 走 connector update 路径,
-      // 不再由 token 行单独承载。详见 packages/shared/src/dto/connector.dto.ts 的 createWebhookTokenSchema。
+      // CreateWebhookTokenDto only accepts name / expiresAt; the IP whitelist goes through the connector update path,
+      // no longer carried on the token row. See createWebhookTokenSchema in packages/shared/src/dto/connector.dto.ts.
       const created = await createTokenMutation.mutateAsync({
         name,
         ...(expiresAt ? { expiresAt } : {}),
       });
       setGeneratedTokenResult(created);
-      // 默认把刚创建的 token 明文塞进缓存并默认显示一次,方便用户立即复制。
+      // By default, optimistically stuff the just-created token plaintext into the cache and display it once, so the user can copy it immediately.
       setRevealedTokens((prev) => ({ ...prev, [created.id]: created.plaintext }));
       setVisibleTokenIds((prev) => {
         const next = new Set(prev);
@@ -1830,7 +1830,7 @@ function buildUpdatePayload(connector: ConnectorDetailDto, form: DetailFormState
         form.webhookMode === 'sync' && form.webhookTimeoutSeconds ? Number(form.webhookTimeoutSeconds) : undefined,
       expectedPayloadSchema: fieldsToJsonSchema(form.requestFields),
     };
-    // webhook token 不再通过 connector update 写入(scope='webhook' 自管),只保留 IP 白名单。
+    // Webhook tokens are no longer written via connector update (scope='webhook' self-managed); only the IP whitelist remains.
     body.ipWhitelist = parseIpWhitelist(form.ipWhitelistRaw);
   } else {
     body.config = { targetUrl: form.webhookTargetUrl.trim(), method: form.webhookMethod };
@@ -2044,8 +2044,8 @@ function buildWebhookAsyncQueryResponseExample(language: Language): string {
   );
 }
 
-// 创建后端口返回的 CreateWebhookTokenResponseDto 不一定立刻出现在 list 接口结果里(query 仍未 refetch
-// 完成)。先 optimistic 把它合并到列表顶端,后续 list 刷新后会以服务端为准。
+// The CreateWebhookTokenResponseDto returned by the create endpoint may not immediately appear in the list endpoint result (the query has not yet refetched).
+// Optimistically merge it into the top of the list; it will be reconciled with the server source after the list refreshes.
 function mergeGeneratedToken(
   tokens: ConnectorWebhookTokenSummaryDto[],
   generated: CreateWebhookTokenResponseDto | null,

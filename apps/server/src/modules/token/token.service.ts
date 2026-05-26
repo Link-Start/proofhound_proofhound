@@ -17,10 +17,10 @@ import { TokenRepository, type UserTokenRow, type UserTokenRowWithCreator } from
 
 type ActionSource = 'api' | 'mcp';
 
-// User token = 单一的本地管理端用户凭证,同一 token 同时可用于 HTTP API 与 MCP。
-// OSS 下不绑 project_id;SaaS 形态后续才可能挂 project,本 service 不写。
-// webhook scope 行不在本 service 处理。
-// 详见 docs/specs/06-database-schema.md §3.2。
+// User token = the single local-admin-console user credential; the same token can be used for both the HTTP API and MCP.
+// OSS does not bind project_id; the SaaS form may attach project later, but this service does not write it.
+// Rows with scope='webhook' are not handled by this service.
+// See docs/specs/06-database-schema.md §3.2.
 @Injectable()
 export class TokenService {
   constructor(

@@ -1,5 +1,5 @@
-// driver-factory:把连接器的本地连接配置解密为 BrokerCredentials,然后选对应 input driver
-// 详见 docs/specs/26-connectors.md §9 抽样(peek)实现细节
+// driver-factory: decrypt the connector's local connection config into BrokerCredentials, then pick the matching input driver
+// See docs/specs/26-connectors.md §9 for the sampling (peek) implementation details
 import { Injectable } from '@nestjs/common';
 import { createLogger } from '@proofhound/logger';
 import {
@@ -78,7 +78,7 @@ export class ConnectorDriverFactory {
       return { source: 'unavailable', messages: [], error: 'peek not supported for output connectors' };
     }
     if (args.type === 'webhook') {
-      // webhook input peek 本期降级:driver 不参与,Service 层应该已拦截到这里
+      // webhook input peek is degraded in this cycle: driver does not participate; the Service layer should have intercepted before reaching here
       return {
         source: 'unavailable',
         messages: [],

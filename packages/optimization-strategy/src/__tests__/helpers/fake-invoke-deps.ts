@@ -1,4 +1,4 @@
-// LoopDependencies + InvokeLLMDependencies 替身集
+// LoopDependencies + InvokeLLMDependencies test doubles
 import { StubLimiter } from '@proofhound/limiter';
 import type {
   InvokeLLMDependencies,

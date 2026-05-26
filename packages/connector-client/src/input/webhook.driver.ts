@@ -1,2 +1,2 @@
-// Webhook 输入驱动 — 反向：公网 HTTP ingress 在 apps/webhook，本驱动只做契约
+// Webhook input driver — reversed: public-internet HTTP ingress lives in apps/webhook; this driver only carries the contract
 export {};

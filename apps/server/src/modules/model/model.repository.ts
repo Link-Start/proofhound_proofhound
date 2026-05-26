@@ -36,7 +36,7 @@ export class ModelRepository {
   constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
 
   // -------------------------------------------------------------------------
-  // 4.1 模型 CRUD / 列表
+  // 4.1 Model CRUD / list
   // -------------------------------------------------------------------------
   private readonly modelSelectFields = {
     id: models.id,
@@ -132,10 +132,10 @@ export class ModelRepository {
   }
 
   // -------------------------------------------------------------------------
-  // 4.2 引用统计 / 本地工作区可访问性
+  // 4.2 Reference counting / local-workspace accessibility
   // TODO（PR-N）: ph_runs.experiments / ph_runs.optimizations /
-  //   ph_releases.release_line_events 接入后，把以下方法改成真实 JOIN。当前所有计数返回 0，
-  //   保证 list / delete / reference-confirm 流程已经按 SPEC 21 §7 的形态接好，等表上线即填实数据。
+  //   Once ph_releases.release_line_events is wired up, replace the methods below with real JOINs. All counts currently return 0,
+  //   ensuring the list / delete / reference-confirm flow is already shaped per SPEC 21 §7; just backfill real data when the table lands.
   // -------------------------------------------------------------------------
   async getActiveReferenceCounts(_modelId: string): Promise<ModelReferenceCounts> {
     return { experiments: 0, optimizations: 0, canaryReleases: 0, productionReleases: 0 };
@@ -159,7 +159,7 @@ export class ModelRepository {
   }
 
   // -------------------------------------------------------------------------
-  // 4.3 模型上下文字典（保留原有方法）
+  // 4.3 Model context dictionary (existing methods preserved)
   // -------------------------------------------------------------------------
   async findContextWindows(query: ListModelContextWindowsQueryDto): Promise<ModelContextWindowRow[]> {
     const rows = this.db.select().from(modelContextWindows);

@@ -21,7 +21,7 @@ import {
   runnerFromMetricCurve,
 } from './helpers/in-memory-ports';
 
-// 标准 fake 响应 — confusion / regression / summarize / generate 各一份
+// Standard fake responses — one each for confusion / regression / summarize / generate
 const CONFUSION_RESP = JSON.stringify({
   confusionPair: 'A→A',
   errorPatterns: [{ label: 'fake confusion', count: 1, reason: 'r', exampleSampleIds: ['sample_2'] }],
@@ -61,7 +61,7 @@ function makeSnapshot(initialMetrics: MetricSnapshot): ExperimentSnapshot {
       id: 'ds_001',
       samples: [
         { id: 'sample_1', input: { text: 'foo' }, expected: 'A' },
-        { id: 'sample_2', input: { text: 'bar' }, expected: 'A' }, // 这个会失败（runResults 里 isCorrect=false）
+        { id: 'sample_2', input: { text: 'bar' }, expected: 'A' }, // This one will fail (isCorrect=false in runResults)
       ],
     },
     taskModel: makeTaskModel(),
@@ -218,14 +218,14 @@ describe('runIterationLoop', () => {
       { overall: { accuracy: 0.65 } },
       { overall: { accuracy: 0.7 } },
     ]);
-    // round 1 没有 previous（返回 null）；round 2 提供 previous（触发 regression batch）
+    // round 1 has no previous (returns null); round 2 provides previous (triggers regression batch)
     const ports = makeInMemoryPorts({
       runner,
       previousRunResults: [
         null,
         [
           { id: 'prr_2_1', sampleId: 'sample_1', decisionOutput: 'A', isCorrect: true },
-          { id: 'prr_2_2', sampleId: 'sample_2', decisionOutput: 'A', isCorrect: true }, // 上轮 sample_2 对了（人造）
+          { id: 'prr_2_2', sampleId: 'sample_2', decisionOutput: 'A', isCorrect: true }, // In the previous round, sample_2 was correct (synthetic)
         ],
       ],
     });
@@ -239,7 +239,7 @@ describe('runIterationLoop', () => {
     expect(ports.previousRoundRunResultsReader.calls).toHaveLength(2);
     expect(ports.previousRoundRunResultsReader.calls[0]?.currentRoundNumber).toBe(1);
     expect(ports.previousRoundRunResultsReader.calls[1]?.currentRoundNumber).toBe(2);
-    // round 1 没有 previous → 没有 regression batch；round 2 有 → 1 个 regression batch
+    // round 1 has no previous → no regression batch; round 2 has → 1 regression batch
     expect(adapter.callsFor('regression')).toHaveLength(1);
   });
 
@@ -298,10 +298,10 @@ describe('runIterationLoop', () => {
     expect(ports.roundRecorder.finalResult?.reason).toBe('max_rounds');
   });
 
-  // SPEC 25 §11.3「工具箱轮换提示」— 连续 ≥2 轮 !isBest 时 generate user prompt 注入切换段
+  // SPEC 25 §11.3 "toolbox rotation hint" — when !isBest for ≥ 2 consecutive rounds, the generate user prompt injects a switch section
   it('injects toolbox switch hint into round-3 generate when prior 2 rounds were !isBest', async () => {
     const adapter = defaultAdapter();
-    // 初始 0.5,目标 ≥ 0.9,曲线全 0.4(low than initial)→ 每轮 !isBest
+    // Initial 0.5, goal ≥ 0.9, curve all 0.4 (lower than initial) → every round is !isBest
     const runner = runnerFromMetricCurve([
       { overall: { accuracy: 0.4 } },
       { overall: { accuracy: 0.4 } },
@@ -316,12 +316,12 @@ describe('runIterationLoop', () => {
     );
     const generateCalls = adapter.callsFor('generate');
     expect(generateCalls).toHaveLength(3);
-    // round 1 / round 2 generate 时 history 长度 0 / 1,streak < 2 → 不注入
+    // At round 1 / round 2 generate, history length is 0 / 1, streak < 2 → no injection
     expect(generateCalls[0]?.userPrompt).not.toContain('## 工具箱轮换提示');
     expect(generateCalls[1]?.userPrompt).not.toContain('## 工具箱轮换提示');
-    // round 3 generate 时 history = [r1 !isBest, r2 !isBest] → streak=2 → 注入
+    // At round 3 generate, history = [r1 !isBest, r2 !isBest] → streak=2 → inject
     expect(generateCalls[2]?.userPrompt).toContain('## 工具箱轮换提示');
-    // 已尝试技巧来自 GENERATE_RESP.appliedTips
+    // "Already tried" techniques come from GENERATE_RESP.appliedTips
     expect(generateCalls[2]?.userPrompt).toContain('术语 / 类别明确化');
   });
 });

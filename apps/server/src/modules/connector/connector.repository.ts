@@ -1,8 +1,8 @@
-// 连接器仓储:CRUD + 本地工作区 access 检查 + 引用计数(本期 stub)
-// 详见 docs/specs/26-connectors.md §3 / docs/specs/06-database-schema.md §4.5 / §3.2
+// Connector repository: CRUD + local-workspace access check + reference counting (stubbed in this cycle)
+// See docs/specs/26-connectors.md §3 / docs/specs/06-database-schema.md §4.5 / §3.2
 //
-// webhook token 不再在 connectors 表反向引用,而是在 ph_core.tokens 表通过
-// scope='webhook' + connector_id 正向关联,一个 connector 可同时持有多条有效 token 用于平滑轮换。
+// Webhook tokens are no longer back-referenced from the connectors table; instead, they are forward-linked via
+// scope='webhook' + connector_id in ph_core.tokens. A single connector may hold multiple active tokens for smooth rotation.
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DbClient } from '@proofhound/db';
@@ -80,7 +80,7 @@ export class ConnectorRepository {
   } as const;
 
   // -------------------------------------------------------------------------
-  // self-hosted 开源版不维护项目成员表:本地管理端默认允许访问。
+  // The self-hosted OSS edition does not maintain a project members table: the local admin console allows access by default.
   // -------------------------------------------------------------------------
   async findProjectAccess(
     _actorUserId: string,
@@ -96,7 +96,7 @@ export class ConnectorRepository {
   }
 
   // -------------------------------------------------------------------------
-  // 查询
+  // Queries
   // -------------------------------------------------------------------------
   async listByProject(projectId: string, filters?: ConnectorListQueryDto): Promise<ConnectorRowWithJoins[]> {
     const conditions = [eq(connectors.projectId, projectId), isNull(connectors.deletedAt)];
@@ -209,8 +209,8 @@ export class ConnectorRepository {
     };
   }
 
-  // 单独提供"含 token_encrypted"的方法,只在 reveal 路径调用,避免普通列表 / 校验路径意外把
-  // 加密明文字段带出。
+  // Provide a separate "with token_encrypted" method, called only from the reveal path,
+  // so that the standard list / validation paths never accidentally include the encrypted plaintext column.
   async findWebhookTokenWithEncryptedById(
     connectorId: string,
     tokenId: string,
@@ -324,7 +324,7 @@ export class ConnectorRepository {
   }
 
   // -------------------------------------------------------------------------
-  // 写
+  // Writes
   // -------------------------------------------------------------------------
   async insert(values: ConnectorInsertRow): Promise<ConnectorRow> {
     const result = await this.db.insert(connectors).values(values).returning();
@@ -366,10 +366,10 @@ export class ConnectorRepository {
   }
 
   // -------------------------------------------------------------------------
-  // 引用统计:占位实现
-  // TODO(PR-N):基于 ph_releases.release_lines / release_line_events
-  // 补真实引用统计(详见 docs/specs/27-releases.md),
-  // 改成真实 SELECT COUNT(*) ... GROUP BY connector_id;同时回填 listReferenceDetails()
+  // Reference counting: placeholder implementation
+  // TODO(PR-N): based on ph_releases.release_lines / release_line_events,
+  // add real reference counting (see docs/specs/27-releases.md),
+  // switch to a real SELECT COUNT(*) ... GROUP BY connector_id; also backfill listReferenceDetails()
   // -------------------------------------------------------------------------
   async countReferences(connectorIds: string[]): Promise<Map<string, ConnectorReferenceCounts>> {
     const result = new Map<string, ConnectorReferenceCounts>();

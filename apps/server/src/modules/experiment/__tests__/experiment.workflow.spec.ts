@@ -1,12 +1,12 @@
-// 单元测试 ExperimentWorkflowRegistrar.runImpl 的 finalize 决策:
-//   - 全部样本失败 → finalize('failed', 'all_samples_failed')
-//   - 部分失败  → finalize('success')
-//   - 全部成功  → finalize('success')
-//   - control_state=stop / cancel → 按对应终态收尾
+// Unit-tests for ExperimentWorkflowRegistrar.runImpl's finalize decision:
+//   - all samples failed → finalize('failed', 'all_samples_failed')
+//   - partial failure   → finalize('success')
+//   - all succeed       → finalize('success')
+//   - control_state=stop / cancel → finalize with the matching terminal state
 //
-// mock @dbos-inc/dbos-sdk:registerStep/registerWorkflow 退化为 identity,sleepSeconds noop,
-// 这样 runImpl 内的 this.xxxStep(...) 就是直接调对应私有 impl;再用 vi.spyOn 替换私有 impl
-// 注入预设返回值,从而隔离 db / bullmq / runResults 依赖。
+// Mock @dbos-inc/dbos-sdk: registerStep/registerWorkflow degrade to identity, sleepSeconds is a noop,
+// so runImpl's this.xxxStep(...) calls the matching private impl directly; then use vi.spyOn to swap the private impl
+// in preset return values, isolating db / bullmq / runResults dependencies.
 
 vi.mock('@dbos-inc/dbos-sdk', () => ({
   DBOS: {
@@ -136,7 +136,7 @@ describe('ExperimentWorkflow.runImpl — finalize 决策', () => {
 
     await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
 
-    expect(enqueue).toHaveBeenCalledTimes(1); // 第一 batch 入队后第二 batch 被 stop 拦住
+    expect(enqueue).toHaveBeenCalledTimes(1); // After the first batch is enqueued, the second batch is intercepted by stop
     expect(finalize).toHaveBeenCalledWith('exp-1', 'stopped');
   });
 

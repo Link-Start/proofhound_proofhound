@@ -1,8 +1,8 @@
-// 连接器业务服务
-// 详见 docs/specs/26-connectors.md §3 / §7 占用与删除约束
-// webhook 入站 token 由本模块自管:create 自动生成首个 token,后续通过
-// listWebhookTokens / createWebhookToken / revokeWebhookToken 管理,
-// 详见 docs/specs/06-database-schema.md §3.2 / §4.5
+// Connector business service
+// See docs/specs/26-connectors.md §3 / §7 occupancy and deletion constraints
+// The inbound webhook token is self-managed by this module: create automatically generates the first token,
+// subsequently managed via listWebhookTokens / createWebhookToken / revokeWebhookToken.
+// See docs/specs/06-database-schema.md §3.2 / §4.5
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createLogger } from '@proofhound/logger';
@@ -83,7 +83,7 @@ export class ConnectorService {
   ) {}
 
   // -------------------------------------------------------------------------
-  // 查询
+  // Queries
   // -------------------------------------------------------------------------
   async list(
     projectId: string,
@@ -124,7 +124,7 @@ export class ConnectorService {
   }
 
   // -------------------------------------------------------------------------
-  // 写
+  // Writes
   // -------------------------------------------------------------------------
   async create(
     projectId: string,
@@ -141,7 +141,7 @@ export class ConnectorService {
 
     const created = await this.repo.insert(insert);
 
-    // webhook input connector 创建时自动生成首个 webhook token
+    // Webhook input connectors auto-generate the first webhook token on creation
     let initialWebhookToken: InitialWebhookTokenSecret | null = null;
     if (dto.type === 'webhook' && dto.direction === 'input') {
       initialWebhookToken = await this.generateInitialWebhookToken(created.id, projectId, actor.sub);
@@ -196,15 +196,15 @@ export class ConnectorService {
       );
       if (configEncrypted !== undefined) patch.configEncrypted = configEncrypted;
     }
-    // ipWhitelist 只有 webhook 类型才允许
+    // ipWhitelist is only allowed for the webhook type
     if (dto.ipWhitelist !== undefined) {
       if (existing.type !== 'webhook') {
         throw new BadRequestException('ipWhitelist applies only to webhook connectors');
       }
       patch.ipWhitelist = dto.ipWhitelist;
     }
-    // dto.tokenId 已 deprecated:webhook token 由 createWebhookToken / revokeWebhookToken 管理。
-    // 这里静默忽略以保持前端旧表单兼容期。
+    // dto.tokenId is deprecated: webhook tokens are managed via createWebhookToken / revokeWebhookToken.
+    // Silently ignored here to keep the legacy frontend form working during the transition.
     if (dto.tokenId !== undefined) {
       this.logger.warn(
         { connectorId, projectId, tokenId: dto.tokenId },
@@ -352,8 +352,8 @@ export class ConnectorService {
     }
   }
 
-  // 与 token.service 的 revealApiToken / revealGlobalMcpToken 对齐:
-  // 从 token_encrypted 解密返回明文,允许本地管理端重复查看(SPEC 06 §3.2)。
+  // Aligned with token.service's revealApiToken / revealGlobalMcpToken:
+  // decrypt from token_encrypted and return the plaintext, allowing the local admin console to reveal multiple times (SPEC 06 §3.2).
   async revealWebhookToken(
     projectId: string,
     connectorId: string,
@@ -651,10 +651,10 @@ export class ConnectorService {
       };
     }
 
-    // webhook 分支
+    // Webhook branch
     if (dto.direction === 'input') {
-      // 注意:webhookPath 在 service 层异步生成会引入嵌套 async,这里走同步分配。
-      // 由于 randomUUID 冲撞概率 ~0,直接生成即可;若真的冲撞,DB unique index 会拒绝。
+      // Note: generating webhookPath asynchronously in the service layer would introduce nested async, so we use synchronous allocation.
+      // Since the collision probability of randomUUID is ~0, generate it directly; if a collision really happens, the DB unique index will reject it.
       return {
         ...base,
         configEncrypted: null,
@@ -663,7 +663,7 @@ export class ConnectorService {
         ipWhitelist: dto.ipWhitelist ?? null,
       };
     }
-    // webhook output:不需要 path / token,仅记录 targetUrl 在 config 里
+    // Webhook output: no path / token needed; only targetUrl is recorded in config
     return {
       ...base,
       configEncrypted: null,

@@ -1,5 +1,5 @@
-// 优化策略注册表入口
-// 详见 docs/specs/25-optimizations.md + docs/specs/07-code-structure.md §12.2
+// Optimization strategy registry entrypoint
+// See docs/specs/25-optimizations.md + docs/specs/07-code-structure.md §12.2
 export * from './types';
 export * from './registry';
 export * from './error-pattern-analysis';

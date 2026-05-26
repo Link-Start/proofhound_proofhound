@@ -105,9 +105,9 @@ export function renderPromptForSample(
   const inputVariables = buildInputVariables(promptVersion, sample);
   const renderedBody = renderBody(promptVersion.body, inputVariables);
   const jsonSchema = outputSchemaToJsonSchema(promptVersion.outputSchema);
-  // composeFullPrompt 在 jsonSchema 为 undefined 时返回 renderedBody 原样；
-  // 有 schema 时按 promptLanguage 追加输出格式段（含 "json" 字面量与 ```json 代码块），
-  // 同时满足阿里 DashScope「messages 必须含 json 字样」的硬要求。
+  // composeFullPrompt returns renderedBody as-is when jsonSchema is undefined;
+  // when a schema is present, appends an output format section per promptLanguage (containing the literal "json" and a ```json code block),
+  // also satisfying Alibaba DashScope's hard requirement that "messages must contain the word json".
   const composedBody = composeFullPrompt(renderedBody, jsonSchema, { language: promptVersion.promptLanguage });
   const messages = [{ role: 'user' as const, content: composedBody }];
   const responseFormat = buildResponseFormat(jsonSchema);

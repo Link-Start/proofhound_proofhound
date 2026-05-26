@@ -165,7 +165,7 @@ export class ExperimentService {
         if (parsedAction === 'resume') await this.launcher.resume(experimentId);
         else await this.launcher.retry(experimentId);
       } catch (error) {
-        // launcher 抛错时把 status 直接改成 failed (SPEC 24 §5)
+        // When the launcher throws, set status to failed directly (SPEC 24 §5)
         await this.repo.updateExperiment(projectId, experimentId, {
           status: 'failed',
           controlState: null,
@@ -272,7 +272,7 @@ export class ExperimentService {
       if (status !== 'running') {
         throw new ConflictException('experiment_stop_invalid_status');
       }
-      // 只写 control_state,实际状态由 workflow 在 step 边界感知后切到 stopped
+      // Only writes control_state; the actual status is flipped to stopped by the workflow once it observes the change at a step boundary
       return {
         controlState: 'stop',
         updatedAt: now,
@@ -295,7 +295,7 @@ export class ExperimentService {
       if (status === 'success' || status === 'cancelled') {
         throw new ConflictException('experiment_cancel_invalid_status');
       }
-      // 只写 control_state,workflow 感知后写 status=cancelled + finished_at
+      // Only writes control_state; once observed, the workflow writes status=cancelled + finished_at
       return {
         controlState: 'cancel',
         updatedAt: now,
@@ -432,8 +432,8 @@ export class ExperimentService {
     };
   }
 
-  // 运行中实验对 ph_runs.run_results 实时聚合,覆盖 DTO 进度与指标字段(SPEC 24 §4)。
-  // 终态实验直接返回原 item,继续读 experiments 表快照,避免每次 GET 都触发 GROUP BY。
+  // For running experiments, aggregate from ph_runs.run_results in real time, overriding DTO progress and metric fields (SPEC 24 §4).
+  // Terminal experiments return the original item directly, continuing to read the experiments table snapshot to avoid triggering a GROUP BY on every GET.
   private async withLiveMetrics(item: ExperimentListItemDto): Promise<ExperimentListItemDto> {
     if (item.status !== 'running') return item;
     const [rows, latency] = await Promise.all([

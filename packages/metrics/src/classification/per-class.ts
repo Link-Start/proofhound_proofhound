@@ -1,5 +1,5 @@
-// 按 expected_output 切分类目,统计每类的 TP/FP/FN/support
-// 详见 docs/specs/24-experiments.md §6
+// Bucket by expected_output category; count TP/FP/FN/support per class
+// See docs/specs/24-experiments.md §6
 import type { ClassificationAggregateRow, MetricsStrategy } from '../types';
 
 interface ConfusionCounts {

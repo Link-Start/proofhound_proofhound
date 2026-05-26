@@ -1,5 +1,5 @@
 // ph_core — projects and application tokens
-// 详见 docs/specs/06-database-schema.md §3
+// See docs/specs/06-database-schema.md §3
 
 import { sql } from 'drizzle-orm';
 import { check, index, jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
@@ -31,12 +31,12 @@ export const projects = phCore.table(
   ],
 );
 
-// 两类凭证共用 `ph_core.tokens`：
-//   - scope='user'    本地管理端用户凭证，同时用于 HTTP API 与 MCP；OSS 下 project_id 恒为 NULL
-//   - scope='webhook' per-connector 入站凭证；project_id / connector_id 必填，生命周期归 connector
-// `connector_id` 外键约束在 migration 中通过 raw SQL 追加（FK 指向 ph_assets.connectors.id），
-// 不在此处声明 .references()，避免与 ph_assets/index.ts 形成循环导入。
-// 详见 docs/specs/06-database-schema.md §3.2 与 docs/specs/08-saas-adapter-boundary.md §3.4。
+// Two credential kinds share `ph_core.tokens`:
+//   - scope='user'    Local admin console user credential, usable for both HTTP API and MCP; project_id is always NULL in OSS
+//   - scope='webhook' per-connector inbound credential; project_id / connector_id required; lifecycle attached to the connector
+// The `connector_id` foreign key constraint is appended in the migration via raw SQL (FK pointing to ph_assets.connectors.id);
+// not declared via .references() here, to avoid a circular import with ph_assets/index.ts.
+// See docs/specs/06-database-schema.md §3.2 and docs/specs/08-saas-adapter-boundary.md §3.4.
 export const tokens = phCore.table(
   'tokens',
   {

@@ -1,5 +1,5 @@
 // ph_releases.release_lines / release_line_events — unified release model
-// 详见 docs/specs/06-database-schema.md §6 与 docs/specs/27-releases.md
+// See docs/specs/06-database-schema.md §6 and docs/specs/27-releases.md
 
 import { sql } from 'drizzle-orm';
 import { check, index, integer, jsonb, numeric, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';

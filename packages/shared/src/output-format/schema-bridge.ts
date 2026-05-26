@@ -1,10 +1,10 @@
-// 把 prompt_versions.output_schema 桥接成「标准 JSON Schema 对象」，供 composeFullPrompt
-// 与 LLM response_format 共用一份转换逻辑。
+// Bridges prompt_versions.output_schema into a "standard JSON Schema object", shared between composeFullPrompt
+// and the LLM response_format, so both use one conversion logic.
 //
-// 历史上数据库 ph_assets.prompt_versions.output_schema 列混存两种形态：
-//   1. {fields:[{key, value, isJudgment}, ...]}  — 手工编辑 / DTO 形态
-//   2. {type:'object', properties:{...}, ...}    — 优化 generate LLM 直接产出落库
-// 因此桥接函数同时识别两种入参形态。其它形态一律返回 undefined（由调用方按「无 schema」处理）。
+// Historically the ph_assets.prompt_versions.output_schema column has stored two shapes:
+//   1. {fields:[{key, value, isJudgment}, ...]}  — manually edited / DTO shape
+//   2. {type:'object', properties:{...}, ...}    — directly produced by the optimization generate LLM and persisted
+// Therefore the bridge function recognizes both input shapes. Anything else returns undefined (the caller should treat it as "no schema").
 
 export interface JsonSchemaProperty {
   type?: string;

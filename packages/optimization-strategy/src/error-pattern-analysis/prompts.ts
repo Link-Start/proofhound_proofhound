@@ -1,5 +1,5 @@
-// LLM prompt 构造 — system prompt 全部来自 prompts/*.md（由 prompts/loader.ts 加载）
-// 本文件只负责拼 user prompt（含动态变量替换）。
+// LLM prompt construction — system prompts all come from prompts/*.md (loaded by prompts/loader.ts)
+// This file is only responsible for assembling the user prompt (including dynamic variable substitution).
 import { compare, readMetric } from '../loop/goals';
 import type { OptimizationGoal, FieldWhitelist, MetricSnapshot, PromptVersionRef, RoundHistoryEntry } from '../loop/types';
 import { DEFAULT_PROMPT_LANGUAGE, buildOutputFormatInstruction, type PromptLanguageDto } from '@proofhound/shared';
@@ -8,7 +8,7 @@ import type { AnalysisEvidenceBundle } from './analysis-types';
 import { getSystemPrompts } from './prompts/loader';
 import { estimateMessagesTokens, truncateLongText } from './token-budget';
 
-// 重新 re-export system prompt + SYSTEM_PROMPTS map（保持向后兼容 API）
+// Re-export system prompts + the SYSTEM_PROMPTS map (keeps backward-compatible API)
 export {
   ANALYZE_CONFUSION_SYSTEM_PROMPT,
   ANALYZE_REGRESSION_SYSTEM_PROMPT,
@@ -25,7 +25,7 @@ export {
 } from './prompts/loader';
 
 // =========================
-// 公共片段
+// Common fragments
 // =========================
 
 function scopeLabel(scope: OptimizationGoal['scope'], language: PromptLanguageDto = DEFAULT_PROMPT_LANGUAGE): string {
@@ -39,15 +39,15 @@ function fmtNum(n: number | null | undefined, language: PromptLanguageDto = DEFA
 }
 
 function signedGap(observed: number, target: number, op: OptimizationGoal['op']): string {
-  // 把差距按 op 方向标准化：正数 = 已超目标，负数 = 还差多少
-  // >= / > : gap = observed - target （越大越好）
-  // <= : gap = target - observed （越小越好；展示成"还差多少需要再降低"）
+  // Normalize the gap by op direction: positive = exceeded the goal; negative = how much more is needed
+  // >= / > : gap = observed - target (larger is better)
+  // <= : gap = target - observed (smaller is better; displayed as "how much further it needs to drop")
   const delta = op === '<=' ? target - observed : observed - target;
   const sign = delta >= 0 ? '+' : '';
   return `${sign}${delta.toFixed(4)}`;
 }
 
-// 「优化目标 vs 当前实际」对照表 — 把目标和实际值并排展示
+// "Optimization goal vs current actual" comparison table — display goals and actual values side by side
 function formatGoalsWithProgress(
   goals: OptimizationGoal[],
   metrics: MetricSnapshot,
@@ -74,15 +74,15 @@ function formatGoalsWithProgress(
     .join('\n');
 }
 
-// 「涉及范围的完整指标」— 只展示 goals 涉及的 scope（overall / 某些 class）下的所有指标，
-// 不涉及的 class 不展示（省 token + 让 LLM 聚焦）
+// "Full metrics for the scope of interest" — only display all metrics within the scopes the goals cover (overall / specific classes),
+// classes not covered are not displayed (saves tokens + lets the LLM focus)
 function formatRelevantMetrics(
   goals: OptimizationGoal[],
   metrics: MetricSnapshot,
   language: PromptLanguageDto = DEFAULT_PROMPT_LANGUAGE,
 ): string {
   if (goals.length === 0) {
-    // 没有 goals 时退化为展示 overall（避免完全空 user prompt）
+    // When there are no goals, degrade to displaying overall (avoiding a completely empty user prompt)
     return [
       language === 'en-US' ? '### Overall' : '### 整体',
       '```json',
@@ -136,8 +136,8 @@ function formatAnalysisOnlyFields(
 }
 
 // =========================
-// 跨轮历史段渲染 — 详见 docs/specs/25-optimizations.md §11.3 "跨轮历史注入"
-// 主指标取 goals[0]（与 deltaFromPrev 计算口径一致）；无 goals 时退化为 metrics.overall.accuracy
+// Cross-round history section rendering — see docs/specs/25-optimizations.md §11.3 "cross-round history injection"
+// Primary metric taken from goals[0] (consistent with the deltaFromPrev calculation); when there are no goals, degrade to metrics.overall.accuracy
 // =========================
 function fmtDelta(d: number | null): string {
   if (d === null) return 'Δ -- ';
@@ -207,9 +207,9 @@ export function formatRoundHistory(
   return [...head, ...lines].join('\n');
 }
 
-// 「## 工具箱轮换提示」段渲染 — 当连续 ≥2 轮 !isBest 时由 caller 注入到 generate user prompt。
-// 软提示：列出已尝试技巧 + 工具箱全集 + 建议措辞;不强制 LLM 必须切换。
-// 详见 docs/specs/25 §11.3「工具箱轮换提示」
+// Toolbox-rotation-hint section rendering — injected by the caller into the generate user prompt when !isBest for ≥ 2 consecutive rounds.
+// A soft hint: list already-tried techniques + the full toolbox + suggested wording; does not force the LLM to switch.
+// See docs/specs/25 §11.3 "toolbox rotation hint"
 export function formatToolboxSwitchHint(
   recentlyUsedTips: string[],
   allTipNames: readonly string[],
@@ -245,9 +245,9 @@ export function formatToolboxSwitchHint(
   ].join('\n');
 }
 
-// 通用：把"## 历史优化轨迹"段拼进 user prompt 数组中
-// 调用方：在"## 优化目标 vs 当前实际"段后那个 '' 分隔符之后展开 ...renderRoundHistorySection(history, goals)
-// 返回 [formatted, ''] 维持现有段落分隔风格；history 为空时返回 [] 完全不渲染（向后兼容首轮）
+// Common helper: append the optimization-history section into the user prompt array
+// Call site: after the '' separator following the goal-vs-actual section, spread ...renderRoundHistorySection(history, goals)
+// Returns [formatted, ''] to keep the existing section separator style; when history is empty, returns [] to render nothing (backward compatible with first round)
 function renderRoundHistorySection(
   history: RoundHistoryEntry[] | undefined,
   goals: OptimizationGoal[],
@@ -257,8 +257,8 @@ function renderRoundHistorySection(
   return [formatRoundHistory(history, goals, language), ''];
 }
 
-// 「## 工具箱轮换提示」拼装 — caller 在 generate user prompt 的「## 历史优化轨迹」段后展开
-// hint 为 undefined 时返回 [] 完全不渲染（streak < 2 / 首轮场景）
+// Toolbox-rotation-hint assembly — the caller spreads this after the optimization-history section in the generate user prompt
+// When hint is undefined, returns [] and renders nothing (streak < 2 / first-round scenario)
 function renderToolboxSwitchHintSection(
   hint: { recentlyUsedTips: string[]; allTipNames: readonly string[] } | undefined,
   language: PromptLanguageDto = DEFAULT_PROMPT_LANGUAGE,
@@ -268,11 +268,11 @@ function renderToolboxSwitchHintSection(
 }
 
 // =========================
-// 跨轮历史 token budget 降级 — 详见 docs/specs/25-optimizations.md §11.3
-// L0 全量 → L1 早期轮 changeSummary 截 200 字 + appliedChanges 仅留 changeId →
-// L2 早期轮 changeSummary 截 50 字 + appliedChanges 清空 →
-// L3 仅最近 1 轮含 changeSummary / appliedChanges，其余清空
-// 估算口径走 formatRoundHistory + estimateMessagesTokens（与 caller probe 用同一函数避免漂移）
+// Cross-round history token-budget degradation — see docs/specs/25-optimizations.md §11.3
+// L0 full → L1 early rounds: changeSummary truncated to 200 chars + appliedChanges only keep changeId →
+// L2 early rounds: changeSummary truncated to 50 chars + appliedChanges cleared →
+// L3 only the most recent 1 round contains changeSummary / appliedChanges; the rest are cleared
+// Estimation calibration goes through formatRoundHistory + estimateMessagesTokens (same function as the caller probe, to avoid drift)
 // =========================
 const HISTORY_RECENT_KEEP = 3;
 const HISTORY_L1_CHANGE_SUMMARY_CHARS = 200;
@@ -327,7 +327,7 @@ export function fitRoundHistoryToBudget(
 
   const earlyCount = Math.max(0, history.length - HISTORY_RECENT_KEEP);
 
-  // L1: 早期轮压缩 changeSummary + 精简 appliedChanges
+  // L1: compress changeSummary in early rounds + slim appliedChanges
   const l1: RoundHistoryEntry[] = history.map((entry, i) => {
     if (i >= earlyCount) return entry;
     return {
@@ -348,7 +348,7 @@ export function fitRoundHistoryToBudget(
     };
   }
 
-  // L2: 早期轮 changeSummary 进一步截短 + appliedChanges 清空
+  // L2: further truncate changeSummary in early rounds + clear appliedChanges
   const l2: RoundHistoryEntry[] = history.map((entry, i) => {
     if (i >= earlyCount) return entry;
     return {
@@ -369,7 +369,7 @@ export function fitRoundHistoryToBudget(
     };
   }
 
-  // L3: 仅最近 1 轮含 changeSummary / appliedChanges；其余清空（但保留 metrics + delta）
+  // L3: only the most recent 1 round contains changeSummary / appliedChanges; the rest are cleared (but metrics + delta are kept)
   const l3: RoundHistoryEntry[] = history.map((entry, i) => {
     if (i === history.length - 1) return entry;
     return { ...entry, changeSummary: '', appliedChanges: [] };
@@ -642,8 +642,8 @@ export interface BuildGenerateArgs {
   fieldWhitelist: FieldWhitelist;
   optimizationHint?: string;
   roundHistory?: RoundHistoryEntry[];
-  // 「## 工具箱轮换提示」段输入（docs/specs/25 §11.3「工具箱轮换提示」）
-  // caller 在 streak >= 2 时构造;undefined 时不渲染该段(首轮 / streak < 2 场景)
+  // Input to the toolbox-rotation-hint section (docs/specs/25 §11.3 "toolbox rotation hint")
+  // The caller constructs it when streak >= 2; when undefined, this section is not rendered (first round / streak < 2 scenarios)
   toolboxSwitchHint?: { recentlyUsedTips: string[]; allTipNames: readonly string[] };
   promptLanguage?: PromptLanguageDto;
 }
@@ -663,9 +663,9 @@ export function buildGenerateMessages(args: BuildGenerateArgs): { system: string
   const language = args.promptLanguage ?? DEFAULT_PROMPT_LANGUAGE;
   const system = getSystemPrompts(language).generate;
 
-  // output schema 不再让 LLM 复述 — 系统会在运行时自动从 schema 拼出「## 输出格式」段追加到 body 尾部。
-  // 这里把"自动拼接后的输出格式段"原样塞进 user prompt 仅为让 LLM 看到完整 prompt 长啥样，
-  // 避免它重复造轮子（system prompt 第 6 条硬约束已禁止 newPromptBody 复述输出格式）。
+  // The output schema is no longer re-stated by the LLM — the system auto-assembles the output-format section from the schema at runtime and appends it to the body tail.
+  // Here we stuff the "auto-assembled output format section" as-is into the user prompt purely to let the LLM see what the full prompt looks like,
+  // avoiding it reinventing the wheel (the 6th hard constraint in the system prompt already forbids newPromptBody from re-stating the output format).
   const autoOutputFormat = buildOutputFormatInstruction(currentVersion.outputSchema, { language });
   const schemaSection = autoOutputFormat
     ? language === 'en-US'
@@ -691,8 +691,8 @@ export function buildGenerateMessages(args: BuildGenerateArgs): { system: string
       ]
     : [];
 
-  // base 已经用过 ∩ 白名单 = 必须在 newPromptBody 里逐字保留（system 硬约束 #1）
-  // 显式列出比埋在文字里更不容易被 LLM 在整段重写时漏掉
+  // base's already-used ∩ whitelist = must be retained verbatim in newPromptBody (system hard constraint #1)
+  // Explicitly listing them is less likely to be missed by the LLM during a full-section rewrite than burying them in the text
   const allowedSet = new Set(fieldWhitelist.promptVariables);
   const requiredVariables = extractVariableNames(currentVersion.body).filter((v) => allowedSet.has(v));
   const requiredVariablesSection =
@@ -803,7 +803,7 @@ export function buildGenerateMessages(args: BuildGenerateArgs): { system: string
 }
 
 // =========================
-// 变量名提取 — 用于校验「新 prompt 只能用 promptVariables 子集」
+// Variable name extraction — used to validate "the new prompt can only use a subset of promptVariables"
 // =========================
 export function extractVariableNames(promptBody: string): string[] {
   const re = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;

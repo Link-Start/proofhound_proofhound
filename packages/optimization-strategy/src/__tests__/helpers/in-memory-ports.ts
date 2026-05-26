@@ -1,4 +1,4 @@
-// 5 个 port 的 in-memory 实现 — 用于集成测试断言
+// In-memory implementation of the 5 ports — used for integration test assertions
 import type {
   OptimizationResult,
   ControlSignal,
@@ -44,7 +44,7 @@ export class InMemoryExperimentRunner implements ExperimentRunnerPort {
   }
 }
 
-// 默认 runResults 生成器 — 1 条正确 + 1 条失败（混淆对 A→B 各一次）
+// Default runResults generator — 1 correct + 1 failed (one confusion pair A→B each)
 function defaultRunResults(round: number): RunResultRecord[] {
   return [
     {
@@ -125,10 +125,10 @@ export class InMemoryControlSignalReader implements ControlSignalReader {
   }
 }
 
-// 回归读取器
-// - 数组形式：按 currentRoundNumber-1 索引（第 1 轮拿 [0]，第 2 轮拿 [1]…）
-// - 函数形式：完全控制返回
-// - null 形式：永远返回 null（视为没有可比对的上一轮）
+// Regression reader
+// - Array form: indexed by currentRoundNumber-1 (round 1 takes [0], round 2 takes [1] ...)
+// - Function form: full control over the return value
+// - null form: always returns null (treated as no comparable previous round)
 export type PreviousRunResultsSequence =
   | Array<RunResultRecord[] | null>
   | ((input: PreviousRoundReadInput) => RunResultRecord[] | null | Promise<RunResultRecord[] | null>)

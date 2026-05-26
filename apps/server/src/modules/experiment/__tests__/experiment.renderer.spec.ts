@@ -151,8 +151,8 @@ describe('renderPromptForSample', () => {
   });
 
   it('appends 输出格式 section containing "json" to user content when outputSchema has fields', () => {
-    // 回归保障：阿里 DashScope（OpenAI 兼容）要求 messages 含 "json" 字面量才允许
-    // response_format 为 json 模式；优化生成的 body 不会自带 "json"，必须由 renderer 自动拼接。
+    // Regression guard: Alibaba DashScope (OpenAI-compatible) requires messages to contain the literal "json" before
+    // response_format is allowed to be json mode; bodies produced by optimization do not include "json", so the renderer must auto-inject it.
     const result = renderPromptForSample(
       {
         body: '判断 {{text}} 的情感',
@@ -173,7 +173,7 @@ describe('renderPromptForSample', () => {
     expect(content).toContain('```json');
     expect(content).toContain('"label":');
     expect(content).toContain('"reason":');
-    // prompt 字段与 messages content 保持一致
+    // The prompt field must stay consistent with the messages content
     expect(result.renderedPrompt.prompt).toBe(content);
   });
 

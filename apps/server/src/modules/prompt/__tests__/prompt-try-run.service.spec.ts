@@ -139,9 +139,9 @@ describe('PromptTryRunService', () => {
   });
 
   it('rejects (NotFound or TypeError) when model row missing or inactive', async () => {
-    // 用 fakeDb 模拟 drizzle 查询链时，select().from().where().limit() 在某些边界下返回 undefined
-    // 而非 []，对应运行时会沿 row.isActive 抛 TypeError；真实 DB 永远返回 [] → service 抛 NotFoundException。
-    // 这条测试只关心「服务不会静默成功」。
+    // When simulating the drizzle query chain with fakeDb, select().from().where().limit() may return undefined at certain edges
+    // instead of []. The runtime would then throw TypeError when accessing row.isActive; a real DB always returns [] → service throws NotFoundException.
+    // This test only cares that "the service does not silently succeed".
     const { service } = buildService({ modelRow: null });
     await expect(service.tryRun(PROJECT_ID, PROMPT_ID, validRequest(), actor)).rejects.toBeDefined();
   });

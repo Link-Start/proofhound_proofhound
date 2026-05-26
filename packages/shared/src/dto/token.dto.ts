@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
-// 单一 user-facing token 模型：同一 token 可同时用于 HTTP API 与 MCP。
-// 详见 docs/specs/06-database-schema.md §3.2 / docs/specs/08-saas-adapter-boundary.md §3.5。
+// Single user-facing token model: the same token can be used for both HTTP API and MCP.
+// See docs/specs/06-database-schema.md §3.2 / docs/specs/08-saas-adapter-boundary.md §3.5.
 //
-// 不在本文件处理 webhook token（per-connector），由 connector DTO 与 service 自管。
+// Webhook tokens (per-connector) are not handled in this file; they are self-managed by the connector DTO and service.
 
 const tokenNameSchema = z
   .string()

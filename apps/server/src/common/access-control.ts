@@ -27,8 +27,8 @@ export function toActorContext(actor: CurrentUserPayload | ActorContext): ActorC
   };
 }
 
-// OSS self-hosted: 单工作区 + 本地管理端,所有 user_token / local_admin / system 在本地默认全 allow。
-// SaaS 形态由 RbacAccessControl override(详见 docs/specs/08-saas-adapter-boundary.md §3.6)。
+// OSS self-hosted: single workspace + local admin console; user_token / local_admin / system are all allowed by default.
+// The SaaS form overrides this via RbacAccessControl (see docs/specs/08-saas-adapter-boundary.md §3.6).
 class SelfHostedAccessControl {
   assertCan(actor: CurrentUserPayload | ActorContext, action: AccessAction, context?: Partial<ProjectContext>): void {
     const normalized = toActorContext(actor);

@@ -1,19 +1,19 @@
 // LocalUserTokenVerifier
-// 共享底层：sha256 hash → 查 `ph_core.tokens where scope='user'` → 过期 / IP 校验 → 异步 touch last_used_at。
+// Shared bottom layer: sha256 hash → look up `ph_core.tokens where scope='user'` → expiry / IP check → async touch last_used_at.
 //
-// 设计取舍：这是 infra 层 helper，不是 resolver。
-// LocalActorContextResolver（HTTP）与 LocalMcpAuthResolver（MCP）各自持有一个 verifier 实例，
-// 两个 resolver 互不引用对方（遵守 SPEC §8 红线）。
+// Design trade-off: this is an infra-layer helper, not a resolver.
+// LocalActorContextResolver (HTTP) and LocalMcpAuthResolver (MCP) each hold their own verifier instance;
+// the two resolvers do not reference each other (SPEC §8 red line).
 //
-// IP 白名单的边界：verifier 暴露 `verify(token, { clientIp? })` 接口，
-// IP 校验仅在调用方提供 clientIp 时生效。
-// - HTTP resolver 从 req.ip / socket.remoteAddress 解析后传入；
-// - MCP / `resolveFromUserToken(token)` 直接路径不传，意味着 IP 校验跳过。
-//   这与 SPEC §3.2 "ip_whitelist 在 resolveFromHttp 做 IP 检查；resolveFromUserToken 不做" 一致。
+// IP whitelist boundary: the verifier exposes a `verify(token, { clientIp? })` interface;
+// IP validation only takes effect when the caller provides clientIp.
+// - The HTTP resolver parses it from req.ip / socket.remoteAddress and passes it in;
+// - MCP / direct `resolveFromUserToken(token)` paths do not pass it, meaning IP validation is skipped.
+//   This matches SPEC §3.2 "ip_whitelist is checked in resolveFromHttp; resolveFromUserToken does not check it".
 //
-// Last-used touch：fire-and-forget，错误吞掉只记 warn 不阻塞响应。
+// Last-used touch: fire-and-forget; errors are swallowed with a warning and never block the response.
 //
-// 详见 docs/specs/08-saas-adapter-boundary.md §3.2 / §3.3 / §3.5
+// See docs/specs/08-saas-adapter-boundary.md §3.2 / §3.3 / §3.5
 
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
@@ -28,9 +28,9 @@ const { tokens } = schema;
 
 export interface VerifyUserTokenOptions {
   /**
-   * 当前请求的客户端 IP（仅在 HTTP 路径提供）。
-   * 提供时若 token 配置了 ip_whitelist 且不命中，抛 `ip_not_allowed`。
-   * 不提供时跳过 IP 校验（resolveFromUserToken / MCP 路径）。
+   * Client IP of the current request (provided only on the HTTP path).
+   * When provided and the token has an ip_whitelist that does not match, throws `ip_not_allowed`.
+   * When not provided, IP validation is skipped (resolveFromUserToken / MCP paths).
    */
   clientIp?: string;
 }
@@ -77,9 +77,9 @@ export class LocalUserTokenVerifier {
     // Fire-and-forget touch last_used_at
     this.touchLastUsed(row.id);
 
-    // TODO(spec-§3.2-actor-kind): SPEC 草案讨论将 HTTP user token 的 actor.kind 细化为
-    // `script:<tokenId>`，OSS 当前 ActorKind 枚举只有 'user_token'，保留不动；
-    // 待 ZiqiXiao 在 ActorContext shape 演进时一并决定。
+    // TODO(spec-§3.2-actor-kind): the SPEC draft discusses narrowing HTTP user token actor.kind to
+    // `script:<tokenId>`; the OSS ActorKind enum currently only has 'user_token' and is kept as-is;
+    // to be decided together with ZiqiXiao when the ActorContext shape evolves.
     return {
       actorId: row.id,
       actorKind: 'user_token',

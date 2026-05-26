@@ -1,8 +1,8 @@
 /**
- * MCP tool definitions for user tokens(本地管理端凭证,同一 token 可用于 HTTP API 与 MCP)。
+ * MCP tool definitions for user tokens (local-admin-console credentials; the same token can be used for both the HTTP API and MCP).
  * Token plaintext is only returned by explicit create / reveal operations.
  *
- * 详见 docs/specs/06-database-schema.md §3.2 / docs/specs/08-saas-adapter-boundary.md §3.5。
+ * See docs/specs/06-database-schema.md §3.2 / docs/specs/08-saas-adapter-boundary.md §3.5.
  */
 import { createUserTokenSchema, tokenIdParamSchema, updateUserTokenSchema } from '@proofhound/shared';
 import { getMcpActor } from './mcp-context';

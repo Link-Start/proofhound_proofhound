@@ -21,7 +21,7 @@ describe('prompt baseline bootstrap helpers', () => {
   it('bootstraps a baseline experiment for from_prompt_version and from_dataset_only (SPEC 25 §2.1)', () => {
     expect(isPromptBaselineBootstrapNeeded('from_prompt_version')).toBe(true);
     expect(isPromptBaselineBootstrapNeeded('from_experiment')).toBe(false);
-    // from_dataset_only: 在 generateFirstVersionStep 写出首版后,与 from_prompt_version 同构走 baseline 实验路径
+    // from_dataset_only: after generateFirstVersionStep writes the first version, it follows the same baseline-experiment path as from_prompt_version
     expect(isPromptBaselineBootstrapNeeded('from_dataset_only')).toBe(true);
   });
 
@@ -173,8 +173,8 @@ describe('buildSamplesForStrategy', () => {
   });
 
   it('does not lose expected when judgmentRules wraps config (regression for workflow:452 bug)', () => {
-    // 这是这次 root cause 修复的回归用例:此前 mapping 把 expected 硬编码成 undefined,
-    // 导致 strategy 包 confusion-pairs 全跳过 → analyze_skipped reason=no_batches
+    // Regression case for the root cause fix: previously the mapping hardcoded expected to undefined,
+    // causing the strategy package's confusion-pairs to be skipped entirely → analyze_skipped reason=no_batches
     const samples = buildSamplesForStrategy(samplesRaw, { expected_field: 'expected_output' });
     const withExpected = samples.filter((s) => s.expected != null);
     expect(withExpected).toHaveLength(2);
@@ -182,8 +182,8 @@ describe('buildSamplesForStrategy', () => {
   });
 });
 
-// SPEC 25 §11.4.1: 从 run_results.parsed_output 重建 analyzeFailures / generateNextVersion 的返回结构,
-// 让 prepareRoundImpl 在 LLM 已 success 时跳过实际调用
+// SPEC 25 §11.4.1: reconstruct the analyzeFailures / generateNextVersion return shape from run_results.parsed_output,
+// so prepareRoundImpl can skip the actual call when the LLM has already succeeded
 describe('reconstructAnalysisFromRunResult', () => {
   it('reads errorAnalysisText from parsedOutput.summary', () => {
     const result = reconstructAnalysisFromRunResult({
@@ -295,7 +295,7 @@ describe('reconstructGenerateFromRunResult', () => {
   });
 });
 
-// SPEC 25 §11.3「工具箱轮换提示」— buildRoundHistoryEntries 通过此 helper 反聚合
+// SPEC 25 §11.3 "toolbox rotation prompt" — buildRoundHistoryEntries de-aggregates via this helper
 // generate run_results.parsed_output.appliedTips → RoundHistoryEntry.appliedTips
 describe('extractAppliedTipsFromGenerateParsedOutput', () => {
   it('returns empty array when parsedGen is null / undefined', () => {
@@ -336,10 +336,10 @@ describe('extractAppliedTipsFromGenerateParsedOutput', () => {
 });
 
 describe('parseVariables (optimization v16/v17 字面占位回归)', () => {
-  // 回归：优化 4dfe660a 实际产出的 v16 prompt body 有 {{text}}，但 variables 落库为 []，
-  // 导致 experiment renderer 的 buildInputVariables 拿不到 text → 渲染时保留字面 {{text}} 发给 LLM。
-  // 根因：basePromptVersion.variables 被剥成 { name, description }，
-  // 下游 parseVariables 按完整 promptVariableSchema 校验时整条丢弃 → 写库 variables=[]。
+  // Regression: optimization 4dfe660a actually produced a v16 prompt body containing {{text}}, but variables were persisted as [],
+  // so the experiment renderer's buildInputVariables could not find text → the literal {{text}} was sent to the LLM.
+  // Root cause: basePromptVersion.variables was stripped to { name, description },
+  // and the downstream parseVariables (validating against the full promptVariableSchema) discarded the entry → variables=[] in DB.
   it('preserves full PromptVariableDto fields (type / required / datasetField) on round-trip', () => {
     const raw: unknown[] = [{ name: 'text', type: 'text', required: true, datasetField: 'text' }];
     const parsed = parseVariables(raw);
@@ -347,28 +347,28 @@ describe('parseVariables (optimization v16/v17 字面占位回归)', () => {
   });
 
   it('drops entries missing required fields (this is exactly how the v16 bug arose)', () => {
-    // 旧 workflow 把 variables 缩成 { name, description } 再喂回来 → 这里整条会被 silently 丢弃，
-    // 最终落库 variables=[]，renderer 找不到 text，{{text}} 留作字面量发给业务模型。
+    // The old workflow stripped variables to { name, description } and fed them back → the entry is silently discarded here,
+    // ultimately persisting variables=[]; the renderer cannot find text, so {{text}} remains literal when sent to the business model.
     const stripped: unknown[] = [{ name: 'text', description: undefined }];
     expect(parseVariables(stripped)).toEqual([]);
   });
 
   it('passes the documented createOptimizationFrozenVersion contract: variables round-tripped through workflow have full DTO', () => {
-    // 模拟 :424 → :438 (basePromptVersion.variables) → :818 (parseVariables again) → :833
-    // (createOptimizationFrozenVersion 入参)
+    // Simulate :424 → :438 (basePromptVersion.variables) → :818 (parseVariables again) → :833
+    // (createOptimizationFrozenVersion arguments)
     const ctxBaseVersionVariables: unknown[] = [{ name: 'text', type: 'text', required: true, datasetField: 'text' }];
     const fromCtx = parseVariables(ctxBaseVersionVariables);
-    // 当 workflow 不剥字段时，basePromptVersion.variables 直接复用 fromCtx
+    // When the workflow does not strip fields, basePromptVersion.variables reuses fromCtx directly
     const basePromptVersionVariables = fromCtx;
-    // 下游 round 内再次 parseVariables — 必须仍是完整 DTO
+    // parseVariables is run again inside the downstream round — must still be a complete DTO
     const variablesForFrozenWrite = parseVariables(basePromptVersionVariables);
     expect(variablesForFrozenWrite).toEqual([{ name: 'text', type: 'text', required: true, datasetField: 'text' }]);
   });
 });
 
-// SPEC 25 §11 子实验 runConfig 继承:loadConfigImpl 通过本 helper 把 optimizations.run_config
-// 投影成 experimentRunConfigSchema,作为 prepareRoundImpl 调 createChildExperimentRow 的 runConfig 入参。
-// 修复前 prepareRoundImpl 硬编码 {},导致优化子实验详情页 runConfig 全展示 "-"。
+// SPEC 25 §11 child experiment runConfig inheritance: loadConfigImpl projects optimizations.run_config
+// through this helper into experimentRunConfigSchema, used as the runConfig argument passed by prepareRoundImpl to createChildExperimentRow.
+// Before the fix, prepareRoundImpl hardcoded {}, so the optimization child experiment detail page displayed "-" for runConfig.
 describe('parseChildRunConfigFromOptimization (子实验 runConfig 继承)', () => {
   it('passes through the full 7-field optimization runConfig', () => {
     const input = {
@@ -393,9 +393,9 @@ describe('parseChildRunConfigFromOptimization (子实验 runConfig 继承)', () 
   });
 
   it('keeps known fields strongly typed; tolerates optimization-only extras via catchall (filtered by downstream parseRunConfig)', () => {
-    // experimentRunConfigSchema uses .catchall(z.unknown()) so未识别字段会被透传进 jsonb。
-    // 子实验 service.parseRunConfig 用同一 schema 再次解析,前端 ExperimentRunConfigDto 类型上
-    // 看不到这些 catchall 字段,实际不会污染 UI。
+    // experimentRunConfigSchema uses .catchall(z.unknown()), so unknown fields are passed through into jsonb.
+    // The child experiment service.parseRunConfig uses the same schema to re-parse; the frontend ExperimentRunConfigDto type
+    // does not see these catchall fields, so the UI is not polluted in practice.
     const noise = {
       temperature: 0.2,
       optimizationHint: 'be terse',
@@ -433,9 +433,9 @@ describe('toLoopFieldWhitelist (ground-truth 字段保护)', () => {
   });
 
   it('strips expected_field out of promptVariables and moves it to analysisOnlyFields', () => {
-    // 回归：UI 把 dataset 全部字段塞进 inputFields，包含 ground truth 字段。原实现把它直接当成
-    // 可用变量喂给 generate LLM，LLM 看到答案字段名后做"防御性"过度反应，把所有 {{var}} 都删了
-    // → 业务模型推理时拿不到样本 → 整批塌缩到同一标签
+    // Regression: the UI was stuffing all dataset fields into inputFields, including the ground truth field. The original implementation directly
+    // fed it to the generate LLM as an available variable. Seeing the answer field name, the LLM over-reacted "defensively" and removed every {{var}}
+    // → the business model could not see the sample at inference time → the entire batch collapsed onto the same label
     const out = toLoopFieldWhitelist({ inputFields: ['text', 'expected_output'], metaFields: [] }, 'expected_output');
     expect(out.promptVariables).toEqual(['text']);
     expect(out.analysisOnlyFields).toEqual(['expected_output']);
@@ -487,7 +487,7 @@ describe('pickRandomSamples (SPEC 25 §2.1 first-version sampling)', () => {
     const items = Array.from({ length: 50 }, (_, i) => `item-${i}`);
     const picked = pickRandomSamples(items, 10, 'seed-1');
     expect(picked).toHaveLength(10);
-    // 抽到的每条都来源于原集合,且不重复
+    // Each sampled item is from the original set and is unique
     const uniq = new Set(picked);
     expect(uniq.size).toBe(10);
     for (const v of picked) {
@@ -506,7 +506,7 @@ describe('pickRandomSamples (SPEC 25 §2.1 first-version sampling)', () => {
     const items = Array.from({ length: 100 }, (_, i) => i);
     const a = pickRandomSamples(items, 20, 'seed-a');
     const b = pickRandomSamples(items, 20, 'seed-b');
-    // 极小概率两个 seed 产出完全相同序列;若 flaky 再调整
+    // With extremely small probability two seeds could produce identical sequences; adjust if flaky
     expect(a).not.toEqual(b);
   });
 });

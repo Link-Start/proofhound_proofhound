@@ -1,4 +1,4 @@
-// 优化主循环 — 详见 docs/specs/25-optimizations.md
+// Optimization main loop — see docs/specs/25-optimizations.md
 import { analyzeFailures } from '../error-pattern-analysis/analyze';
 import { generateNextVersion } from '../error-pattern-analysis/generate';
 import type { ErrorPatternAnalysisConfig } from '../error-pattern-analysis/config.schema';
@@ -26,8 +26,8 @@ function nowIso(deps: LoopDependencies): string {
   return new Date(deps.now?.() ?? Date.now()).toISOString();
 }
 
-// 从 roundHistory 末尾向前数连续 !isBest 计数 — 用于「工具箱轮换提示」触发判定
-// (SPEC 25 §11.3「工具箱轮换提示」)。空 history / 末尾轮已是 best → 返回 0。
+// Count consecutive !isBest from the end of roundHistory backwards — used by the "toolbox rotation hint" trigger
+// (SPEC 25 §11.3 "toolbox rotation hint"). Empty history / last round already best → return 0.
 export function computeNoBestStreak(history: RoundHistoryEntry[]): number {
   let streak = 0;
   for (let i = history.length - 1; i >= 0; i--) {
@@ -37,8 +37,8 @@ export function computeNoBestStreak(history: RoundHistoryEntry[]): number {
   return streak;
 }
 
-// 在 streak >= 2 时构造 hint:取末尾 2 条 entry.appliedTips 去重合集 + 工具箱常量。
-// streak < 2 / history 为空 → undefined(不渲染该段)。
+// Build the hint when streak >= 2: take the union (deduped) of entry.appliedTips from the last 2 entries + toolbox constants.
+// streak < 2 / empty history → undefined (do not render the section).
 function buildToolboxSwitchHint(
   history: RoundHistoryEntry[],
   promptLanguage?: OptimizationConfig['promptLanguage'],
@@ -113,10 +113,10 @@ export async function runIterationLoop(
   let bestRunResults: RunResultRecord[] = snapshot.lastRunResults;
   let pendingRegressionRetry: PendingRegressionRetry | null = null;
   const rounds: RoundOutcome[] = [];
-  // 跨轮历史(SPEC 25 §11.3) — 每轮 finalize 后累积一条;下一轮传给 analyze / generate
+  // Cross-round history (SPEC 25 §11.3) — accumulate one entry after each round's finalize; passed to the next round's analyze / generate
   const accumulatedHistory: RoundHistoryEntry[] = [];
 
-  // 第 0 轮：源实验作为基线；若已达标直接收尾
+  // Round 0: the source experiment is the baseline; finalize immediately if already at goal
   if (allGoalsMet(config.goals, bestMetrics)) {
     return finalize({ status: 'success', reason: 'goals_met', bestVersion, bestMetrics, rounds }, config, ports);
   }
@@ -146,7 +146,7 @@ export async function runIterationLoop(
         pendingRegressionRetry?.regressedRunResults ?? generationBaseRunResults;
       const currentMetrics: MetricSnapshot = pendingRegressionRetry?.regressedMetrics ?? generationBaseMetrics;
 
-      // ② 从 DB 拉 previousRunResults — 用于回归样本检测
+      // ② Pull previousRunResults from the DB — used for regression sample detection
       const previousRunResults =
         pendingRegressionRetry?.baseRunResults ??
         (await ports.previousRoundRunResultsReader.read({
@@ -155,11 +155,11 @@ export async function runIterationLoop(
           currentRoundNumber: roundNumber,
         }));
 
-      // 本轮 generate 的 base — 在 step ⑦ 更新 bestVersion 之前快照,用于 history 记录。
-      // 若上一轮相对其父版本退步,这里会回退到父 prompt,但 analyze 仍看退步轮版本与样本。
+      // The base for this round's generate — snapshot before step ⑦ updates bestVersion, for history recording.
+      // If the previous round regressed against its parent version, this falls back to the parent prompt, but analyze still sees the regressed-round version and samples.
       const baseVersionForThisRound = generationBaseVersion;
 
-      // ③ 错误样本分析（混淆对 + 回归 + 多次 LLM + 汇总）
+      // ③ Error-sample analysis (confusion pairs + regression + multiple LLM calls + summary)
       const analysis = await analyzeFailures(
         {
           optimizationId: config.optimizationId,
@@ -180,7 +180,7 @@ export async function runIterationLoop(
         invokeDeps,
       );
 
-      // ④ 生成新版本(连续 ≥2 轮未刷新 best 时注入「工具箱轮换提示」段 — SPEC 25 §11.3)
+      // ④ Generate new version (inject the "toolbox rotation hint" section when !isBest for ≥ 2 consecutive rounds — SPEC 25 §11.3)
       const toolboxSwitchHint = buildToolboxSwitchHint(accumulatedHistory, config.promptLanguage);
       const draft = await generateNextVersion(
         {
@@ -201,7 +201,7 @@ export async function runIterationLoop(
         invokeDeps,
       );
 
-      // ⑤ 入库新版本（outputSchema / judgmentRules 原样保留 — SPEC 23 冻结四件套）
+      // ⑤ Persist the new version (outputSchema / judgmentRules preserved as-is — SPEC 23 frozen four)
       const newVersion = await ports.promptVersionWriter.writePromptVersion({
         promptId: generationBaseVersion.promptId,
         parentVersionId: generationBaseVersion.id,
@@ -212,7 +212,7 @@ export async function runIterationLoop(
         changeSummary: draft.changeSummary,
       });
 
-      // ⑥ 跑实验
+      // ⑥ Run experiment
       const run = await ports.experimentRunner.runExperiment({
         optimizationId: config.optimizationId,
         versionId: newVersion.id,
@@ -222,7 +222,7 @@ export async function runIterationLoop(
         roundNumber,
       });
 
-      // ⑦ 更新 best
+      // ⑦ Update best
       const isBest = isBetterThan(run.metrics, bestMetrics, config.goals);
       if (isBest) {
         bestVersion = newVersion;
@@ -259,8 +259,8 @@ export async function runIterationLoop(
         optimizationId: config.optimizationId,
       });
 
-      // 累积 history(SPEC 25 §11.3) — 下一轮 analyze / generate 透传,
-      // 让 LLM 跨轮识别已被证伪方向 / 持续放大有效方向 / 切换工具箱技巧
+      // Accumulate history (SPEC 25 §11.3) — passed through to next round's analyze / generate,
+      // letting the LLM identify falsified directions / continue amplifying effective directions / switch toolbox techniques across rounds
       accumulatedHistory.push(
         buildHistoryEntryFromRound({
           roundNumber,
@@ -300,7 +300,7 @@ export async function runIterationLoop(
   return finalize({ status: 'failed', reason: 'max_rounds', bestVersion, bestMetrics, rounds }, config, ports);
 }
 
-// 从本轮 outcome 构造 RoundHistoryEntry — 下一轮 LLM 调用透传(SPEC 25 §11.3)
+// Build the RoundHistoryEntry from this round's outcome — passed to the next round's LLM calls (SPEC 25 §11.3)
 function buildHistoryEntryFromRound(input: {
   roundNumber: number;
   metrics: MetricSnapshot;

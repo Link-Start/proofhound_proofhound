@@ -1,6 +1,6 @@
 import type { LLMMessage } from './types';
 
-// 输入 / 输出 token 估算 — 限流前置 + 成本估算共用
+// Input / output token estimation — shared between pre-rate-limit and cost estimation
 export interface EstimatedTokenUsage {
   inputTokens: number;
   outputTokens: number;

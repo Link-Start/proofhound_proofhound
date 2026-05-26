@@ -1,6 +1,6 @@
-// from_dataset_only 起步模式的首版提示词生成 — 详见 docs/specs/25-optimizations.md §2.1
-// 一次性 LLM 调用，无错误证据 / 无历史轮、无变量保留约束（base 不存在），
-// 仅根据数据集采样 + goals + fieldWhitelist + description 归纳出首版 prompt。
+// First-version prompt generation for from_dataset_only start mode — see docs/specs/25-optimizations.md §2.1
+// Single LLM call, with no error evidence / no history rounds / no variable preservation constraint (base does not exist);
+// induces the first prompt purely from dataset sampling + goals + fieldWhitelist + description.
 import {
   invokeLLM,
   type InvokeLLMDependencies,
@@ -21,8 +21,8 @@ import { extractJsonObject, isTruncated, safeParseJson } from './parse';
 import { extractVariableNames } from './prompts';
 import { getSystemPrompts } from './prompts/loader';
 
-// LLM 输出无法解析 / 不符合契约时由本错误统一表达；workflow 将其映射为
-// failure reason `first_version_parse_failed_v1`（详见 SPEC 25 §2.1 失败原因码表）。
+// When the LLM output cannot be parsed / does not conform to the contract, this error expresses it uniformly; the workflow maps it to
+// the failure reason `first_version_parse_failed_v1` (see SPEC 25 §2.1 failure-reason code table).
 export class FirstVersionParseError extends Error {
   readonly rawContent: string;
   constructor(message: string, rawContent: string) {
@@ -35,7 +35,7 @@ export class FirstVersionParseError extends Error {
 export interface GenerateInitialVersionArgs {
   optimizationId: string;
   analysisModel: ModelInvocationConfig;
-  // 已经从数据集随机抽样过的样本 — caller 负责抽样规模 = initialSamplingRounds × initialSamplesPerRound
+  // Samples already randomly drawn from the dataset — the caller is responsible for sampling size = initialSamplingRounds × initialSamplesPerRound
   samples: Array<{ id: string; data: Record<string, unknown> }>;
   goals: OptimizationGoal[];
   fieldWhitelist: FieldWhitelist;
@@ -43,7 +43,7 @@ export interface GenerateInitialVersionArgs {
   optimizationHint?: string;
   promptLanguage?: PromptLanguageDto;
   strategyConfig: ErrorPatternAnalysisConfig;
-  // 提供时，invokeLLM 自动写 ph_runs.run_results 一行（source='optimization_generate', round_index=0）
+  // When provided, invokeLLM auto-writes one ph_runs.run_results row (source='optimization_generate', round_index=0)
   runResultMeta?: OptimizationRunResultMeta;
   generateRunResultId?: string;
 }
@@ -239,7 +239,7 @@ function parseInitialGenerateOutput(
     throw new FirstVersionParseError('first-version generate: newPromptBody is empty or missing', content);
   }
   const allowedSet = new Set(allowedVariables);
-  // 校验 body 内引用的占位变量都在白名单内 — base 没有"已用占位"概念，故无需 removed 校验
+  // Validate that placeholder variables referenced in the body are all within the whitelist — base has no "already used" concept, so no removed check is needed
   const usedInBody = extractVariableNames(body);
   const disallowed = usedInBody.filter((v) => !allowedSet.has(v));
   if (disallowed.length > 0) {
@@ -248,7 +248,7 @@ function parseInitialGenerateOutput(
       content,
     );
   }
-  // 当白名单非空，强制 newPromptBody 至少使用一个占位（否则业务模型在运行时看不到样本）
+  // When the whitelist is non-empty, force newPromptBody to use at least one placeholder (otherwise the business model cannot see samples at runtime)
   if (allowedVariables.length > 0 && usedInBody.length === 0) {
     throw new FirstVersionParseError(
       'first-version generate: prompt must use at least one promptVariable placeholder',
@@ -317,7 +317,7 @@ export async function generateInitialVersion(
         promptLanguage,
       },
       runResult: runResultCtx,
-      // 解析失败 → 让 invokeLLM 拿到 null parsed，仍写 run_result(success)，但本函数下面会重抛
+      // Parse failure → let invokeLLM get null parsed and still write run_result(success); the function below will rethrow
       parseResponse: (content) => {
         try {
           return parseInitialGenerateOutput(content, null, args.fieldWhitelist.promptVariables);
@@ -329,6 +329,6 @@ export async function generateInitialVersion(
     deps,
   );
 
-  // 重新解析（上面 parseResponse 中已吞掉异常，这里再调一次以拿到具体错误并抛出）
+  // Re-parse (parseResponse above swallowed the exception; call again here to get the concrete error and throw)
   return parseInitialGenerateOutput(result.content, result.finishReason, args.fieldWhitelist.promptVariables);
 }

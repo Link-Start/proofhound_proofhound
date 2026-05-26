@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 // ============================================================================
-// 枚举
-// 详见 docs/specs/27-releases.md 与 docs/specs/06-database-schema.md §6.2
+// Enums
+// See docs/specs/27-releases.md and docs/specs/06-database-schema.md §6.2
 // ============================================================================
 
 export const canaryReleaseStatusSchema = z.enum(['pending', 'running', 'stopped', 'completed', 'failed', 'cancelled']);
@@ -21,7 +21,7 @@ export const canaryReleaseControlStateSchema = z.enum(['stop', 'resume', 'cancel
 export type CanaryReleaseControlStateDto = z.infer<typeof canaryReleaseControlStateSchema>;
 
 // ============================================================================
-// 过滤规则递归 Zod（AND / OR / NOT 任意嵌套；最大深度 5 层）
+// Filter rules recursive Zod (AND / OR / NOT arbitrary nesting; max depth 5)
 // ============================================================================
 
 export const canaryReleaseFilterOpSchema = z.enum([
@@ -90,7 +90,7 @@ export const canaryReleaseFilterRulesSchema = canaryReleaseFilterNodeSchema.null
 });
 
 // ============================================================================
-// 子结构
+// Sub-structures
 // ============================================================================
 
 export const canaryReleaseVariableMappingItemSchema = z.object({
@@ -163,7 +163,7 @@ export const canaryReleaseAnnotationSchemaSchema = z.array(canaryReleaseAnnotati
 export type CanaryReleaseAnnotationSchemaDto = z.infer<typeof canaryReleaseAnnotationSchemaSchema>;
 
 // ============================================================================
-// 主 DTO
+// Main DTO
 // ============================================================================
 
 export const canaryReleaseSchema = z.object({
@@ -203,7 +203,7 @@ export const canaryReleaseSchema = z.object({
   createdBy: z.string().uuid(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
-  // join 字段
+  // Join fields
   promptId: z.string().uuid().nullable(),
   promptName: z.string().nullable(),
   promptVersionLabel: z.string().nullable(),
@@ -238,7 +238,7 @@ export const canaryReleaseListItemSchema = canaryReleaseSchema.extend({
 export type CanaryReleaseListItemDto = z.infer<typeof canaryReleaseListItemSchema>;
 
 // ============================================================================
-// 创建 / 操作 input
+// Create / operation inputs
 // ============================================================================
 
 export const createCanaryReleaseInputSchema = z.object({
@@ -282,7 +282,7 @@ export const updateCanaryTrafficRatioInputSchema = z.object({
 export type UpdateCanaryTrafficRatioInputDto = z.infer<typeof updateCanaryTrafficRatioInputSchema>;
 
 // ============================================================================
-// 标注
+// Annotation
 // ============================================================================
 
 export const canaryAnnotationStatusSchema = z.enum(['pending', 'claimed', 'submitted']);
@@ -335,7 +335,7 @@ export const releaseCanaryAnnotationInputSchema = z.object({
 export type ReleaseCanaryAnnotationInputDto = z.infer<typeof releaseCanaryAnnotationInputSchema>;
 
 // ============================================================================
-// 常量
+// Constants
 // ============================================================================
 
 export const CANARY_RELEASE_STATUSES = canaryReleaseStatusSchema.options;

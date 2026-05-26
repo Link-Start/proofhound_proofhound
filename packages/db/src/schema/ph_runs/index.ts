@@ -1,5 +1,5 @@
-// ph_runs — 实验 / 优化 / 运行结果 / 标注
-// 详见 docs/specs/06-database-schema.md §5
+// ph_runs — experiments / optimizations / run results / annotations
+// See docs/specs/06-database-schema.md §5
 
 import { sql } from 'drizzle-orm';
 import {

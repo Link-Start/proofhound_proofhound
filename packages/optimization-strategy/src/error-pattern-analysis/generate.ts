@@ -1,4 +1,4 @@
-// 新版本生成 — 9 大块 system prompt + 变量白名单校验 + token budget
+// New-version generation — 9-block system prompt + variable whitelist validation + token budget
 import {
   invokeLLM,
   type InvokeLLMDependencies,
@@ -41,14 +41,14 @@ export interface GenerateNextVersionArgs {
   optimizationHint?: string;
   strategyConfig: ErrorPatternAnalysisConfig;
   promptLanguage?: PromptLanguageDto;
-  // 跨轮历史(SPEC 25 §11.3)：非首轮时由 caller 聚合传入；首轮 undefined / [] 不渲染历史段
+  // Cross-round history (SPEC 25 §11.3): for non-first rounds, the caller aggregates and passes it in; first round undefined / [] does not render the history section
   roundHistory?: RoundHistoryEntry[];
-  // 「## 工具箱轮换提示」段输入(SPEC 25 §11.3「工具箱轮换提示」)
-  // caller 在 streak >= 2(连续 ≥2 轮 !isBest) 时构造;undefined 时不渲染。
-  // 透传给 probe + actual 两次 buildGenerateMessages,保证 token budget 估算与实际 user prompt 一致。
+  // Input to the toolbox-rotation-hint section (SPEC 25 §11.3 "toolbox rotation hint")
+  // The caller constructs it when streak >= 2 (!isBest for ≥ 2 consecutive rounds); when undefined, the section is not rendered.
+  // Passed through both probe + actual buildGenerateMessages, so token-budget estimation stays consistent with the actual user prompt.
   toolboxSwitchHint?: { recentlyUsedTips: string[]; allTipNames: readonly string[] };
-  // 提供时,invokeLLM 自动写 ph_runs.run_results 一行(source='optimization_generate')。
-  // 不传则维持旧行为(只打日志,不写表)。
+  // When provided, invokeLLM auto-writes one ph_runs.run_results row (source='optimization_generate').
+  // When not provided, behavior is preserved (only logs, does not write the table).
   runResultMeta?: OptimizationRunResultMeta;
   generateRunResultId?: string;
 }
@@ -61,7 +61,7 @@ export interface GenerateBudgetReport {
   evidenceBundleBudgetTokens: number;
   evidenceBundleTruncated: boolean;
   originalEvidenceBundleTokens: number;
-  // 跨轮历史 budget 观测字段(SPEC 25 §11.3)
+  // Cross-round history budget observation fields (SPEC 25 §11.3)
   roundHistoryEntryCount: number;
   roundHistoryFittedLevel: 0 | 1 | 2 | 3;
   roundHistoryBudgetTokens: number;
@@ -76,27 +76,27 @@ export interface GenerateNextVersionResult extends GenerateOutput {
     detected: string[];
   };
   budget: GenerateBudgetReport;
-  // 真正用于本轮新版本的 outputSchema:LLM 提供且校验通过则用新的,否则回退旧 schema。
-  // 也是 outputFormatInstruction / composedFullPrompt 的拼接依据。
+  // outputSchema actually used for this round's new version: when the LLM provides one and validation passes, use the new one; otherwise fall back to the old schema.
+  // Also serves as the basis for assembling outputFormatInstruction / composedFullPrompt.
   effectiveOutputSchema: unknown;
-  // 从 effectiveOutputSchema 自动拼出的「## 输出格式」段（无 schema 时为空串）。
-  // newPromptBody 故意不含输出格式 — 业务 LLM 调用时再把本段拼到 body 尾部，保证输出契约稳定。
+  // The output-format section auto-assembled from effectiveOutputSchema (empty string when no schema).
+  // newPromptBody intentionally does not contain the output format — when the business LLM is invoked, this section is concatenated to the body tail to keep the output contract stable.
   outputFormatInstruction: string;
-  // newPromptBody + outputFormatInstruction 的拼接结果 — 真正发给业务模型的完整 prompt。
+  // Concatenation of newPromptBody + outputFormatInstruction — the full prompt actually sent to the business model.
   composedFullPrompt: string;
-  // LLM 实际发起的 generate 调用次数 - 1：0 = 首次成功；>=1 = 重试若干次（可能伴随 autoPatched=true）
+  // Number of generate calls actually invoked minus 1: 0 = first-call success; >=1 = retried N times (possibly with autoPatched=true)
   retries: number;
-  // 是否走了系统兜底补丁(重试到上限仍丢占位 → 系统在 newPromptBody 末尾自动拼回缺失占位)
+  // Whether the system patch fallback was triggered (after retries exhausted and placeholders still missing → the system auto-appends the missing placeholders at the end of newPromptBody)
   autoPatched: boolean;
-  // 被系统补回的占位名（autoPatched=false 时为 []）
+  // Names of placeholders patched by the system (empty array when autoPatched=false)
   patchedVariables: string[];
 }
 
-// LLM 重试上限 — 总共最多 1 次首调 + N 次重试；retry 用尽仍丢占位 → 走系统自动补丁
+// LLM retry cap — at most 1 first call + N retries; when retries are exhausted and placeholders are still missing → fall back to the system auto-patch
 const MAX_VARIABLE_RETRY_ATTEMPTS = 2;
 
-// 拼接系统补丁段：在新 body 末尾追加结构化提示，保证缺失占位以 ASCII {{var}} 形式回到 body 中。
-// 该段用空行 + --- 分隔，UI 可截取尾段提示用户人工微调占位融入位置。
+// Append the system patch section: at the end of the new body, structured hint, ensuring missing placeholders are restored in ASCII {{var}} form.
+// This section is separated by blank lines + ---; the UI can clip the tail to prompt the user to manually tweak placeholder embedding.
 function autoPatchPromptBody(
   body: string,
   missingVariables: string[],
@@ -109,7 +109,7 @@ function autoPatchPromptBody(
   return `${body}\n\n---\n（系统自动补丁：以下输入变量被系统补回，请人工核查并调整使用位置）\n${lines}`;
 }
 
-// 构造 retry 时反馈给 LLM 的 user 消息：明确告知它上一轮丢了哪些占位 + 必须以 ASCII 双花括号语法回填
+// Build the user message that feeds back to the LLM on retry: explicitly tell it which placeholders were missed last round + that ASCII double-curly syntax must be used to restore them
 function buildVariableRetryFeedback(
   removedVariables: string[],
   language: PromptLanguageDto = DEFAULT_PROMPT_LANGUAGE,
@@ -146,13 +146,13 @@ export async function generateNextVersion(
   const promptLanguage = args.promptLanguage ?? DEFAULT_PROMPT_LANGUAGE;
   const evidenceBundle = args.analysis.evidenceBundle ?? legacyEvidenceBundle(args.analysis);
 
-  // 0) 跨轮历史 token budget 降级 — 给 probe + actual call 共用同一份 fitted history
-  // history 最多占用 batch input budget 的 40%,其余留给错误样本 / evidence
+  // 0) Cross-round history token-budget degradation — shared fitted history across probe + actual call
+  // History takes at most 40% of the batch input budget; the rest goes to error samples / evidence
   const historyCap = Math.floor(args.strategyConfig.maxInputTokensPerBatch * 0.4);
   const fittedHistoryResult = fitRoundHistoryToBudget(args.roundHistory, historyCap, args.goals, promptLanguage);
   const fittedHistory = fittedHistoryResult.fitted;
 
-  // 1) 探针：把证据包清空构造一次 message 估 baseline（含已 fit 的跨轮历史 + 工具箱轮换提示）
+  // 1) Probe: clear the evidence package and construct one message to estimate the baseline (including the fitted cross-round history + toolbox rotation hint)
   const probe = buildGenerateMessages({
     currentVersion: args.currentVersion,
     errorAnalysisText: '',
@@ -183,7 +183,7 @@ export async function generateNextVersion(
     baseline.inputTokens,
   );
 
-  // 2) 结构化证据包按权重裁剪；旧摘要文本仍作为 fallback 一并保留
+  // 2) The structured evidence package is trimmed by weight; the legacy summary text is also retained as fallback
   const fittedEvidence = fitEvidenceBundleToBudget(evidenceBundle, errorAnalysisBudgetTokens);
 
   const maxErrorAnalysisChars = errorAnalysisBudgetTokens * 4;
@@ -191,7 +191,7 @@ export async function generateNextVersion(
   const fittedText = truncateLongText(originalText, maxErrorAnalysisChars);
   const errorAnalysisTruncated = fittedText !== originalText;
 
-  // 3) 用 fitted 证据包构造最终 messages
+  // 3) Construct the final messages using the fitted evidence package
   const { system, user } = buildGenerateMessages({
     currentVersion: args.currentVersion,
     errorAnalysisText: fittedText,
@@ -205,13 +205,13 @@ export async function generateNextVersion(
     promptLanguage,
   });
 
-  // base body 已经用过 ∩ 白名单内 = 新版本必须保留的占位
-  // （丢失会让模型推理不到 input，输出立即塌缩到先验，见 docs/specs/25 §11 优化摆动）
+  // base body's already-used ∩ whitelist = placeholders that the new version must retain
+  // (losing them prevents the model from inferring the input; the output immediately collapses to the prior, see docs/specs/25 §11 optimization oscillation)
   const allowedSet = new Set(args.fieldWhitelist.promptVariables);
   const requiredVariables = extractVariableNames(args.currentVersion.body).filter((v) => allowedSet.has(v));
 
-  // 循环结构 — 一次首调 + 最多 N 次重试 + 兜底自动补丁。中间次不写 ph_runs.run_results；
-  // 循环外用最终采纳那次的 InvokeLLMResult + parsed 手动写一行（含 autoPatched/patchedVariables）。
+  // Loop structure — one first call + at most N retries + system patch fallback. Intermediate calls do not write to ph_runs.run_results;
+  // outside the loop, manually write one row from the finally-adopted InvokeLLMResult + parsed (including autoPatched/patchedVariables).
   let messages: LLMMessage[] = [
     { role: 'system', content: system },
     { role: 'user', content: user },
@@ -239,7 +239,7 @@ export async function generateNextVersion(
           promptVersionId: args.currentVersion.id,
           promptLanguage,
         },
-        // 中间次不写 run_result — 循环外手动写最终采纳那次（含 autoPatched / patchedVariables）
+        // Intermediate calls do not write run_result — write the finally-adopted one manually outside the loop (including autoPatched / patchedVariables)
         parseResponse: (content) => {
           try {
             return parseGenerateOutput(content, null);
@@ -261,7 +261,7 @@ export async function generateNextVersion(
       requiredVariables,
     );
 
-    // disallowed 不可挽救（LLM 用了白名单外变量 → 业务方字段配置错误，重试也救不了） → 立即 fatal
+    // disallowed is unrecoverable (LLM used a variable outside the whitelist → business-side field config error; retries cannot save it) → fatal immediately
     if (attemptValidation.disallowed.length > 0) {
       throw new InvalidVariableUsageError(
         attemptValidation.disallowed,
@@ -270,7 +270,7 @@ export async function generateNextVersion(
       );
     }
 
-    // 校验通过 → 收工
+    // Validation passes → done
     if (attemptValidation.ok) {
       parsed = attemptParsed;
       validation = attemptValidation;
@@ -278,7 +278,7 @@ export async function generateNextVersion(
       break;
     }
 
-    // 仅 removed 错误：还有重试机会就反馈给 LLM，否则走兜底自动补丁
+    // Only removed errors: if retries remain, feed back to the LLM; otherwise fall back to the system auto-patch
     if (attempt === MAX_VARIABLE_RETRY_ATTEMPTS) {
       const removedToPatch = [...attemptValidation.removed];
       const patchedBody = autoPatchPromptBody(attemptParsed.newPromptBody, removedToPatch, promptLanguage);
@@ -289,7 +289,7 @@ export async function generateNextVersion(
         requiredVariables,
       );
       if (!reValidation.ok) {
-        // 兜底句直接拼了 {{var}} 字面量，理论不可达；保险起见仍抛错
+        // The fallback sentence already concatenates the literal {{var}}; theoretically unreachable, but throw to be safe
         throw new InvalidVariableUsageError(reValidation.disallowed, reValidation.missing, reValidation.removed);
       }
       parsed = { ...attemptParsed, newPromptBody: patchedBody };
@@ -311,7 +311,7 @@ export async function generateNextVersion(
       break;
     }
 
-    // 反馈失败原因，准备下一轮
+    // Feed back the failure reason and prepare for the next iteration
     const removedSnapshot = [...attemptValidation.removed];
     deps.logger.info(
       {
@@ -331,12 +331,12 @@ export async function generateNextVersion(
   }
 
   if (!parsed || !validation || !finalInvokeResult) {
-    // unreachable — 循环必走 break 或 throw
+    // unreachable — the loop must hit break or throw
     throw new Error('generate_loop_invariant_violated');
   }
 
-  // 手动写 run_result（合并 autoPatched / patchedVariables / retries 到 parsedOutput，
-  // 供详情页 service 端读取并填入 round DTO）
+  // Manually write run_result (merge autoPatched / patchedVariables / retries into parsedOutput,
+  // for the detail-page service to read and populate into the round DTO)
   const runResultCtx = buildRunResultForCall({
     meta: args.runResultMeta,
     runResultId: args.generateRunResultId,
@@ -371,8 +371,8 @@ export async function generateNextVersion(
     });
   }
 
-  // 校验 LLM 输出的 newOutputSchema:仅在通过白名单约束(加字段/保 type)时才采纳;
-  // 校验失败 → warn 并降级为沿用旧 schema(不抛错,避免阻塞 round)。
+  // Validate the LLM-output newOutputSchema: only adopt when it passes whitelist constraints (adds fields / keeps type);
+  // validation failure → warn and degrade to inheriting the old schema (do not throw, to avoid blocking the round).
   let effectiveOutputSchema: unknown = args.currentVersion.outputSchema;
   if (parsed.newOutputSchema !== undefined) {
     const schemaCheck = safeValidateNewOutputSchema(parsed.newOutputSchema, args.currentVersion.outputSchema);
@@ -395,8 +395,8 @@ export async function generateNextVersion(
     }
   }
 
-  // 桥接成标准 JSON Schema 后再生成「## 输出格式」段；与 experiment.renderer 真实下发拼装路径一致。
-  // 落库的 effectiveOutputSchema 保留原形态（DTO 或 LLM 直出的 JSON Schema），交由 workflow 写入新版本。
+  // Bridge to a standard JSON Schema before generating the output-format section; consistent with the experiment.renderer real-dispatch assembly path.
+  // The persisted effectiveOutputSchema retains the original shape (DTO or LLM-direct JSON Schema); the workflow writes it into the new version.
   const effectiveJsonSchema = outputSchemaToJsonSchema(effectiveOutputSchema);
   const outputFormatInstruction = buildOutputFormatInstruction(effectiveJsonSchema, { language: promptLanguage });
   const composedFullPrompt = composeFullPrompt(parsed.newPromptBody, effectiveJsonSchema, { language: promptLanguage });

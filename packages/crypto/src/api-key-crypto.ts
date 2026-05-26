@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 // AES-256-GCM payload layout: 12B IV ‖ 16B auth tag ‖ ciphertext, base64-encoded.
-// server / worker / seed-dev 共用同一份实现，唯一事实标准。
-// Key 轮换暂未实现；若以后要轮换，需要写一次性 re-encrypt migration。
+// server / worker / seed-dev share the same implementation — the single source of truth.
+// Key rotation is not yet implemented; if rotation is required later, write a one-shot re-encrypt migration.
 
 const IV_BYTES = 12;
 const TAG_BYTES = 16;

@@ -2,10 +2,10 @@ import { sql } from 'drizzle-orm';
 import type { DbClient } from '@proofhound/db';
 import type { LLMRunResultRecord, LLMRunResultWriter } from '@proofhound/llm-client';
 
-// ph_runs.run_results 是按 created_at 月分区表,无法对单列 id 加 UNIQUE 约束;
-// 改用 INSERT ... SELECT ... WHERE NOT EXISTS 做幂等,确保:
-//  1. worker stalled retry 不会写重复行
-//  2. consumer 在 OnWorkerEvent('failed') 写最终 error 行时,即使 success 行已经先落地也不会被覆盖
+// ph_runs.run_results is a monthly-partitioned table by created_at; a UNIQUE constraint cannot be applied to a single id column;
+// use INSERT ... SELECT ... WHERE NOT EXISTS instead for idempotency, ensuring:
+//  1. worker stalled retries do not write duplicate rows
+//  2. when the consumer writes the final error row in OnWorkerEvent('failed'), an already-landed success row is not overwritten
 export class DrizzleRunResultWriter implements LLMRunResultWriter {
   constructor(private readonly db: DbClient) {}
 

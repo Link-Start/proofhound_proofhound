@@ -1,5 +1,5 @@
-// 离线实验指标策略出口
-// 详见 docs/specs/07-code-structure.md §12 + docs/specs/24-experiments.md
+// Offline experiment metrics strategy exports
+// See docs/specs/07-code-structure.md §12 + docs/specs/24-experiments.md
 import './classification';
 import { computeClassificationMetrics } from './classification';
 import type { ClassificationAggregateRow, ClassificationMetrics, ProjectType } from './types';

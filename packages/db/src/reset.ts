@@ -1,14 +1,14 @@
 /**
- * 本地 reset：DROP 当前数据库中的所有用户 schema。
+ * Local reset: DROP all user schemas in the current database.
  *
- * **仅本地与 staging——生产严禁。**
+ * **Local and staging only — strictly forbidden in production.**
  *
- * 调用链：`pnpm db:reset` = `tsx src/reset.ts && pnpm migrate && pnpm seed`
- *   - 本脚本只负责清库；结构重建与 seed 由后续命令完成
+ * Call chain: `pnpm db:reset` = `tsx src/reset.ts && pnpm migrate && pnpm seed`
+ *   - This script only clears the database; structure rebuild and seed are done by the subsequent commands
  *
- * 保护机制：
- *   - 默认要求 DATABASE_URL 指向 localhost / 127.0.0.1 / ::1
- *   - 远端数据库（staging 等）必须显式设置 ALLOW_DB_RESET=1
+ * Safeguards:
+ *   - By default, DATABASE_URL must point to localhost / 127.0.0.1 / ::1
+ *   - Remote databases (staging, etc.) must explicitly set ALLOW_DB_RESET=1
  */
 import { resolve } from 'node:path';
 import { sql } from 'drizzle-orm';

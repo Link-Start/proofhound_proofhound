@@ -59,10 +59,10 @@ export type {
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 
-// 统一 invokeLLM 入口
-// 顺序：图片预处理 -> limiter.acquire -> provider.invoke -> 应用日志 -> [success: run_results] -> limiter.release
-// 失败时只打日志、不写 run_results;BullMQ retry 用尽后由 consumer 在 OnWorkerEvent('failed') 写最终 error 行,
-// 避免「第一次失败的 error 行被 INSERT...WHERE NOT EXISTS 卡住,后续 retry 成功的结果无法落库」。
+// Unified invokeLLM entrypoint
+// Order: image pre-processing -> limiter.acquire -> provider.invoke -> application log -> [success: run_results] -> limiter.release
+// On failure, only log; do NOT write run_results; after BullMQ retries are exhausted, the consumer writes the final error row in OnWorkerEvent('failed'),
+// avoiding "the first failed error row blocks INSERT...WHERE NOT EXISTS so subsequent retry success cannot be persisted".
 export async function invokeLLM(args: InvokeLLMArgs, deps: InvokeLLMDependencies): Promise<InvokeLLMResult> {
   assertInvocationShape(args);
 
@@ -172,7 +172,7 @@ export async function invokeLLM(args: InvokeLLMArgs, deps: InvokeLLMDependencies
       durationMs,
     };
   } catch (error) {
-    // 限流是"暂时性"信号，不算业务失败：不写 run_result（避免污染指标），交由调用方（worker）按 retryAfterMs 推迟重投
+    // Rate-limit is a "transient" signal, not a business failure: do not write run_result (to avoid polluting metrics); let the caller (worker) defer requeue by retryAfterMs
     if (error instanceof RateLimitExceededError) {
       throw error;
     }
@@ -182,7 +182,7 @@ export async function invokeLLM(args: InvokeLLMArgs, deps: InvokeLLMDependencies
 
     logLLMFailure(deps.logger, invocationArgs, normalized, durationMs);
 
-    // 故意不写 run_result：单条 job 在 BullMQ 重试期间可能成功,只在 attempts 用尽后由 consumer 写最终 error 行
+    // Intentionally do not write run_result: a single job may still succeed during BullMQ retries; only after attempts are exhausted does the consumer write the final error row
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -786,9 +786,9 @@ interface RetryControl {
   providerModelId: string;
 }
 
-// LLM 调用内部重试层：只对可重试 HTTP 状态 + 网络错误重试，指数回避 + jitter。
-// 复用同一次 limiter.acquire 配额（外层 try 内只 acquire/release 一次）。
-// RateLimitExceededError / 4xx 业务错误 / AbortError 一律透传，不被吞。
+// LLM call internal retry layer: retries only on retryable HTTP statuses + network errors, with exponential backoff + jitter.
+// Reuses the same limiter.acquire quota (only one acquire/release inside the outer try).
+// RateLimitExceededError / 4xx business errors / AbortError are all passed through, not swallowed.
 async function invokeProviderWithRetry(
   provider: LLMAdapter,
   args: Parameters<LLMAdapter['invoke']>[0],

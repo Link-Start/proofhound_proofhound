@@ -189,7 +189,7 @@ describe('ConnectorService', () => {
         }),
       }),
     );
-    // 非 webhook connector 不应触发 webhook token 自动生成
+    // Non-webhook connectors must not trigger automatic webhook token generation
     expect(repo.insertWebhookToken).not.toHaveBeenCalled();
   });
 
@@ -525,7 +525,7 @@ describe('ConnectorService', () => {
 
     await service.update(WORKSPACE_ID, WEBHOOK_CONNECTOR_ID, { tokenId: TOKEN_ID }, ACTOR);
 
-    // patch 不应包含任何 webhookTokenId（已删列），update 仍然走通
+    // patch must not contain any webhookTokenId (column has been dropped); update should still succeed
     expect(repo.update).toHaveBeenCalledWith(WORKSPACE_ID, WEBHOOK_CONNECTOR_ID, expect.objectContaining({}));
   });
 });

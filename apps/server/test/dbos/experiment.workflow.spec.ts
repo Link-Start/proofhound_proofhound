@@ -1,8 +1,8 @@
-// ExperimentWorkflow 集成测试 —— 验证 runImpl 的全部状态出口
+// ExperimentWorkflow integration tests — verify all status exits of runImpl
 // (SPEC 03 §3.1 + 24-experiments.md)
 //
-// 测试范围:只测 DBOS workflow 状态机本身,不走 Controller / Service / Auth。
-// BullmqService 被 mock,run_result 由 mock 直接写,不连 Redis / worker。
+// Test scope: only the DBOS workflow state machine itself; do not go through Controller / Service / Auth.
+// BullmqService is mocked; run_result is written directly by the mock; no Redis / worker is connected.
 
 import { randomUUID } from 'node:crypto';
 import { schema } from '@proofhound/db';
@@ -130,7 +130,7 @@ describeDbosIntegration('ExperimentWorkflow integration', (getCtx) => {
     const seeded = await seedExperiment(ctx.db, ctx.testUserId, { sampleCount: 3 });
     ctx.trackExperiment(seeded);
 
-    // 在 workflow 启动前直接置 control_state(模拟提交后立刻取消)
+    // Set control_state before the workflow starts (simulating "cancel right after submit")
     await ctx.db
       .update(experiments)
       .set({ controlState: 'cancel' })
@@ -187,7 +187,7 @@ describeDbosIntegration('ExperimentWorkflow integration', (getCtx) => {
     const seeded = await seedExperiment(ctx.db, ctx.testUserId, { sampleCount: 2 });
     ctx.trackExperiment(seeded);
 
-    // 模拟"上次 stopped 后用户重提" 的状态:status=stopped + control_state=resume
+    // Simulate the "user resubmits after a previous stopped" state: status=stopped + control_state=resume
     await ctx.db
       .update(experiments)
       .set({ status: 'stopped', controlState: 'resume' })
@@ -213,13 +213,13 @@ describeDbosIntegration('ExperimentWorkflow integration', (getCtx) => {
 
   it('stopped: 第一 batch enqueue 后置 stop → batch 边界感知 → status=stopped, 不再 enqueue 第二 batch', async () => {
     const ctx = getCtx();
-    // batchSize=1 + sampleCount=3:第一 batch enqueue 1 个 sample,mock 立刻把 run_result 写成功,
-    // poll 满足后进入下一轮 batch 入口前 readControlState 应捕获到 stop。
+    // batchSize=1 + sampleCount=3: the first batch enqueues 1 sample; the mock writes the run_result as success immediately,
+    // after the poll is satisfied, readControlState at the entry of the next batch should observe stop.
     const seeded = await seedExperiment(ctx.db, ctx.testUserId, { sampleCount: 3, batchSize: 1 });
     ctx.trackExperiment(seeded);
     ctx.bullmq.setBehavior('all_success');
 
-    // 拦截第一次 enqueue 后立即写 control_state=stop
+    // After intercepting the first enqueue, immediately write control_state=stop
     const originalEnqueue = ctx.bullmq.enqueueLlmJob.bind(ctx.bullmq);
     let stopWritten = false;
     ctx.bullmq.enqueueLlmJob = async (payload, runResultId) => {
@@ -242,14 +242,14 @@ describeDbosIntegration('ExperimentWorkflow integration', (getCtx) => {
       .where(eq(experiments.id, seeded.experimentId))
       .limit(1);
     expect(rows[0]!.status).toBe('stopped');
-    expect(ctx.bullmq.getCalls()).toHaveLength(1); // 第一 batch 已发,第二/第三 batch 应被拦下
+    expect(ctx.bullmq.getCalls()).toHaveLength(1); // First batch is dispatched; the second / third batches should be intercepted
   });
 
   it('failed: experiment 不存在 → loadPlan 抛错 → workflow 静默返回不抛', async () => {
     const ctx = getCtx();
 
     const nonExistentId = randomUUID();
-    // 不应抛错;workflow 内部 catch 后调 finalize('failed'),finalize UPDATE 命中 0 行也不报错
+    // Must not throw; after the workflow's internal catch calls finalize('failed'), finalize UPDATE hitting 0 rows must not error either
     await expect(ctx.registrar.runWorkflow(nonExistentId)).resolves.toBeUndefined();
     expect(ctx.bullmq.getCalls()).toHaveLength(0);
   });

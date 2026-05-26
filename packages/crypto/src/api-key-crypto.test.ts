@@ -38,7 +38,7 @@ describe('api-key-crypto', () => {
     const key = freshKey();
     const cipher = encryptApiKey('sk-real', key);
     const buf = Buffer.from(cipher, 'base64');
-    // 翻转 tag 区段中的一个 bit
+    // Flip a single bit in the tag region
     buf[15] = buf[15]! ^ 0x01;
     const tampered = buf.toString('base64');
     expect(() => decryptApiKey(tampered, key)).toThrowError(InvalidApiKeyPayloadError);

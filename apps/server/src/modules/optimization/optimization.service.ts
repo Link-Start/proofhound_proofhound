@@ -57,8 +57,8 @@ import {
   type OptimizationRow,
 } from './optimization.repository';
 
-// 详情页聚合 helper 内部使用的 logger;独立 binding 便于在生产关闭 debug 后零成本,
-// 与 class 内 this.logger 同源(都是 pino instance)。
+// Logger used internally by the detail-page aggregation helper; a separate binding makes it zero-cost in production after debug is disabled,
+// from the same source as this.logger in the class (both are pino instances).
 const detailHelperLogger = createLogger('optimization.service.detail', { service: 'server' });
 
 type AuditSource = 'api' | 'mcp' | 'system';
@@ -103,9 +103,9 @@ export class OptimizationService {
     await this.getAccessibleProject(projectId, actor);
 
     const allRows = await this.repo.listOptimizations(projectId);
-    // 按需为每个 optimization 加载 round experiments + round_steps:
-    // - experiments 填充 trend（LiveCard sparkline）
-    // - round_steps 让列表在分析/生成/子实验刚启动时也能显示最新轮次与更新时间
+    // On demand, load round experiments + round_steps per optimization:
+    // - experiments populate trend (LiveCard sparkline)
+    // - round_steps allow the list to show the latest round and update time even during analysis/generation/child-experiment startup
     const allItems: OptimizationListItemDto[] = [];
     for (const row of allRows) {
       const [rounds, roundSteps] = await Promise.all([
@@ -141,24 +141,24 @@ export class OptimizationService {
     if (!row) {
       throw new NotFoundException(`Optimization ${optimizationId} not found`);
     }
-    // 并发拉:experiments + LLM run_results + round_steps,三者合并喂 toDetail。
+    // Fetch concurrently: experiments + LLM run_results + round_steps, then merge and feed into toDetail.
     const [rounds, llmRows, roundSteps] = await Promise.all([
       this.repo.listRoundExperimentsForOptimization(optimizationId),
       this.repo.listOptimizationLlmRunResults(optimizationId),
       this.repo.listRoundStepsForOptimization(optimizationId),
     ]);
-    // running round 在 batch 聚合 step 之间补一层 live aggregate(对齐 ExperimentService.withLiveMetrics),
-    // 让详情页 5 秒一刷的进度条 / 质量指标能跟着 run_results 实时推进,而不是卡在上次 batch 写回的快照。
+    // For running rounds, add a layer of live aggregate between batch aggregation steps (mirroring ExperimentService.withLiveMetrics),
+    // so that the detail page's 5-second refresh of the progress bar / quality metrics advances with run_results in real time, rather than being stuck on the last batch-written snapshot.
     const liveRounds = await this.withLiveRoundMetrics(rounds);
     const versionIds = collectPromptVersionIds(row, liveRounds, llmRows);
     const promptBodyMap = await this.repo.loadPromptVersionsByIds(versionIds);
     return this.toDetail(row, { rounds: liveRounds, llmRows, roundSteps, promptBodyMap });
   }
 
-  // 与 ExperimentService.withLiveMetrics 同构:仅对 running round 触发,从 ph_runs.run_results 实时聚合
-  // 覆盖 processedSamples / failedSamples / metrics,让 deriveTrendSeries / deriveRoundDetails /
-  // buildExperimentResult / goalChips 一并跟着动。聚合空(run_results 还无 terminal row)→ 保留快照,
-  // 避免把进度回退成 0/null。终态 round 不动,继续读快照,避免每次 GET 都 GROUP BY。
+  // Isomorphic to ExperimentService.withLiveMetrics: only triggered for running rounds; aggregates from ph_runs.run_results in real time
+  // to override processedSamples / failedSamples / metrics, so deriveTrendSeries / deriveRoundDetails /
+  // buildExperimentResult / goalChips all move along. Empty aggregate (no terminal row yet in run_results) → keep the snapshot,
+  // to avoid regressing progress to 0/null. Terminal rounds are untouched and continue to read the snapshot, to avoid a GROUP BY on every GET.
   private async withLiveRoundMetrics(
     rounds: OptimizationRoundExperimentRow[],
   ): Promise<OptimizationRoundExperimentRow[]> {
@@ -171,7 +171,7 @@ export class OptimizationService {
           this.runResults.aggregateExperimentLatency(round.experimentId),
         ]);
         const live = aggregateExperimentMetrics(aggRows, latency);
-        // 聚合空(run_results 还无 terminal row)→ 保留 experiments 快照,避免把进度回退到 0/null
+        // Empty aggregate (no terminal row yet in run_results) → keep the experiments snapshot to avoid regressing progress to 0/null
         if (live.totalCount === 0) return round;
         return {
           ...round,
@@ -212,8 +212,8 @@ export class OptimizationService {
       resolvedPromptId ??= sourceExperiment.promptId;
     }
 
-    // SPEC 25 §2:from_prompt_version 起点的基线版本由系统自动选取
-    //   优先 prompts.current_online_version_id;无则取该 prompt 最新版本号的版本。
+    // SPEC 25 §2: the baseline version for the from_prompt_version start is auto-selected by the system
+    //   Prefer prompts.current_online_version_id; otherwise take the latest version number of this prompt.
     if (body.startingMode === 'from_prompt_version' && resolvedPromptId && !resolvedBaseVersionId) {
       resolvedBaseVersionId = await this.repo.findActiveVersionIdForPrompt(resolvedPromptId);
       if (!resolvedBaseVersionId) {
@@ -221,8 +221,8 @@ export class OptimizationService {
       }
     }
 
-    // SPEC 25 §2.1:from_dataset_only 起点自动创建一个空 prompt 作为承载实体,
-    // baseVersionId 保持 null 等 workflow.generateFirstVersionStep 回填。
+    // SPEC 25 §2.1: for from_dataset_only start, auto-create an empty prompt as the carrier entity;
+    // baseVersionId stays null until workflow.generateFirstVersionStep backfills it.
     if (body.startingMode === 'from_dataset_only' && !resolvedPromptId) {
       if (!body.analysisModelId) {
         throw new BadRequestException('analysis_model_required_for_dataset_only_starting_mode');
@@ -316,9 +316,9 @@ export class OptimizationService {
     }
   }
 
-  // SPEC 25 §2.1:from_dataset_only 起步时自动建空 prompt 承载首版。
-  // 命名规则 `优化-${datasetName}-${ISO 时间到分钟}`;撞 prompts_project_name_unique 时
-  // 附 8 字符 hash 后缀重试 1 次;二次仍冲突 → 抛 prompt_name_collision_v1。
+  // SPEC 25 §2.1: in from_dataset_only mode, create an empty prompt to carry the first version.
+  // Naming rule `<localized-prefix>-${datasetName}-${ISO time down to the minute}`; on prompts_project_name_unique collision,
+  // retry once with an 8-char hash suffix appended; a second collision → throw prompt_name_collision_v1.
   private async createPlaceholderPromptWithRetry(input: {
     projectId: string;
     datasetName: string;
@@ -372,8 +372,8 @@ export class OptimizationService {
     const patch = this.getControlPatch(parsedAction, current);
     await this.repo.updateOptimization(projectId, optimizationId, patch);
 
-    // SPEC 25 §7 双路径联动: stop/cancel 立即调子实验 controlExperiment, 不阻塞父 control 落库
-    // resume 时不在此处联动 — 子实验恢复由 workflow 在 isResumeRound 分支通过 controlChildExperimentStep 起
+    // SPEC 25 §7 dual-path linkage: on stop/cancel, immediately call controlExperiment on the child; do not block the parent control write to DB
+    // resume is not linked here — child experiment resume is handled by the workflow in the isResumeRound branch via controlChildExperimentStep
     if (parsedAction === 'stop' || parsedAction === 'cancel') {
       await this.tryLinkChildExperimentControl(optimizationId, parsedAction);
     }
@@ -390,10 +390,10 @@ export class OptimizationService {
     return this.toListItem(updated);
   }
 
-  // SPEC 25 §7: stop/cancel 父优化时即时联动 active 子实验。Best-effort:
-  //   - 没有 active 子实验(已 terminal / 还未建)→ no-op
-  //   - service 抛 Conflict / NotFound → warn 吞掉(workflow poll 兜底)
-  //   - 其它错 → warn 吞掉(不抛出避免阻塞父 control_state 落库)
+  // SPEC 25 §7: stop/cancel on the parent optimization immediately propagates to the active child experiment. Best-effort:
+  //   - no active child experiment (already terminal / not yet created) → no-op
+  //   - service throws Conflict / NotFound → warn and swallow (the workflow poll is the backstop)
+  //   - other errors → warn and swallow (do not throw, to avoid blocking the parent control_state write)
   private async tryLinkChildExperimentControl(optimizationId: string, action: 'stop' | 'cancel'): Promise<void> {
     const activeChild = await this.repo.findActiveChildExperiment(optimizationId);
     if (!activeChild) return;
@@ -476,10 +476,10 @@ export class OptimizationService {
       if (status !== 'running') {
         throw new ConflictException('optimization_stop_invalid_status');
       }
-      // 抢占式终态化:同时写 status='stopped' + control_state='stop' + finished_at。
-      // workflow 当前 LLM step 跑完后会调 finalize,但 repo.finalize 有 status='running' 守卫,
-      // 第二次写会被跳过——避免覆盖 service 已经写好的终态、避免 finished_at 漂移。
-      // control_state 保留,workflow 在下一轮顶部读到 status 已终态时直接退出。
+      // Preemptive terminal-state write: set status='stopped' + control_state='stop' + finished_at in one shot.
+      // The workflow will call finalize once the current LLM step finishes, but repo.finalize has a status='running' guard,
+      // so the second write is skipped — avoiding overwriting the terminal state already written by service, and avoiding finished_at drift.
+      // control_state is preserved; on the next round the workflow reads status as terminal and exits directly.
       return {
         status: 'stopped' as const,
         controlState: 'stop' as const,
@@ -504,7 +504,7 @@ export class OptimizationService {
     if (status === 'success' || status === 'cancelled') {
       throw new ConflictException('optimization_cancel_invalid_status');
     }
-    // cancel 同样抢占式终态化(无论原 status 是 running 还是 stopped/failed)。
+    // cancel is preemptive in the same way (regardless of whether the original status was running or stopped/failed).
     return {
       status: 'cancelled' as const,
       controlState: 'cancel' as const,
@@ -586,10 +586,10 @@ export class OptimizationService {
       row.sourceExperimentMetrics &&
       typeof row.sourceExperimentMetrics === 'object' &&
       Object.keys(row.sourceExperimentMetrics as Record<string, unknown>).length > 0;
-    // 真实数据来源:experiments ∪ round_steps ∪ source experiment metrics(基线)。任一非空都走真聚合。
-    // round_steps 的存在让 prepareRoundImpl 一开始(error_analysis=running)
-    // 就能让该轮在详情页可见,不必等子实验创建后才出卡片;
-    // 有 baseline metrics 时即便 0 round 也走真聚合,让指标趋势卡片立即可见基线首点。
+    // Real data sources: experiments ∪ round_steps ∪ source experiment metrics (baseline). If any is non-empty, take the real-aggregate path.
+    // The presence of round_steps means that as soon as prepareRoundImpl starts (error_analysis=running),
+    // the round is visible on the detail page without waiting for the child experiment to be created;
+    // when baseline metrics exist, even round 0 takes the real-aggregate path so the metrics trend card immediately shows the baseline first point.
     const realRounds = aggregation.rounds.length > 0 || roundSteps.length > 0 || hasSourceMetrics;
     this.logger.debug(
       {
@@ -630,7 +630,7 @@ export class OptimizationService {
     const derivedBestRoundLabel = row.bestVersionNumber ? `v${row.bestVersionNumber}` : null;
 
     if (realRounds) {
-      // 真聚合
+      // Real aggregate
       const trend = this.deriveTrendSeries(base.goals, aggregation.rounds, sourceMetrics, base.startingMode);
       const rounds = this.deriveRoundDetails(
         aggregation.rounds,
@@ -675,7 +675,7 @@ export class OptimizationService {
       };
     }
 
-    // 无真数据 → 走 dev mock 兜底（dev seed 用于 demo / e2e）
+    // No real data → fall back to the dev mock (dev seed for demo / e2e)
     const mock = this.extractDevMockTimeline(base.runConfig);
     this.logger.debug(
       {
@@ -772,7 +772,7 @@ export class OptimizationService {
       const values: number[] = hasBaseline ? [baselineValue, ...roundValues] : roundValues;
       if (values.length === 0) continue;
       const matchingGoal = goals.find((g) => g.metric === metric);
-      // bestRoundIndex 仍指向 round 集合内的最佳序号（不含 baseline），保持 prop 语义
+      // bestRoundIndex still points to the best index within the round set (excluding baseline) to preserve prop semantics
       let bestRoundIndex: number | undefined;
       if (roundValues.length > 0) {
         let bestIdx = 0;
@@ -816,7 +816,7 @@ export class OptimizationService {
       arr.push(llm);
       llmByRound.set(llm.roundIndex, arr);
     }
-    // experiments 行按 roundIndex 索引,缺失时(分析/生成阶段)走 stepsByRound 单独出卡片
+    // Index the experiments rows by roundIndex; when missing (analysis/generation stage), use stepsByRound to render the card separately
     const experimentByRound = new Map<number, OptimizationRoundExperimentRow>();
     for (const r of rounds) experimentByRound.set(r.roundIndex, r);
     const stepsByRound = new Map<number, OptimizationRoundStepRow[]>();
@@ -825,12 +825,12 @@ export class OptimizationService {
       arr.push(s);
       stepsByRound.set(s.roundIndex, arr);
     }
-    // 合并 roundIndex 集合 → 排序后逐个生成卡片
+    // Merge the roundIndex set → sort and generate cards one by one
     const allIndexes = new Set<number>([...rounds.map((r) => r.roundIndex), ...roundSteps.map((s) => s.roundIndex)]);
     const sortedIndexes = Array.from(allIndexes).sort((a, b) => a - b);
-    // 同时维护一份 sortedExperiments(只含真正有 experiment 行的),仅作为历史数据兜底。
-    // 新数据优先用 prompt_versions.parent_version_id / generate run_result.prompt_version_id,
-    // 让 diff 对齐“当前版本实际从哪个 prompt 生成”。
+    // Also maintain a sortedExperiments list (containing only rounds that actually have an experiment row), used solely as the historical-data fallback.
+    // Prefer the new data: prompt_versions.parent_version_id / generate run_result.prompt_version_id,
+    // so the diff aligns with "from which prompt was the current version actually generated".
     const sortedExperiments = rounds.slice().sort((a, b) => a.roundIndex - b.roundIndex);
 
     return sortedIndexes.map((idx): OptimizationDetailIterationRoundDto => {
@@ -838,8 +838,8 @@ export class OptimizationService {
       const isDatasetBaseline = startingMode === 'from_dataset_only' && idx === 0;
       const stepsForRound = stepsByRound.get(idx) ?? [];
       const stepDtos = mapStepRowsToDtos(stepsForRound);
-      // status 派生:有 steps 数据时走 steps 派生(分析期 / 生成期看不到 experiment 行);
-      // 否则用 experiment.status 兜底。
+      // status derivation: when steps data is present, derive from steps (the experiment row is not visible during the analysis / generation stage);
+      // otherwise fall back to experiment.status.
       const status = isDatasetBaseline
         ? deriveDatasetBaselineStatus(stepDtos, experiment?.status)
         : deriveRoundStatusFromSteps(stepDtos, experiment?.status);
@@ -928,8 +928,8 @@ export class OptimizationService {
     });
   }
 
-  // 每轮卡片头部右上角的"目标 vs 当前轮"chip 列表。
-  // overall scope 取 metrics[goal.metric];class scope 从 metrics.perClass 按 label 取。
+  // The "goal vs current round" chip list shown at the top-right of each round card header.
+  // overall scope reads metrics[goal.metric]; class scope reads from metrics.perClass by label.
   private buildRoundGoalChips(
     goals: OptimizationGoalDto[],
     experiment: OptimizationRoundExperimentRow | null,
@@ -1247,7 +1247,7 @@ export class OptimizationService {
     if (value === null || value === undefined) return null;
     const parse = optimizationSummarySchema.safeParse(value);
     if (!parse.success) return null;
-    // reason 可能含上游 API 报文,截断 500 字符防止外泄
+    // reason may contain upstream API payload; truncate to 500 chars to prevent leakage
     const reason = parse.data.reason.length > 500 ? `${parse.data.reason.slice(0, 500)}…` : parse.data.reason;
     return { ...parse.data, reason };
   }
@@ -1360,8 +1360,8 @@ function latestDate(current: Date, ...candidates: Array<Date | null | undefined>
   return latest;
 }
 
-// 把 ph_runs.optimization_round_steps 行映射成 DTO,按固定顺序排列
-// (error_analysis → generate_prompt → experiment),前端 stepper 据此索引。
+// Map ph_runs.optimization_round_steps rows to DTO, sorted in a fixed order
+// (error_analysis → generate_prompt → experiment); the frontend stepper indexes by this order.
 const STEP_ORDER: OptimizationRoundStepKind[] = ['error_analysis', 'generate_prompt', 'experiment'];
 
 function mapStepRowsToDtos(
@@ -1387,18 +1387,18 @@ function mapStepRowsToDtos(
   return out;
 }
 
-// 根据 steps 派生 round 卡片整体 status:
-//   - 任一 step running → running(优先级最高,因为本轮还在跑)
-//   - 任一 step failed  → failed
-//   - 全部 success      → success
-//   - 全部 skipped      → paused
-//   - 都不沾边(只有 pending)→ 兜底用 experiment.status
+// Derive the round card's overall status from steps:
+//   - any step running → running (highest priority, because this round is still in flight)
+//   - any step failed  → failed
+//   - all success      → success
+//   - all skipped      → paused
+//   - none of the above (only pending) → fall back to experiment.status
 function deriveRoundStatusFromSteps(
   steps: NonNullable<OptimizationDetailIterationRoundDto['steps']>,
   experimentStatus: string | undefined,
 ): OptimizationDetailIterationRoundDto['status'] {
   if (steps.length === 0) {
-    // 没有 round_steps 数据时退回到原有逻辑:基于 experiments 行的 status
+    // When there is no round_steps data, fall back to the original logic: based on the status of the experiments row
     if (experimentStatus === 'success') return 'success';
     if (experimentStatus === 'failed') return 'failed';
     if (experimentStatus === 'stopped' || experimentStatus === 'cancelled') return 'paused';
@@ -1429,8 +1429,8 @@ function parsePromptLanguageValue(value: unknown): PromptLanguageDto {
   return parse.success ? parse.data : DEFAULT_PROMPT_LANGUAGE;
 }
 
-// experiment 行尚未创建(分析/生成阶段)时仍尝试从 generate run_result 还原 promptDiff。
-// 拿不到 promptVersionNumber 就用 round-N 标签兜底。
+// If the experiment row is not yet created (analysis/generation stage), still try to reconstruct promptDiff from the generate run_result.
+// If promptVersionNumber is unavailable, fall back to a round-N label.
 function buildPromptDiffWithoutExperiment(
   generate: OptimizationRoundLlmRow | undefined,
   roundIndex: number,
@@ -1465,7 +1465,7 @@ function buildPromptDiffWithoutExperiment(
     generate,
     current?.outputSchema ?? prev?.outputSchema ?? null,
   );
-  // 桥接成标准 JSON Schema 后再交给 composeFullPrompt，确保 diff 与「实际下发给业务 LLM」拼装路径一致。
+  // Bridge to standard JSON Schema before handing it to composeFullPrompt, ensuring the diff aligns with the path actually sent to the business LLM.
   const fromText = composeFullPrompt(prev?.body ?? '', outputSchemaToJsonSchema(prev?.outputSchema), {
     language: parsePromptLanguageValue(prev?.promptLanguage),
   });
@@ -1563,8 +1563,8 @@ function resolvePromptDiffBaseVersionId(
   if (experiment?.parentVersionId) return experiment.parentVersionId;
   if (generate?.promptVersionId) return generate.promptVersionId;
 
-  // 兼容旧数据:没有 parent_version_id / generate prompt_version_id 时,
-  // 退回到历史的“上一条 experiment prompt”语义。
+  // Legacy fallback: when parent_version_id / generate prompt_version_id are missing,
+  // fall back to the historical "previous experiment prompt" semantics.
   const prevExperimentIdx = sortedExperiments.findIndex((r) => r.roundIndex === experiment?.roundIndex);
   const prevExperiment = prevExperimentIdx > 0 ? (sortedExperiments[prevExperimentIdx - 1] ?? null) : null;
   return prevExperiment?.promptVersionId ?? baseVersionId;
@@ -1784,7 +1784,7 @@ function buildPromptDiff(
     generate,
     current?.outputSchema ?? prev?.outputSchema ?? null,
   );
-  // 桥接成标准 JSON Schema 后再交给 composeFullPrompt，确保 diff 与「实际下发给业务 LLM」拼装路径一致。
+  // Bridge to standard JSON Schema before handing it to composeFullPrompt, ensuring the diff aligns with the path actually sent to the business LLM.
   const fromText = composeFullPrompt(prev?.body ?? '', outputSchemaToJsonSchema(prev?.outputSchema), {
     language: parsePromptLanguageValue(prev?.promptLanguage),
   });
@@ -1842,9 +1842,9 @@ function extractGenerateSummary(generate: OptimizationRoundLlmRow | undefined, r
   return undefined;
 }
 
-// SPEC 25 §11: generate retry 用尽仍丢占位时,会在 parsedOutput 里写 autoPatched=true + patchedVariables 数组。
-// 前端轮次卡片据此渲染"系统补丁" chip 提醒用户人工微调占位融入位置。autoPatched=false / 字段缺失时返回 undefined,
-// DTO 字段保持 optional 形态,不污染历史 round。
+// SPEC 25 §11: when generate retries are exhausted and placeholders are still missing, parsedOutput records autoPatched=true + a patchedVariables array.
+// The frontend round card renders a "system patch" chip based on this, alerting the user to manually tweak the placeholder embedding. autoPatched=false / missing field → undefined,
+// keeping the DTO field optional so legacy rounds are not polluted.
 function extractAutoPatchInfo(generate: OptimizationRoundLlmRow | undefined): {
   autoPatched?: boolean;
   patchedVariables?: string[];
@@ -1860,10 +1860,10 @@ function extractAutoPatchInfo(generate: OptimizationRoundLlmRow | undefined): {
   return { autoPatched: true, patchedVariables: vars };
 }
 
-// 从 generate run_result 提取本轮真正生效的 outputSchema:
-// 优先 parsedOutput.newOutputSchema(LLM 提供且通过校验时已写入),否则回退 fallback(基线 / 上一版本 schema)。
-// 写入时 safeValidateNewOutputSchema 已校验过,这里只做"对象形态"判断,不再重复校验,
-// 避免历史 round 的展示行为受新校验规则影响。
+// Extract the outputSchema actually in effect for this round from the generate run_result:
+// prefer parsedOutput.newOutputSchema (written when the LLM provided one and it passed validation); otherwise fall back (baseline / previous version schema).
+// safeValidateNewOutputSchema has already validated this on write; here we only check the "object shape" without re-validating,
+// to avoid having historical rounds' display behavior affected by new validation rules.
 function extractGeneratedOutputSchema(
   generate: OptimizationRoundLlmRow | undefined,
   fallbackOldSchema: unknown,
@@ -2099,17 +2099,17 @@ function normalizeOptimizationHint(value: string | null | undefined): string | n
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
-// SPEC 25 §2.1:from_dataset_only 自动建 prompt 的命名规则。
-// `优化-${datasetName}-${YYYY-MM-DDTHH:MM}`,例：`优化-客户反馈-2026-05-20T14:30`
+// SPEC 25 §2.1: naming rule for the prompt auto-created in from_dataset_only.
+// `<localized-prefix>-${datasetName}-${YYYY-MM-DDTHH:MM}`; the localized prefix (e.g. the Chinese for "Optimization") is hardcoded inside this function
 function buildOptimizationPromptName(datasetName: string, now: Date, promptLanguage: PromptLanguageDto): string {
-  // toISOString 输出 `YYYY-MM-DDTHH:MM:SS.sssZ`;截到分钟
+  // toISOString outputs `YYYY-MM-DDTHH:MM:SS.sssZ`; truncate at the minute
   const iso = now.toISOString().slice(0, 16);
   if (promptLanguage === 'en-US') return `Optimization-${datasetName}-${iso}`;
   return `优化-${datasetName}-${iso}`;
 }
 
-// 撞 prompts_project_name_unique 时附 8 字符 hash 后缀重试用 — 同一秒大量并发创建才有概率
-// 二次冲突,8 字符 base36 hash 提供 36^8 ≈ 2.8e12 空间足够。
+// Suffix retry with an 8-char hash on prompts_project_name_unique collision — only possible under heavy concurrent creation in the same second
+// for a secondary collision; 8-char base36 hash gives 36^8 ≈ 2.8e12 of space, which is sufficient.
 function shortHash(value: string): string {
   let h = 0;
   for (let i = 0; i < value.length; i++) {
@@ -2118,7 +2118,7 @@ function shortHash(value: string): string {
   return h.toString(36).padStart(8, '0').slice(0, 8);
 }
 
-// pg unique_violation 错误识别:Drizzle / pg 包透出 code='23505',且 message 含约束名。
+// pg unique_violation error detection: Drizzle / pg packages expose code='23505' and the message contains the constraint name.
 function isPromptNameUniqueViolation(err: unknown): boolean {
   return isUniqueViolation(err, /idx_prompts_project_name_active|prompts_project_name_unique/);
 }

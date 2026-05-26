@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 /**
- * 防术语漂移 — 扫描代码与文档里是否出现 CLAUDE.md §4.1 禁用的旧术语。
+ * Anti-term-drift — scans code and docs for the legacy terms forbidden by CLAUDE.md §4.1.
  *
- * 出现即 exit 1；CI 跑 `pnpm spec:terms` 强校验。
+ * Any match exits 1; CI runs `pnpm spec:terms` to enforce.
  *
- * 当前是占位实现，覆盖最关键的旧词；后续可扩。
+ * This is currently a placeholder implementation covering the most critical legacy words; can be extended later.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = process.cwd();
 
-// CLAUDE.md §4.1 明确禁用
+// Explicitly forbidden by CLAUDE.md §4.1
 const FORBIDDEN_TERMS = [
   { term: '调用记录' },
-  { term: 'Provider', proseOnly: true }, // 仅在中文用户面禁用 Provider 这个词；代码内 "provider" 仍然允许
+  { term: 'Provider', proseOnly: true }, // "Provider" is only forbidden in Chinese user-facing strings; "provider" in code is still allowed
   { term: 'Project administrator' },
   { term: 'Project Administrator' },
   { term: 'roles.developer' },
@@ -23,7 +23,7 @@ const FORBIDDEN_TERMS = [
   { term: '操作员' },
   { term: '审核员' },
   { term: '观察员' },
-  // 2026-05-17 编排栈从 Temporal 切到 DBOS + BullMQ
+  // 2026-05-17 orchestration stack switched from Temporal to DBOS + BullMQ
   { term: '@temporalio' },
   { term: 'Temporal Workflow' },
   { term: 'TEMPORAL_ADDRESS' },
@@ -32,11 +32,11 @@ const FORBIDDEN_TERMS = [
   { term: 'ph_temporal_mirror' },
 ];
 
-// 只扫这些扩展名
+// Only scan these extensions
 const EXTS = new Set(['.md', '.mdx', '.tsx', '.ts', '.json', '.yml', '.yaml']);
 const CODE_EXTS = new Set(['.tsx', '.ts']);
 
-// 不扫这些目录
+// Skip these directories
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.turbo', '.git', 'coverage']);
 const EXCLUDE_FILES = new Set([
   'AGENTS.md',
@@ -45,8 +45,8 @@ const EXCLUDE_FILES = new Set([
   'pnpm-lock.yaml',
 ]);
 
-// 用户面 vs 代码内的区分：默认全扫，但允许在 *.code-allow.json 里加白名单。
-// 简化起见：先全扫，发现 false positive 再加白名单文件。
+// User-facing vs in-code distinction: scan everything by default, but allow whitelisting via *.code-allow.json.
+// For simplicity: scan all first, then add a whitelist file when false positives appear.
 let violations = 0;
 
 /**
@@ -64,9 +64,9 @@ function walk(dir) {
       if (!EXTS.has(ext)) continue;
       const content = readFileSync(p, 'utf8');
       const rel = relative(ROOT, p);
-      // 跳过 SPEC 自身（00–32 是事实来源，其中可能在历史变更说明里提到旧词）
+      // Skip the SPECs themselves (00-32 are the source of truth, possibly mentioning legacy terms in historical change notes)
       if (rel.startsWith('docs/specs/')) continue;
-      // 跳过约束说明文件与本脚本（它们需要列出禁用词本身）
+      // Skip the constraint description files and this script itself (they need to list the forbidden words verbatim)
       if (EXCLUDE_FILES.has(rel)) continue;
 
       for (const { term, proseOnly } of FORBIDDEN_TERMS) {

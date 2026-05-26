@@ -1,26 +1,26 @@
-/* eslint-disable no-console -- 集成测试用 console.log 打印 LLM I/O 便于人工观察 */
-// 真实 LLM 集成测试 — 1 轮优化闭环冒烟
+/* eslint-disable no-console -- integration tests use console.log to print LLM I/O for manual observation */
+// Real LLM integration test — 1-round optimization closed-loop smoke
 //
-// 触发：MODEL_PROBE_PROVIDER_TYPE / MODEL_ID / ENDPOINT / API_KEY 同时存在时启用；
-// 否则自动 skip。env 缺失场景 vitest 不会失败，只会显示 skipped。
+// Trigger: enabled when MODEL_PROBE_PROVIDER_TYPE / MODEL_ID / ENDPOINT / API_KEY are all present;
+// otherwise skipped automatically. When env is missing, vitest does not fail; it just shows skipped.
 //
-// 复用项目内 MODEL_PROBE_* 系列（与 apps/worker/src/scripts/probe-model-from-env.ts 同源约定），
-// 这样一份 .env 既能跑 model 连通性探测，也能跑本集成测试。
+// Reuses the project's MODEL_PROBE_* series (same convention as apps/worker/src/scripts/probe-model-from-env.ts),
+// so the same .env can run both model connectivity probes and this integration test.
 //
-// 跑法：
+// How to run:
 //   pnpm --filter @proofhound/optimization-strategy test:integration
 //
-// 本测试模拟「已有实验」起步：
-// - 数据集 10 条二分类（5 positive / 5 negative）— 形状对齐 ph_assets.dataset_samples.data (jsonb)
-// - 首版 prompt 极简「判断 {{review_text}} 的情感」
-// - 上一轮 fake 失败预测：模型全猜 positive → accuracy=0.5；混淆对 negative→positive=5
-// - previousRunResults=null → 跳过 regression 分析
-// - maxRounds=1：跑 1 轮 (1 confusion + 1 summarize + 1 generate = 3 次真实 LLM)
-// - ExperimentRunner 用 mock 返回 metrics（本算法包不感知实验执行）
+// This test simulates the "already-have-an-experiment" start:
+// - 10 binary classification dataset rows (5 positive / 5 negative) — shape aligned with ph_assets.dataset_samples.data (jsonb)
+// - Minimal first-version prompt "Judge the sentiment of {{review_text}}"
+// - Previous round fake failed predictions: model always guesses positive → accuracy=0.5; confusion pair negative→positive=5
+// - previousRunResults=null → skip regression analysis
+// - maxRounds=1: 1 round (1 confusion + 1 summarize + 1 generate = 3 real LLM calls)
+// - ExperimentRunner uses a mock to return metrics (this algorithm package is unaware of experiment execution)
 //
-// 断言 + 打印：链路通了 + 新 prompt 包含变量占位 + 各阶段 LLM I/O 打印到控制台便于人工观察。
-// 特别打印「生成的纯 body」「自动拼接的输出格式段」「composed 完整 prompt」三段，
-// 方便人工核对：生成的 body 不含输出格式 / JSON schema，输出格式段由 outputSchema 自动拼接。
+// Assert + print: the path works + the new prompt contains variable placeholders + LLM I/O per stage is printed to the console for manual observation.
+// Specifically prints the "generated pure body", "auto-assembled output format section", and "composed full prompt"
+// to make it easy to manually verify: the generated body does not include the output format / JSON schema; the output format section is auto-assembled from outputSchema.
 import { resolve } from 'node:path';
 import { StubLimiter } from '@proofhound/limiter';
 import type { LLMCallLogger, ModelInvocationConfig } from '@proofhound/llm-client';
@@ -39,7 +39,7 @@ import type { ErrorPatternAnalysisConfig } from '../error-pattern-analysis/confi
 import { buildOutputFormatInstruction, composeFullPrompt } from '@proofhound/shared';
 import { InMemoryExperimentRunner, makeInMemoryPorts } from './helpers/in-memory-ports';
 
-// ---------- env 加载（兼容 cwd 和 monorepo root） ----------
+// ---------- env loading (compatible with cwd and monorepo root) ----------
 function loadEnvFile(): void {
   for (const candidate of [
     resolve(process.cwd(), '.env'),
@@ -47,11 +47,11 @@ function loadEnvFile(): void {
     resolve(process.cwd(), '../../../.env'),
   ]) {
     try {
-      // Node.js 21+ 原生 API；project engines.node 24.x
+      // Node.js 21+ native API; project engines.node 24.x
       process.loadEnvFile(candidate);
       return;
     } catch {
-      // 找下一个
+      // Look up the next
     }
   }
 }
@@ -87,8 +87,8 @@ function modelFromEnv(): ModelInvocationConfig {
   };
 }
 
-// ---------- mock 数据集（贴近 ph_assets.dataset_samples 真实形状） ----------
-// data jsonb 字段 → 我们的 SampleRecord.input；expected 是 V1 把"期望值"按 judgment_rules.field 从 data 解出来的简化版
+// ---------- mock dataset (close to the real shape of ph_assets.dataset_samples) ----------
+// The data jsonb field → our SampleRecord.input; expected is the V1 simplified version where the "expected value" is extracted from data by judgment_rules.field
 const samples: SampleRecord[] = [
   { id: 's1', input: { review_text: '这个产品非常棒，强烈推荐！' }, expected: 'positive' },
   { id: 's2', input: { review_text: '完美，超出预期，非常满意' }, expected: 'positive' },
@@ -102,7 +102,7 @@ const samples: SampleRecord[] = [
   { id: 's10', input: { review_text: '客服态度很差，一星' }, expected: 'negative' },
 ];
 
-// 上一轮 fake 失败：模型全猜 positive → 5 个 negative 全错（混淆对 negative→positive=5）
+// Previous round fake failure: model always guesses positive → 5 negatives are all wrong (confusion pair negative→positive=5)
 const fakeBadRunResults: RunResultRecord[] = samples.map((s) => ({
   id: `rr_${s.id}`,
   sampleId: s.id,
@@ -131,7 +131,7 @@ function makeSnapshot(taskModel: ModelInvocationConfig): ExperimentSnapshot {
       id: 'integration_pv_base',
       promptId: 'integration_p',
       versionNumber: 1,
-      body: '判断 {{review_text}} 的情感', // 极简首版
+      body: '判断 {{review_text}} 的情感', // Minimal first version
       outputSchema: { type: 'object', properties: { sentiment: { enum: ['positive', 'negative'] } } },
       judgmentRules: { ruleName: 'enum_match', config: { field: 'sentiment' } },
       variables: [{ name: 'review_text', description: '用户评论原文' }],
@@ -145,9 +145,9 @@ function makeConfig(model: ModelInvocationConfig): OptimizationConfig<ErrorPatte
   return {
     optimizationId: 'integration_ai',
     goals: [
-      // 整体准确率目标设高 — 1 轮跑不到（确保走 max_rounds 退出而非提前 success）
+      // Overall accuracy goal set high — 1 round cannot reach it (ensures exit via max_rounds, not early success)
       { metric: 'accuracy', op: '>=', value: 0.95, scope: { kind: 'overall' } },
-      // 同时关心 negative 类（当前 precision=0, recall=0，差距最大）
+      // Also care about the negative class (current precision=0, recall=0, largest gap)
       { metric: 'recall', op: '>=', value: 0.9, scope: { kind: 'class', label: 'negative' } },
     ],
     maxRounds: 1,
@@ -167,7 +167,7 @@ function makeConfig(model: ModelInvocationConfig): OptimizationConfig<ErrorPatte
 function makeConsoleLogger(): LLMCallLogger {
   return {
     info: (payload, msg) => {
-      // 关注 stepName + durationMs；payload 里 promptCapped 由 invokeLLM 自动 redact，安全
+      // Care about stepName + durationMs; payload's promptCapped is auto-redacted by invokeLLM, safe
       const lite = {
         stepName: (payload as Record<string, unknown>).stepName,
         durationMs: (payload as Record<string, unknown>).durationMs,
@@ -200,8 +200,8 @@ describeIf('runIterationLoop · real LLM integration', () => {
       const snapshot = makeSnapshot(model);
       const config = makeConfig(model);
 
-      // ExperimentRunner 用 mock — 不真调 LLM 跑实验（本算法包不感知"实验执行"）。
-      // 让 round-1 的实验返回稍微改善的指标，但仍未达标（用于触发 max_rounds 结束）。
+      // ExperimentRunner uses a mock — does not actually call the LLM to run the experiment (this algorithm package is unaware of "experiment execution").
+      // Make the round-1 experiment return slightly improved metrics, still not at goal (to trigger max_rounds end).
       const runner = new InMemoryExperimentRunner([
         {
           experimentId: 'integration_exp_r1',
@@ -232,13 +232,13 @@ describeIf('runIterationLoop · real LLM integration', () => {
       const elapsedMs = Date.now() - startedAt;
       console.log(`\n=== Iteration finished in ${elapsedMs}ms ===`);
 
-      // ===== 断言：链路正确 =====
+      // ===== Assertions: path is correct =====
       expect(result.rounds).toHaveLength(1);
-      // 1 轮没达标 → max_rounds 退出
+      // 1 round did not reach goal → exit via max_rounds
       expect(result.status).toBe('failed');
       expect(result.reason).toBe('max_rounds');
 
-      // promptVersionWriter 写入了 1 个新版本，body 含变量占位
+      // promptVersionWriter wrote 1 new version; body contains variable placeholders
       expect(ports.promptVersionWriter.writes).toHaveLength(1);
       const write = ports.promptVersionWriter.writes[0]!;
       expect(write.body).toContain('{{review_text}}');
@@ -246,17 +246,17 @@ describeIf('runIterationLoop · real LLM integration', () => {
       expect(write.outputSchema).toBeDefined();
       expect(write.changeSummary.length).toBeGreaterThan(0);
 
-      // previousRoundRunResultsReader 被调 1 次 + 返回 null → 没有 regression batch
+      // previousRoundRunResultsReader is called 1 time + returns null → no regression batch
       expect(ports.previousRoundRunResultsReader.calls).toHaveLength(1);
       const round = result.rounds[0]!;
       expect(round.errorAnalysis.length).toBeGreaterThan(0);
       expect(round.changeSummary.length).toBeGreaterThan(0);
 
-      // 最终落 recordFinal
+      // Final recordFinal lands
       expect(ports.roundRecorder.finalResult).not.toBeNull();
       expect(ports.roundRecorder.finalResult?.reason).toBe('max_rounds');
 
-      // ===== 人工观察打印 =====
+      // ===== Manual observation prints =====
       console.log('\n=== Original prompt ===');
       console.log(snapshot.basePromptVersion.body);
 
@@ -269,7 +269,7 @@ describeIf('runIterationLoop · real LLM integration', () => {
       console.log('\n=== Generated new prompt (LLM-authored body, 应不含输出格式 / JSON schema) ===');
       console.log(write.body);
 
-      // 输出格式段从 outputSchema 自动拼接 — 业务 LLM 调用时会接在 body 尾部
+      // The output format section is auto-assembled from outputSchema — concatenated at the body tail when the business LLM is invoked
       const outputFormatInstruction = buildOutputFormatInstruction(
         snapshot.basePromptVersion.outputSchema,
       );
@@ -310,7 +310,7 @@ describeIf('runIterationLoop · real LLM integration', () => {
         ),
       );
     },
-    // 真实 LLM 调用最多 3 次 — 留 2 分钟超时
+    // At most 3 real LLM calls — leave 2 minutes timeout
     120_000,
   );
 });

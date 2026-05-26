@@ -13,8 +13,8 @@ export interface UserTokenRowWithCreator extends UserTokenRow {
   createdByDisplayName: string | null;
 }
 
-// Repository 只处理 scope='user' 行。webhook 行由 ConnectorRepository 自管,本 repo 不读不写。
-// 详见 docs/specs/06-database-schema.md §3.2 / docs/specs/08-saas-adapter-boundary.md §3.5。
+// The repository only handles rows where scope='user'. Webhook rows are self-managed by ConnectorRepository; this repo does not read or write them.
+// See docs/specs/06-database-schema.md §3.2 / docs/specs/08-saas-adapter-boundary.md §3.5.
 @Injectable()
 export class TokenRepository {
   constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}

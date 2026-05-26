@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions for optimizations.
  * Each tool delegates to OptimizationService, matching the REST surface 1:1.
- * See docs/specs/00-overview.md §5 (三通道等价) + docs/specs/25-optimizations.md.
+ * See docs/specs/00-overview.md §5 (three-channel parity) + docs/specs/25-optimizations.md.
  */
 import {
   optimizationControlActionSchema,

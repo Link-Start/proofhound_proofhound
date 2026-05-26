@@ -1,5 +1,5 @@
-// 按 (projectType, ruleName) 二级 key 注册
-// 详见 docs/specs/07-code-structure.md §12.2
+// Registers by (projectType, ruleName) two-level key
+// See docs/specs/07-code-structure.md §12.2
 import type { JudgmentStrategy, ProjectType } from './types';
 
 const registry = new Map<string, JudgmentStrategy>();

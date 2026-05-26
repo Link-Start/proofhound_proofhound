@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-// 256KB 应用日志硬上限兜底（docs/specs/05-logging.md §5.6）
+// 256KB application log hard cap (docs/specs/05-logging.md §5.6)
 export const MAX_LLM_LOG_PAYLOAD_BYTES = 256 * 1024;
 const PAYLOAD_SUMMARY_CHARS = 4 * 1024;
 

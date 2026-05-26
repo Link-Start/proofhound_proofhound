@@ -1,16 +1,16 @@
 /**
- * 一次性清理 DBOS 集成测试残留。
+ * One-shot cleanup of DBOS integration test leftovers.
  *
- * 用途:把过去 vitest 中断/crash 留下的悬空 `dbos_test_*` schema 一次性清掉。
- * 之后 setup.ts 的 beforeAll 兜底逻辑 + schema 级隔离会保证新测试不再脏库。
+ * Purpose: clean up the dangling `dbos_test_*` schemas left by previously interrupted/crashed vitest runs in one go.
+ * After that, setup.ts's beforeAll backstop logic + schema-level isolation ensure new tests no longer dirty the database.
  *
- * 仅清 information_schema.schemata 中 schema_name LIKE 'dbos_test_%' 的 schema (DROP CASCADE)。
+ * Only drops schemas where information_schema.schemata's schema_name LIKE 'dbos_test_%' (DROP CASCADE).
  *
- * 不动:
- *   - 默认 dbos schema (无法按 application_id / name 区分测试与生产产生的行)
- *   - 任何业务表(models/datasets/prompts/...)数据
+ * Untouched:
+ *   - The default dbos schema (we cannot distinguish test and production rows by application_id / name)
+ *   - Any business tables (models/datasets/prompts/...) data
  *
- * 用法:pnpm db:clean-test-residue
+ * Usage: pnpm db:clean-test-residue
  */
 import { resolve } from 'node:path';
 import { sql } from 'drizzle-orm';
@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   try {
     process.loadEnvFile(resolve(process.cwd(), '../../.env'));
   } catch {
-    // CI / 其它已注入 env 的环境
+    // CI / other environments already with env injected
   }
 
   const databaseUrl = process.env['DATABASE_URL'];
@@ -35,7 +35,7 @@ async function main(): Promise<void> {
 
   const db = createDbClient(databaseUrl);
 
-  // DBOS 系统库残留 schema
+  // DBOS system db leftover schemas
   const rawRows = await db.execute(sql`
     SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'dbos_test_%'
   `);

@@ -439,10 +439,10 @@ export class PromptRepository {
   }
 
   /**
-   * from_dataset_only 起步模式：仅插一行 prompts 作为承载实体，**不**创建 version 1。
-   * 首版 version 由 OptimizationWorkflow 的 generateFirstVersionStep 用确定性 id 写入。
-   * 撞 `idx_prompts_name_active` 唯一约束时抛出原始错误，由 caller（service）附 hash 后缀重试。
-   * 详见 SPEC 25 §2.1。
+   * from_dataset_only start mode: only insert a single prompts row as the carrier entity; do NOT create version 1.
+   * The first version is written by OptimizationWorkflow's generateFirstVersionStep with a deterministic id.
+   * If the `idx_prompts_name_active` unique constraint is hit, throw the original error and let the caller (service) retry with a hash suffix appended.
+   * See SPEC 25 §2.1.
    */
   async createPlaceholderPromptForOptimization(input: {
     projectId: string;
@@ -678,14 +678,14 @@ export class PromptRepository {
   }
 
   /**
-   * 由优化 workflow 调用：用确定性 id 创建一条已冻结的 prompt 版本。
-   * 同一 (optimizationId, roundNumber) 多次调用幂等——重复 INSERT 由主键冲突吞掉，
-   * 返回已存在的那行（用于 DBOS step 重放）。
+   * Called by the optimization workflow: creates a frozen prompt version with a deterministic id.
+   * Multiple calls with the same (optimizationId, roundNumber) are idempotent — duplicate INSERTs are swallowed by primary key conflict,
+   * and the existing row is returned (for DBOS step replay).
    */
   async createOptimizationFrozenVersion(input: {
     versionId: string;
     promptId: string;
-    // from_dataset_only 首版无父版本 → null；其余轮次有父版本 → string
+    // In from_dataset_only mode the first version has no parent version → null; later rounds have a parent version → string
     parentVersionId: string | null;
     body: string;
     variables: PromptVariableDto[];
@@ -697,7 +697,7 @@ export class PromptRepository {
     createdBy: string;
   }): Promise<{ versionId: string; versionNumber: number }> {
     return this.db.transaction(async (tx) => {
-      // 先查重——确定性 id 让重放幂等
+      // Look up first — the deterministic id makes replay idempotent
       const [existing] = await tx
         .select({ id: promptVersions.id, versionNumber: promptVersions.versionNumber })
         .from(promptVersions)

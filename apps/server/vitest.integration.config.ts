@@ -2,13 +2,13 @@ import { defineConfig } from 'vitest/config';
 import swc from 'unplugin-swc';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
-// DBOS workflow 集成测试配置 ——
-//   - DBOS.launch() 是全局单例 + setup.ts beforeAll 扫悬空 dbos_test_* schema,
-//     多 worker 并行会互相误伤;singleFork + fileParallelism:false 串行化,
-//     与旧 jest.integration.config.js 的 maxWorkers:1 等价。
-//   - hookTimeout:300s 给 DBOS.launch + NestJS module init 充足时间(远程 PostgreSQL
-//     首次握手 + DBOS 跑 sysdb migration + 注册 LISTEN/NOTIFY,瞬时网络抖动也可能拖延)。
-//   - teardownTimeout:60s 给 afterAll 的 module.close + DBOS.shutdown + DROP SCHEMA + pool.end()。
+// DBOS workflow integration test config —
+//   - DBOS.launch() is a global singleton + setup.ts beforeAll scans dangling dbos_test_* schemas;
+//     parallel workers would step on each other; singleFork + fileParallelism:false serializes them,
+//     equivalent to maxWorkers:1 in the old jest.integration.config.js.
+//   - hookTimeout: 300s gives DBOS.launch + NestJS module init enough time (remote PostgreSQL
+//     first handshake + DBOS sysdb migration + LISTEN/NOTIFY registration may also be delayed by transient network jitter).
+//   - teardownTimeout: 60s for afterAll's module.close + DBOS.shutdown + DROP SCHEMA + pool.end().
 
 export default defineConfig({
   plugins: [

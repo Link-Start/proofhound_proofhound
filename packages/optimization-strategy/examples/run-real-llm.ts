@@ -1,14 +1,14 @@
-// 真实 LLM 端到端冒烟（手动执行，不进 CI）
+// Real LLM end-to-end smoke (manual run; not in CI)
 //
-// 触发：
+// Trigger:
 //   RUN_REAL_LLM=1 ANTHROPIC_API_KEY=sk-ant-xxx \
 //     pnpm --filter @proofhound/optimization-strategy example:real-llm
 //
-// 行为：硬编码 10 条二分类样本 + accuracy=0.5 基线，跑 3 轮（goal 故意设高），
-// 用真实 Anthropic 模型作为分析 LLM；ExperimentRunner 用 mock 指标曲线
-// （[0.6, 0.75, 0.88]）而非真实跑实验，因为本算法包不感知"实验执行"。
+// Behavior: hardcoded 10 binary classification samples + accuracy=0.5 baseline; runs 3 rounds (goal intentionally set high),
+// using a real Anthropic model as the analysis LLM; ExperimentRunner uses a mock metric curve
+// ([0.6, 0.75, 0.88]) instead of running real experiments, because this algorithm package is unaware of "experiment execution".
 //
-// 输出：每轮的错误分析摘要 + 生成的新 prompt + 最终 OptimizationResult JSON。
+// Output: each round's error analysis summary + the generated new prompt + the final OptimizationResult JSON.
 
 import { StubLimiter } from '@proofhound/limiter';
 import type { LLMCallLogger } from '@proofhound/llm-client';
@@ -58,7 +58,7 @@ function main(): Promise<void> {
     sampleId: s.id,
     decisionOutput: 'positive',
     parsedOutput: { sentiment: 'positive' },
-    isCorrect: s.expected === 'positive', // 模型全猜 positive → accuracy=0.5
+    isCorrect: s.expected === 'positive', // Model always guesses positive → accuracy=0.5
   }));
 
   const snapshot: ExperimentSnapshot = {
@@ -119,7 +119,7 @@ function main(): Promise<void> {
     strategyConfig: DEFAULT_ERROR_PATTERN_ANALYSIS_CONFIG,
   };
 
-  // ExperimentRunner 用预设曲线 — 真实跑实验在本算法包之外
+  // ExperimentRunner uses a preset curve — real experiment execution lives outside this algorithm package
   const curve = [0.6, 0.75, 0.88];
   const runner = new InMemoryExperimentRunner(
     curve.map((accuracy, i) => (input: ExperimentRunnerInput): ExperimentRunnerOutput => {
@@ -149,7 +149,7 @@ function main(): Promise<void> {
     info: (payload, msg) => console.log(`[llm:info] ${msg}`, JSON.stringify({ stepName: payload.stepName, durationMs: payload.durationMs, costEstimate: payload.costEstimate })),
     error: (payload, msg) => console.error(`[llm:error] ${msg}`, JSON.stringify(payload)),
   };
-  // 不传 llmAdapter → invokeLLM 会按 providerType='anthropic' 走默认 adapter
+  // Do not pass llmAdapter → invokeLLM goes through the default adapter per providerType='anthropic'
   const deps: LoopDependencies = {
     limiter: new StubLimiter(),
     logger,

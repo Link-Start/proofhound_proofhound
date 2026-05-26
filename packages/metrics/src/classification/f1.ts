@@ -1,5 +1,5 @@
 // F1: 2 * P * R / (P + R) —— per-class + macro
-// 详见 docs/specs/24-experiments.md §6
+// See docs/specs/24-experiments.md §6
 import type { ClassificationPerClassEntry, MetricsStrategy } from '../types';
 
 export function computeF1(entries: ClassificationPerClassEntry[]): {

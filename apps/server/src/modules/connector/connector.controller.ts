@@ -123,7 +123,7 @@ export class ConnectorController {
 
   // -------------------------------------------------------------------------
   // per-connector webhook tokens
-  // 详见 docs/specs/26-connectors.md / docs/specs/06-database-schema.md §3.2
+  // See docs/specs/26-connectors.md / docs/specs/06-database-schema.md §3.2
   // -------------------------------------------------------------------------
 
   @Get(':connectorId/webhook-tokens')

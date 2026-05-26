@@ -1,5 +1,5 @@
-// ph_releases.annotation_tasks — 灰度 / 在线标注任务
-// 详见 docs/specs/06-database-schema.md §6.3
+// ph_releases.annotation_tasks — canary / online annotation tasks
+// See docs/specs/06-database-schema.md §6.3
 
 import { type AnyPgColumn, check, index, integer, jsonb, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';

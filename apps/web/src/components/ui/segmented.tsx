@@ -9,8 +9,8 @@ export interface SegmentedOption<TValue extends string> {
   icon?: ReactNode;
 }
 
-// N-option segmented control（设计稿"近 1 小时 / 近 24 小时 / 近 7 天 / 近 30 天 / 自定义"
-// 以及排行表头部"调用量 / 成本 / 命中率 / 失败率"切换都用这个）
+// N-option segmented control (used by the design's "Last 1h / Last 24h / Last 7d / Last 30d / Custom"
+// and the ranking table header switch between "Calls / Cost / Hit rate / Failure rate")
 export function Segmented<TValue extends string>({
   value,
   options,

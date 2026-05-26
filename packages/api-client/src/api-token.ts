@@ -1,5 +1,5 @@
-// 单一 user-facing token client：HTTP API + MCP 共用一个 token 模型。
-// 详见 docs/specs/06-database-schema.md §3.2 / docs/specs/34-settings.md。
+// Single user-facing token client: HTTP API + MCP share one token model.
+// See docs/specs/06-database-schema.md §3.2 / docs/specs/34-settings.md.
 import type {
   CreateUserTokenDto,
   CreateUserTokenResponseDto,

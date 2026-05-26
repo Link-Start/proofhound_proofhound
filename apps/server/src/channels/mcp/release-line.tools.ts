@@ -2,7 +2,7 @@
  * MCP tool definitions for unified release lines.
  * Mirrors the REST surface for release line read APIs, traffic-ratio adjustment,
  * and run config changes.
- * See docs/specs/00-overview.md §5 (三通道等价) + docs/specs/27-releases.md.
+ * See docs/specs/00-overview.md §5 (three-channel parity) + docs/specs/27-releases.md.
  */
 import { updateReleaseLineRunConfigInputSchema, updateReleaseLineTrafficRatioInputSchema } from '@proofhound/shared';
 import { z } from 'zod';

@@ -22,7 +22,7 @@ const SOURCE_LABELS: Record<SourceStackedBarSource, string> = {
   exp: '实验',
 };
 
-// 设计稿"6 大堆叠柱状图"通用组件。颜色全部接 --src-* token；可叠阈值线。
+// Generic component for the design's "6 stacked bar charts". All colors come from --src-* tokens; threshold lines can be overlaid.
 export function SourceStackedBar({
   data,
   height = 180,

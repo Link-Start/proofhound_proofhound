@@ -6,7 +6,7 @@ import { createModelSecretResolver } from '../model-secret';
 const ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
 describe('createModelSecretResolver', () => {
-  // 回归覆盖：server CryptoService.encryptApiKey() 写入的密文 worker 必须能解出原文
+  // Regression coverage: ciphertext written by server CryptoService.encryptApiKey() must be decryptable by the worker
   it('decrypts ciphertext produced by @proofhound/crypto.encryptApiKey', async () => {
     const plain = 'sk-prod-abc123';
     const apiKeyEncrypted = encryptApiKey(plain, ENCRYPTION_KEY);

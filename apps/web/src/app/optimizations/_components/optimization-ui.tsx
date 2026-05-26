@@ -294,7 +294,7 @@ export function SparkLine({
   totalRounds: number;
   target?: number;
   baseline?: number;
-  // 当 true 时,values[0] 即 source experiment 的基线值,values[1..N] 才是 R1..N
+  // When true, values[0] is the source experiment baseline; values[1..N] are R1..N
   hasBaseline?: boolean;
   status: OptimizationStatus;
 }) {
@@ -309,11 +309,11 @@ export function SparkLine({
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const yToPx = (v: number) => padT + (1 - Math.max(0, Math.min(1, v))) * innerH;
-  // hasBaseline: baseline 占 slot 0, R1..N 占 slot 1..N (共 N+1 slot)
-  // !hasBaseline: R1..N 占 slot 1..N (共 N slot,X 轴两端是 R1 和 RN)
+  // hasBaseline: baseline takes slot 0; R1..N take slots 1..N (total N+1 slots)
+  // !hasBaseline: R1..N take slots 1..N (total N slots; X-axis endpoints are R1 and RN)
   const slotsTotal = hasBaseline ? totalRounds : Math.max(1, totalRounds - 1);
   const xToPx = (slot: number) => padL + (slot / slotsTotal) * innerW;
-  // values[i] 在 slot i (hasBaseline)、slot i (no baseline, i=0 即 R1)
+  // values[i] is in slot i (hasBaseline); slot i (no baseline, i=0 means R1)
   const slotForIndex = (i: number) => (hasBaseline ? i : i);
 
   const points = values.map((v, i) => ({ x: xToPx(slotForIndex(i)), y: yToPx(v) }));
@@ -323,7 +323,7 @@ export function SparkLine({
   const areaPath = `${linePath} L${last.x.toFixed(2)},${H - padB} L${first.x.toFixed(2)},${H - padB} Z`;
 
   const yTicks = [0, 0.25, 0.5, 0.75, 1];
-  // X 轴 tick:hasBaseline 时 B + R1..N;否则 R1..N
+  // X-axis ticks: B + R1..N when hasBaseline; otherwise R1..N
   type XTick = { slot: number; label: string };
   const xTicks: XTick[] = (() => {
     if (hasBaseline) {
@@ -332,7 +332,7 @@ export function SparkLine({
         ...Array.from({ length: totalRounds }, (_, i) => ({ slot: i + 1, label: String(i + 1) })),
       ];
       if (all.length <= 11) return all;
-      // 太多轮次只展示首尾 + 4 个中间点
+      // For many rounds, only show first/last + 4 intermediate points
       const sample = [0, 1, ...Array.from({ length: 4 }, (_, i) => Math.round(((totalRounds - 1) * (i + 1)) / 4) + 1), totalRounds];
       const seen = new Set<number>();
       return all.filter((t) => sample.includes(t.slot) && (seen.has(t.slot) ? false : (seen.add(t.slot), true)));

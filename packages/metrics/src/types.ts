@@ -1,10 +1,10 @@
-// MetricsStrategy 接口 — 详见 docs/specs/07-code-structure.md §12.2
+// MetricsStrategy interface — see docs/specs/07-code-structure.md §12.2
 export type ProjectType = 'classification' | 'generative' | 'agent';
 
 export type JudgmentStatus = 'correct' | 'incorrect' | 'parse_error' | 'judge_error';
 export type RunStatus = 'success' | 'error' | 'timeout' | 'rate_limited';
 
-/** 一行 SQL 聚合输出 —— 已按 (decisionOutput, expectedOutput, judgmentStatus, status) 分桶 */
+/** One row of SQL aggregation output — already bucketed by (decisionOutput, expectedOutput, judgmentStatus, status) */
 export interface ClassificationAggregateRow {
   decisionOutput: string | null;
   expectedOutput: string | null;

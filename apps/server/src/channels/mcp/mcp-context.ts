@@ -1,18 +1,18 @@
-// mcp-context — MCP tool 入口的 actor / project context 适配层
-// 详见 docs/specs/08-saas-adapter-boundary.md §3.3
+// mcp-context — actor / project context adapter for MCP tool entrypoints
+// See docs/specs/08-saas-adapter-boundary.md §3.3
 //
-// 现状：
-//   - OSS 还没有真正挂载 MCP transport（mcp.controller.ts 是空 controller）；
-//     `McpToolContext` 是 tool dispatch 时的占位 shape，actor 字段历史上由 caller 直接传入。
-//   - 本文件不再硬编码默认 actor，转而依赖：
-//       1) `getMcpActor`: tool 内部已经拿到 caller 传入的 actor（向后兼容），直接返回；
-//          若缺失则抛 — 强制 caller 在 dispatch 阶段先调 `resolveMcpActor(metadata)`。
-//       2) `resolveMcpActor`: 接 McpAuthResolver，对 MCP 协议 metadata 做真校验。
-//          这是未来 MCP transport adapter 落地后的标准入口。
+// Current state:
+//   - OSS has not yet mounted a real MCP transport (mcp.controller.ts is an empty controller);
+//     `McpToolContext` is the placeholder shape used during tool dispatch; historically the actor field was passed in directly by the caller.
+//   - This file no longer hardcodes a default actor and instead relies on:
+//       1) `getMcpActor`: the tool already has the caller-provided actor (backward compatible) and returns it directly;
+//          throws if missing — forcing callers to invoke `resolveMcpActor(metadata)` first during dispatch.
+//       2) `resolveMcpActor`: wired to McpAuthResolver, performing real validation against MCP protocol metadata.
+//          This will be the standard entrypoint once the MCP transport adapter lands.
 //
-// TODO(mcp-transport): 等 MCP transport 真正接入时，由 transport adapter 在每个 tool dispatch
-// 前调用 `resolveMcpActor(metadata)` 并把结果写入 McpToolContext.actor，
-// 然后再调下面 tool handler，从而所有 tool handler 都通过 `getMcpActor(ctx)` 拿到经 resolver 校验的 actor。
+// TODO(mcp-transport): once the MCP transport is actually wired up, the transport adapter should call
+// `resolveMcpActor(metadata)` before each tool dispatch and write the result into McpToolContext.actor,
+// then invoke the tool handler — so every handler obtains the resolver-validated actor via `getMcpActor(ctx)`.
 
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
@@ -24,17 +24,17 @@ import type { ActorContext } from '../../common/actor-context';
 import type { McpToolContext } from './mcp.types';
 
 /**
- * 从已 dispatch 的 McpToolContext 中取出 actor。
- * caller 必须先通过 resolveMcpActor / dispatch 层把 actor 填入 ctx.actor。
+ * Extracts the actor from an already-dispatched McpToolContext.
+ * The caller must populate ctx.actor first via resolveMcpActor / the dispatch layer.
  *
- * 向后兼容：如果 caller 传入的 ctx.actor 缺失但 ctx.actorUserId 有值，沿用历史 fallback。
- * 该 fallback 将在 MCP transport adapter 接入后移除（届时强制要求 ctx.actor 由 resolver 注入）。
+ * Backward compatibility: if ctx.actor is missing but ctx.actorUserId is present, fall back to the legacy behavior.
+ * This fallback will be removed once the MCP transport adapter lands (at which point ctx.actor must be injected by the resolver).
  */
 export function getMcpActor(ctx: McpToolContext): CurrentUserPayload {
   if (ctx.actor) return ctx.actor;
 
-  // Fallback：MCP transport 还没接入；让 dev / 内部脚本仍可调用。
-  // 一旦 MCP transport 落地，这条路径应改为抛 UnauthorizedException。
+  // Fallback: the MCP transport is not yet wired up; keep dev / internal scripts working.
+  // Once the MCP transport lands, this path should throw UnauthorizedException instead.
   const projectContext = resolveProjectContext();
   return {
     sub: ctx.actorUserId,
@@ -52,9 +52,9 @@ export function resolveMcpProjectContext(ctx: McpToolContext) {
 }
 
 /**
- * MCP transport adapter dispatch 时使用：从协议级 metadata 拿 token，
- * 经 McpAuthResolver 校验 → 解出 ActorContext → 解出 ProjectContext，
- * 返回组装好的 McpToolContext。
+ * Used during MCP transport adapter dispatch: pull the token from protocol-level metadata,
+ * validate via McpAuthResolver → resolve ActorContext → resolve ProjectContext,
+ * and return the assembled McpToolContext.
  */
 @Injectable()
 export class McpDispatchContextFactory {
@@ -88,5 +88,5 @@ function toCurrentUserPayload(actor: ActorContext, projectId: string): CurrentUs
   };
 }
 
-// Re-export so MCP transport adapter 可以直接 import 时拿到具体的 401 类型
+// Re-export so the MCP transport adapter can import the concrete 401 type directly
 export { UnauthorizedException };

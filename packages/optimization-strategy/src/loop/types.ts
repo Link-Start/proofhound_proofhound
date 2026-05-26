@@ -1,4 +1,4 @@
-// 优化循环类型 — 详见 docs/specs/25-optimizations.md
+// Optimization loop types — see docs/specs/25-optimizations.md
 import type {
   InvokeLLMDependencies,
   LLMAdapter,
@@ -72,10 +72,10 @@ export interface ExperimentSnapshot {
   lastMetrics: MetricSnapshot;
 }
 
-// 字段白名单 — 三类用途分开表达
-// - promptVariables: 可作为 {{var}} 进入最终 prompt 的字段；新版本不能引入此列表外的变量
-// - analysisOnlyFields: 仅供分析 LLM 阅读，禁止进入最终 prompt
-// - modifiableSections: 生成阶段允许修改的 prompt 段（标题 / 任务说明 / 示例区等）
+// Field whitelist — three use cases expressed separately
+// - promptVariables: fields that can be embedded as {{var}} into the final prompt; the new version cannot introduce variables outside this list
+// - analysisOnlyFields: read-only for the analysis LLM; forbidden in the final prompt
+// - modifiableSections: prompt sections the generate stage is allowed to modify (title / task description / examples, etc.)
 export interface FieldWhitelist {
   promptVariables: string[];
   analysisOnlyFields?: string[];
@@ -91,7 +91,7 @@ export interface OptimizationConfig<TStrategyConfig = unknown> {
   taskModel: ModelInvocationConfig;
   strategyKey: 'error_pattern_analysis';
   strategyConfig: TStrategyConfig;
-  // 用户在创建优化时的额外指导（自然语言提示）— 透传到 generate 的 user prompt
+  // Extra user guidance at optimization creation (natural-language hint) — passed through to the generate user prompt
   optimizationHint?: string;
   promptLanguage?: PromptLanguageDto;
 }
@@ -116,8 +116,8 @@ export interface RoundOutcome {
   finishedAt: string;
 }
 
-// 跨轮历史快照 — 注入到非首轮的 analyze / generate LLM 调用，
-// 让 LLM 感知已尝试过的方向 + 效果，避免重复无效改动。详见 docs/specs/25-optimizations.md §11.3
+// Cross-round history snapshots — injected into non-first-round analyze / generate LLM calls,
+// letting the LLM see directions already tried + their effect, avoiding repeated ineffective changes. See docs/specs/25-optimizations.md §11.3
 export interface RoundHistoryAppliedChange {
   changeId: string;
   patternIds?: string[];
@@ -130,9 +130,9 @@ export interface RoundHistoryEntry {
   deltaFromPrev: number | null;
   changeSummary: string;
   appliedChanges: RoundHistoryAppliedChange[];
-  // 本轮 generate LLM 自报的「借鉴的优化技巧」(对应 optimization-tips.md 工具箱条目);
-  // 连续 ≥2 轮 !isBest 时用于在下一轮 generate user prompt 注入「工具箱轮换提示」段。
-  // 解析失败 / 旧数据回退 []。详见 docs/specs/25 §11.3「工具箱轮换提示」
+  // This round's generate LLM's self-reported "techniques drawn from" (corresponding to optimization-tips.md toolbox entries);
+  // when !isBest for ≥ 2 consecutive rounds, used to inject the "toolbox rotation hint" section into the next round's generate user prompt.
+  // Parse failure / legacy data → []. See docs/specs/25 §11.3 "toolbox rotation hint"
   appliedTips: string[];
   isBest: boolean;
   generatedFromBaseVersionId: string;
@@ -196,10 +196,10 @@ export interface ControlSignalReader {
   read(optimizationId: string): Promise<ControlSignal>;
 }
 
-// 回归样本检测需要"上一轮"实验的 run results
-// - 第 1 轮：read({currentRoundNumber: 1}) 应返回源实验最后一轮的 run results
-// - 第 N≥2 轮：返回第 N-1 轮 optimization 实验的 run results
-// 返回 null 表示无可比对的上一轮（此时跳过 regression 分析）
+// Regression sample detection needs run results from the "previous round" experiment
+// - Round 1: read({currentRoundNumber: 1}) should return the source experiment's last round run results
+// - Round N≥2: returns the run results of the N-1 round optimization experiment
+// Returning null means there is no comparable previous round (skip regression analysis at this point)
 export interface PreviousRoundReadInput {
   optimizationId: string;
   sourceExperimentId: string;
@@ -218,14 +218,14 @@ export interface LoopPorts {
 }
 
 export interface LoopDependencies {
-  // 注入到 invokeLLM 的 LLM adapter — 不传则走 llm-client 默认（生产用 anthropic/openai/azure）
+  // LLM adapter injected into invokeLLM — when not provided, falls back to llm-client default (anthropic/openai/azure in prod)
   llmAdapter?: LLMAdapter;
   limiter: RateLimiterLike;
   logger: LLMCallLogger;
   now?: () => number;
 }
 
-// 内部辅助：把 LoopDependencies 装成 invokeLLM 用的 dependencies — analyze/generate 共享
+// Internal helper: wrap LoopDependencies into dependencies usable by invokeLLM — shared by analyze/generate
 export function toInvokeLLMDependencies(deps: LoopDependencies): InvokeLLMDependencies {
   return {
     limiter: deps.limiter,

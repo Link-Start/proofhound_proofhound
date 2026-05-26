@@ -1,5 +1,5 @@
-// 准确率：正确数 / 已写入运行结果总数
-// 详见 docs/specs/24-experiments.md §6
+// Accuracy: correct count / total run results written
+// See docs/specs/24-experiments.md §6
 import type { ClassificationAggregateRow, MetricsStrategy } from '../types';
 
 export function computeAccuracy(rows: ClassificationAggregateRow[]): { accuracy: number | null; correct: number; total: number } {

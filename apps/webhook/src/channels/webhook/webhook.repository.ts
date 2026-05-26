@@ -75,15 +75,15 @@ export class WebhookRepository {
   constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
 
   /**
-   * 通过 slug + pathName + token hash 一次性定位 connector + 它的 active webhook token。
+   * Locates a connector + its active webhook token in a single query via slug + pathName + token hash.
    *
-   * 设计:
-   * - 单 query 联查 connectors 与 ph_core.tokens (scope='webhook' AND connector_id=c.id);
-   * - token_hash 必须匹配,否则返回 null;
-   * - expires_at 即便过期也返回 row,由调用方判定 401 invalid_webhook_token / expired_webhook_token;
-   * - 任何 connector 不存在 / token 不匹配的情况都返回 null,调用方统一抛 401(避免 enumerate)。
+   * Design:
+   * - One query joins connectors with ph_core.tokens (scope='webhook' AND connector_id=c.id);
+   * - token_hash must match, otherwise return null;
+   * - expires_at: even when expired, return the row, and let the caller decide 401 invalid_webhook_token / expired_webhook_token;
+   * - any case where the connector does not exist / the token does not match returns null; the caller uniformly throws 401 (to avoid enumeration).
    *
-   * 详见 docs/specs/03-orchestration.md §3.6 / docs/specs/06-database-schema.md §3.2。
+   * See docs/specs/03-orchestration.md §3.6 / docs/specs/06-database-schema.md §3.2.
    */
   async findConnectorWithValidToken(
     webhookSlug: string,

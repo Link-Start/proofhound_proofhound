@@ -1,5 +1,5 @@
-// BullmqService 的测试替身:不连 Redis,enqueue 时直接把 run_result 写进 ph_runs.run_results
-// 模拟 worker 完成,让 ExperimentWorkflow 的 pollUntilBatchDone 立即满足。
+// Test double for BullmqService: does not connect to Redis; on enqueue, writes the run_result directly into ph_runs.run_results
+// to simulate worker completion, so ExperimentWorkflow's pollUntilBatchDone is satisfied immediately.
 
 import type { DbClient } from '@proofhound/db';
 import { createLogger } from '@proofhound/logger';
@@ -9,9 +9,9 @@ import { sql } from 'drizzle-orm';
 const logger = createLogger('bullmq.mock', { service: 'integration-test' });
 
 export type MockBullmqBehavior =
-  | 'all_success' // 每个 sample 都写 status='success', judgment='correct'
-  | 'all_error' // 每个 sample 都写 status='error', judgment=null
-  | 'never_complete'; // 不写 run_result,让 workflow 一直 poll(测超时用,慎用)
+  | 'all_success' // Write status='success', judgment='correct' for every sample
+  | 'all_error' // Write status='error', judgment=null for every sample
+  | 'never_complete'; // Do not write run_result, letting the workflow keep polling (for timeout tests; use with caution)
 
 export interface EnqueueCall {
   payload: LlmJobPayload;
@@ -38,7 +38,7 @@ export class MockBullmqService {
     this.calls = [];
   }
 
-  // 与真实 BullmqService.enqueueLlmJob 同签名
+  // Same signature as the real BullmqService.enqueueLlmJob
   async enqueueLlmJob(payload: LlmJobPayload, runResultId?: string): Promise<string> {
     const rrId = runResultId ?? payload.runResultId;
     if (!rrId) {

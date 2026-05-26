@@ -1,7 +1,7 @@
 import type { KafkaInputConfig, KafkaOutputConfig, RedisInputConfig, RedisOutputConfig } from '@proofhound/shared';
 
 // ---------------------------------------------------------------------------
-// 队列凭证 shape(由 server 端从本地连接器配置解密后传入)
+// Queue credentials shape (passed in by the server after decrypting the local connector config)
 // ---------------------------------------------------------------------------
 
 export interface RedisBrokerCredentials {
@@ -24,7 +24,7 @@ export interface KafkaBrokerCredentials {
 export type BrokerCredentials = RedisBrokerCredentials | KafkaBrokerCredentials;
 
 // ---------------------------------------------------------------------------
-// Peek 协议
+// Peek protocol
 // ---------------------------------------------------------------------------
 
 export interface PeekMessage {
@@ -47,7 +47,7 @@ export interface PeekResult {
 }
 
 // ---------------------------------------------------------------------------
-// Consume 协议
+// Consume protocol
 // ---------------------------------------------------------------------------
 
 export interface ConsumeMessage {
@@ -77,7 +77,7 @@ export interface InputDriver<TBroker = BrokerCredentials, TConfig = unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// Probe 协议
+// Probe protocol
 // ---------------------------------------------------------------------------
 
 export interface ProbeResult {

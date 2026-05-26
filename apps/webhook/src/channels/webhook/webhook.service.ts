@@ -182,12 +182,12 @@ export class WebhookService {
   }
 
   /**
-   * 校验 webhook 入站凭证:
-   * - 通过 slug + pathName + token_hash 一次性查 connector + 它的 active webhook token;
-   * - 任何"connector 不存在 / token 不匹配"统一返回 401 `invalid_webhook_token`,避免 enumerate;
-   * - 过期则单独返回 `expired_webhook_token`,与 invalid 区分以便上游运维。
+   * Validates inbound webhook credentials:
+   * - looks up the connector + its active webhook token via slug + pathName + token_hash in a single query;
+   * - any "connector does not exist / token does not match" uniformly returns 401 `invalid_webhook_token` to avoid enumeration;
+   * - expired returns `expired_webhook_token` separately, distinguished from invalid for upstream operations.
    *
-   * 详见 docs/specs/03-orchestration.md §3.6。
+   * See docs/specs/03-orchestration.md §3.6.
    */
   private async authorizeConnector(input: {
     webhookSlug: string;

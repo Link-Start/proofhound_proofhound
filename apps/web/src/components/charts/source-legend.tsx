@@ -12,7 +12,7 @@ const LABELS: Record<SourceBucket, string> = {
   exp: '实验',
 };
 
-// 设计稿的 4 个 legend 项（每张图卡 footer 一组：色块 + 标签 + 数值）
+// The 4 legend items in the design (one set per chart card footer: color block + label + value)
 export function SourceLegend({
   values,
   format,

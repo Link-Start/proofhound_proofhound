@@ -203,7 +203,7 @@ describe('mapProjectModelToOption', () => {
       }),
     );
     expect(option.tpm).toBe('∞');
-    // rpm 字段类型是 number，输入 -1，但前端 UI 不直接展示这个数字，pricePer1Mt 与 contextWindow 仍正确
+    // The rpm field type is number; entering -1 — the frontend UI does not display this number directly; pricePer1Mt and contextWindow are still correct
     expect(option.rpm).toBe(-1);
   });
 

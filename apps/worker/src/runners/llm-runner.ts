@@ -53,8 +53,8 @@ export function createLlmRunner(deps: LlmRunnerDependencies) {
   ): Promise<LlmRunnerResult> {
     const runResultId = input.runResultId ?? randomUUID();
     const model = await loadModelInvocationConfig(deps, input.modelId);
-    // 实验级 RPM/TPM/并发 与模型级取 min（SPEC 21 §配额 / SPEC 24 §4：模型级是天花板，
-    // 实验级仅做自我节流，不能放大）。各字段独立 fallback：缺一不影响其它。
+    // Take min(experiment-level RPM/TPM/concurrency, model-level) (SPEC 21 §quota / SPEC 24 §4: model-level is the ceiling;
+    // experiment-level only self-throttles and cannot exceed). Each field has an independent fallback: missing one does not affect the others.
     const effectiveModel = applyExperimentLimits(model, input.limits);
 
     const expectedOutput = input.judgment?.expectedOutput ?? null;
@@ -113,8 +113,8 @@ export function createLlmRunner(deps: LlmRunnerDependencies) {
           bullmqJobId: jobContext.bullmqJobId,
           attempt: jobContext.attempt,
         },
-        // 判定策略期望 parsed[expected_field] 这类结构;不传 parseResponse 时 parsed=undefined,
-        // 整个 metrics 不可信。先按严格 JSON 解析,失败后兜底解析 Markdown JSON fence。
+        // The judgment strategy expects a parsed[expected_field]-style structure; when parseResponse is not provided, parsed=undefined,
+        // and the whole metrics is unreliable. Parse strict JSON first; on failure, fall back to parsing a Markdown JSON fence.
         parseResponse: parseJsonResponseWithMarkdownFallback,
         evaluateJudgment: evaluateJudgmentHook,
       },

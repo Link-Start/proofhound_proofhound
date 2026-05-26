@@ -30,7 +30,7 @@ function applyTheme(theme: ThemeName) {
 }
 
 export function useThemePreference() {
-  // 初值用 SSR 默认 'system'，mount 后同步真实 localStorage 值，避免 hydration mismatch
+  // Initial value uses SSR default 'system'; after mount, sync with the real localStorage value to avoid hydration mismatch
   const [theme, setTheme] = useState<ThemeName>('system');
 
   useEffect(() => {

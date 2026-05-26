@@ -76,13 +76,13 @@ describe('aggregateExperimentMetrics', () => {
     expect(metrics.perClass).toHaveLength(2);
     const labels = metrics.perClass?.map((entry) => entry.label).sort();
     expect(labels).toEqual(['negative', 'positive']);
-    // tp / fn 必须透出,前端 Confusion MiniBar 依赖这两个字段
+    // tp / fn must be exposed; the frontend Confusion MiniBar depends on these two fields
     for (const entry of metrics.perClass ?? []) {
       expect(typeof entry.tp).toBe('number');
       expect(typeof entry.fn).toBe('number');
       expect(entry.support).toBe((entry.tp ?? 0) + (entry.fn ?? 0));
     }
-    // 未传 latency 时三字段应为 null
+    // When latency is not provided, all three fields should be null
     expect(metrics.averageLatencyMs).toBeNull();
     expect(metrics.p50LatencyMs).toBeNull();
     expect(metrics.p95LatencyMs).toBeNull();

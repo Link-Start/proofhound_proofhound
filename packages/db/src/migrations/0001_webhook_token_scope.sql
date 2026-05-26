@@ -1,12 +1,12 @@
--- Webhook token 迁移到 scope='webhook' + connector_id 正向关联
--- 详见 docs/specs/06-database-schema.md §3.2 / §4.5
+-- Webhook token migration: switch to scope='webhook' + forward link via connector_id
+-- See docs/specs/06-database-schema.md §3.2 / §4.5
 --
--- 顺序：
---   a) 先在 api_tokens 上加 connector_id 列
---   b) 用 connectors.webhook_token_id 回填到 api_tokens.connector_id 并把 scope 升级为 'webhook'
---   c) 删除 connectors.webhook_token_id 旧 FK + 列
---   d) 升级 api_tokens 的 scope CHECK 与 scope_fields CHECK
---   e) 新增 connector_id FK + partial index
+-- Order:
+--   a) Add the connector_id column to api_tokens
+--   b) Backfill api_tokens.connector_id from connectors.webhook_token_id and upgrade scope to 'webhook'
+--   c) Drop the legacy connectors.webhook_token_id FK + column
+--   d) Upgrade api_tokens' scope CHECK and scope_fields CHECK
+--   e) Add the connector_id FK + partial index
 ALTER TABLE "ph_core"."api_tokens" ADD COLUMN "connector_id" uuid;--> statement-breakpoint
 UPDATE "ph_core"."api_tokens" AS t
 SET scope = 'webhook',

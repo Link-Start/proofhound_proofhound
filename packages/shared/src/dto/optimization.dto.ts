@@ -13,7 +13,7 @@ export type OptimizationControlActionDto = z.infer<typeof optimizationControlAct
 export const optimizationStartingModeSchema = z.enum(['from_experiment', 'from_prompt_version', 'from_dataset_only']);
 export type OptimizationStartingModeDto = z.infer<typeof optimizationStartingModeSchema>;
 
-// 策略只用字符串：可插拔，不加 enum 约束（SPEC 25 §3）
+// Strategies use plain strings: pluggable, no enum constraint (SPEC 25 §3)
 export const optimizationStrategySchema = z.string().trim().min(1).max(64);
 export type OptimizationStrategyDto = z.infer<typeof optimizationStrategySchema>;
 
@@ -63,7 +63,7 @@ export type OptimizationRunConfigDto = z.infer<typeof optimizationRunConfigSchem
 
 export const optimizationLoopLimitsSchema = z.object({
   maxRounds: z.number().int().min(1).max(50),
-  // 0 = 不启用"连续无提升"早停（service 尚未消费该字段，待优化落地）
+  // 0 = disable "stop after no improvement"; the service has not yet consumed this field, pending optimization landing
   stopAfterNoImprovementRounds: z.number().int().min(0).max(20),
 });
 export type OptimizationLoopLimitsDto = z.infer<typeof optimizationLoopLimitsSchema>;
@@ -71,7 +71,7 @@ export type OptimizationLoopLimitsDto = z.infer<typeof optimizationLoopLimitsSch
 export const optimizationBestMetricsSchema = z.record(z.string(), z.number()).nullable();
 export type OptimizationBestMetricsDto = z.infer<typeof optimizationBestMetricsSchema>;
 
-// finalize 时落库的收尾摘要;Service 层会做 reason ≤500 字符截断防止上游 API 报文外泄到前端
+// Closing summary persisted at finalize; the service layer truncates reason to ≤500 chars to prevent upstream API payloads from leaking to the frontend
 export const optimizationSummarySchema = z.object({
   kind: optimizationStatusSchema,
   reason: z.string(),
@@ -115,13 +115,13 @@ export const optimizationListItemSchema = z.object({
   bestVersionId: z.string().uuid().nullable(),
   bestVersionNumber: z.number().int().positive().nullable(),
   bestMetrics: optimizationBestMetricsSchema,
-  // 每轮主指标（第一个目标的 metric）值，0-based 按 round_index 升序——LiveCard sparkline 直接消费
-  // 若 trendHasBaseline 为 true,trend[0] 即 source experiment 的基线值,trend[1+] 才是各轮值
+  // Per-round primary metric (the first goal's metric) value, 0-based by round_index ascending — consumed directly by LiveCard sparkline
+  // When trendHasBaseline is true, trend[0] is the source experiment baseline value; trend[1+] are per-round values
   trend: z.array(z.number()).nullable().optional(),
   trendHasBaseline: z.boolean().optional(),
-  // finalize 时收尾摘要;失败任务 reason 是用户看到的核心信息
+  // Closing summary at finalize; for failed tasks, reason is the key user-facing message
   summary: optimizationSummarySchema.nullable(),
-  // 仅当分析 LLM 致命错时填，用于前端"分析阶段错误"细节
+  // Filled only on fatal analysis-LLM errors; used by the frontend for "analysis-stage error" detail
   analysisFailureReason: z.string().nullable(),
 
   dbosWorkflowId: z.string().nullable(),
@@ -383,8 +383,8 @@ export const optimizationDetailPromptDiffLineSchema = z.object({
 });
 export type OptimizationDetailPromptDiffLineDto = z.infer<typeof optimizationDetailPromptDiffLineSchema>;
 
-// 每轮分步状态:与 ph_runs.optimization_round_steps 一一对应。
-// 详情页 stepper 据此渲染圆点与"本步错误"banner;详见 docs/specs/25-optimizations.md §12。
+// Per-round step status: one-to-one with ph_runs.optimization_round_steps.
+// The detail-page stepper renders dots and the "step error" banner from this; see docs/specs/25-optimizations.md §12.
 export const optimizationDetailRoundStepKindSchema = z.enum(['error_analysis', 'generate_prompt', 'experiment']);
 export type OptimizationDetailRoundStepKindDto = z.infer<typeof optimizationDetailRoundStepKindSchema>;
 
@@ -432,14 +432,14 @@ export const optimizationDetailIterationRoundSchema = z.object({
   experimentLink: z.string().optional(),
   totalElapsed: z.string().optional(),
   totalCost: z.string().optional(),
-  // 三步状态 — Phase B 起每轮一开始即可见(experiments 行尚未创建时也已有 round_steps)。
-  // 老 mock 数据(devMockTimeline.rounds)无 steps 字段,default([]) 保证 safeParse 兼容。
+  // Three-step status — starting from Phase B, visible at round start (round_steps exist before the experiments row is created).
+  // Legacy mock data (devMockTimeline.rounds) has no steps field; default([]) keeps safeParse compatible.
   steps: z.array(optimizationDetailRoundStepSchema).default([]),
-  // 每轮优化目标 chip:右上角紧凑展示"目标 vs 当前轮"。
-  // mock 数据(devMockTimeline.rounds)旧版无此字段,default([]) 保证 safeParse 兼容。
+  // Per-round optimization goal chip: a compact "goal vs current round" displayed at top-right.
+  // Older mock data (devMockTimeline.rounds) does not have this field; default([]) keeps safeParse compatible.
   goalChips: z.array(optimizationDetailRoundGoalChipSchema).default([]),
-  // SPEC 25 §11: LLM 多次未保留 base 已用占位时,generate 在 newPromptBody 末尾自动补回缺失占位。
-  // 设为 true 时前端轮次卡片显示"系统补丁" chip 提醒用户人工微调占位融入位置。
+  // SPEC 25 §11: when the LLM repeatedly fails to retain the base placeholders already in use, generate auto-appends the missing placeholders at the end of newPromptBody.
+  // When set to true, the frontend round card shows a "system patch" chip alerting the user to tweak placeholder embedding manually.
   autoPatched: z.boolean().optional(),
   patchedVariables: z.array(z.string()).optional(),
 });
@@ -526,7 +526,7 @@ export const optimizationDetailSchema = optimizationListItemSchema.extend({
 export type OptimizationDetailDto = z.infer<typeof optimizationDetailSchema>;
 
 // Dev-only mock timeline carried inside optimizations.run_config.devMockTimeline.
-// Workflow 落地后改从 run_results 真聚合,届时此字段废弃。详见 docs/specs/25-optimizations.md。
+// Once the workflow lands, switch to aggregating from run_results; at that point this field is deprecated. See docs/specs/25-optimizations.md.
 export const optimizationDevMockTimelineSchema = z.object({
   trend: z.array(optimizationDetailTrendSeriesSchema).optional(),
   trendBaselineRef: z.number().nullable().optional(),

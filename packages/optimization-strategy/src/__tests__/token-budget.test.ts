@@ -54,7 +54,7 @@ describe('fitSamplesToBudget', () => {
   it('respects minSamples even if budget exceeded', () => {
     const big = (id: string) => sample(id, 'x'.repeat(4000));
     const samples = [big('a'), big('b'), big('c')];
-    const r = fitSamplesToBudget(samples, 10, 2); // budget 太小但 minSamples=2
+    const r = fitSamplesToBudget(samples, 10, 2); // Budget too small but minSamples=2
     expect(r.fitted).toHaveLength(2);
     expect(r.dropped).toHaveLength(1);
   });
@@ -100,7 +100,7 @@ describe('truncateLongText', () => {
     const r = truncateLongText(long, 60);
     expect(r).toContain(TRUNCATION_MARKER);
     expect(r.length).toBeLessThanOrEqual(60);
-    expect(r.startsWith('1')).toBe(true); // head 保留
-    expect(r.endsWith('3')).toBe(true); // tail 保留
+    expect(r.startsWith('1')).toBe(true); // head kept
+    expect(r.endsWith('3')).toBe(true); // tail kept
   });
 });
