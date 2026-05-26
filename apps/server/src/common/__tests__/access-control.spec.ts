@@ -14,30 +14,18 @@ describe('SelfHostedAccessControl', () => {
 
     expect(() => accessControl.assertCan(actor, 'platform_manage')).not.toThrow();
     expect(() => accessControl.assertCan(actor, 'project_write', { projectId })).not.toThrow();
+    expect(() => accessControl.assertCan(actor, 'user_token_manage')).not.toThrow();
   });
 
-  it('allows global MCP token to use project tools but not platform management', () => {
+  it('allows user_token to use project + token actions but not platform management', () => {
     const actor: ActorContext = {
       actorId: '22222222-2222-4222-8222-222222222222',
-      actorKind: 'global_mcp_token',
+      actorKind: 'user_token',
     };
 
     expect(() => accessControl.assertCan(actor, 'mcp_tool')).not.toThrow();
     expect(() => accessControl.assertCan(actor, 'project_write', { projectId })).not.toThrow();
-    expect(() => accessControl.assertCan(actor, 'platform_manage')).toThrow(ForbiddenException);
-  });
-
-  it('limits project API token to its bound project', () => {
-    const actor: ActorContext = {
-      actorId: '33333333-3333-4333-8333-333333333333',
-      actorKind: 'project_api_token',
-      projectId,
-    };
-
-    expect(() => accessControl.assertCan(actor, 'project_read', { projectId })).not.toThrow();
-    expect(() =>
-      accessControl.assertCan(actor, 'project_read', { projectId: '44444444-4444-4444-8444-444444444444' }),
-    ).toThrow(ForbiddenException);
+    expect(() => accessControl.assertCan(actor, 'user_token_manage')).not.toThrow();
     expect(() => accessControl.assertCan(actor, 'platform_manage')).toThrow(ForbiddenException);
   });
 });

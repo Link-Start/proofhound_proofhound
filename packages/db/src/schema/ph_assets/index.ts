@@ -16,7 +16,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { apiTokens, projects } from '../ph_core/index';
+import { projects } from '../ph_core/index';
 
 export const phAssets = pgSchema('ph_assets');
 
@@ -247,7 +247,8 @@ export const connectors = phAssets.table(
     config: jsonb('config').notNull(),
     configEncrypted: jsonb('config_encrypted'),
     webhookPath: text('webhook_path'),
-    webhookTokenId: uuid('webhook_token_id').references(() => apiTokens.id, { onDelete: 'set null' }),
+    // webhook 入站 token 不在本表存引用；存于 ph_core.tokens (scope='webhook' AND connector_id=this.id)
+    // 详见 docs/specs/06-database-schema.md §3.2 / §4.5
     ipWhitelist: jsonb('ip_whitelist').$type<string[]>(),
     healthStatus: text('health_status').notNull().default('unknown'),
     lastProbedAt: timestamp('last_probed_at', { withTimezone: true }),

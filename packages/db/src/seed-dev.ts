@@ -10,7 +10,6 @@ import { LOCAL_PROJECT_ID } from '@proofhound/shared';
 import { and, eq, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import { createDbClient } from './client';
 import {
-  apiTokens,
   connectors,
   datasetSamples,
   datasets,
@@ -23,8 +22,9 @@ import {
   promptVersions,
   projects,
   runResults,
+  tokens,
 } from './schema';
-import { DEV_API_TOKENS } from './fixtures/dev/api-tokens';
+import { DEV_TOKENS } from './fixtures/dev/tokens';
 import { DEV_CONNECTORS } from './fixtures/dev/connectors';
 import { DEV_EXPERIMENTS, DEV_EXPERIMENT_DATASETS } from './fixtures/dev/experiments';
 import { DEV_MODELS } from './fixtures/dev/models';
@@ -255,34 +255,8 @@ async function main(): Promise<void> {
     seededDevModels = true;
   }
 
-  for (const fixture of DEV_API_TOKENS) {
-    const tokenHash = createHash('sha256').update(fixture.plaintext).digest('hex');
-    await db
-      .insert(apiTokens)
-      .values({
-        id: fixture.id,
-        scope: 'project_api',
-        projectId: LOCAL_PROJECT_ID,
-        name: fixture.name,
-        tokenHash,
-        prefix: fixture.prefix,
-        ipWhitelist: null,
-        createdBy: LOCAL_ACTOR_ID,
-      })
-      .onConflictDoUpdate({
-        target: apiTokens.id,
-        set: {
-          scope: 'project_api',
-          projectId: LOCAL_PROJECT_ID,
-          name: fixture.name,
-          tokenHash,
-          prefix: fixture.prefix,
-          revokedAt: null,
-        },
-      });
-  }
-  console.warn(`✅  连接器 API Token 数据就绪：${DEV_API_TOKENS.length} 条`);
-
+  // connector 必须先于 webhook token 写入：webhook token 通过外键 connector_id 反向关联
+  // (ph_core.tokens, scope='webhook' AND connector_id=<connector.id>),详见 docs/specs/06-database-schema.md §3.2 / §4.5
   for (const fixture of DEV_CONNECTORS) {
     const shape = getConnectorShape(fixture.kind);
     await db
@@ -297,7 +271,6 @@ async function main(): Promise<void> {
         config: fixture.config,
         configEncrypted: null,
         webhookPath: fixture.kind === 'webhook-input' ? fixture.webhookPath : null,
-        webhookTokenId: fixture.kind === 'webhook-input' ? fixture.tokenId : null,
         ipWhitelist: null,
         createdBy: LOCAL_ACTOR_ID,
       })
@@ -312,7 +285,6 @@ async function main(): Promise<void> {
           config: fixture.config,
           configEncrypted: null,
           webhookPath: fixture.kind === 'webhook-input' ? fixture.webhookPath : null,
-          webhookTokenId: fixture.kind === 'webhook-input' ? fixture.tokenId : null,
           ipWhitelist: null,
           deletedAt: null,
           updatedAt: new Date(),
@@ -320,6 +292,36 @@ async function main(): Promise<void> {
       });
   }
   console.warn(`✅  连接器数据就绪：${DEV_CONNECTORS.length} 条`);
+
+  for (const fixture of DEV_TOKENS) {
+    const tokenHash = createHash('sha256').update(fixture.plaintext).digest('hex');
+    await db
+      .insert(tokens)
+      .values({
+        id: fixture.id,
+        scope: 'webhook',
+        projectId: LOCAL_PROJECT_ID,
+        connectorId: fixture.connectorId,
+        name: fixture.name,
+        tokenHash,
+        prefix: fixture.prefix,
+        ipWhitelist: null,
+        createdBy: LOCAL_ACTOR_ID,
+      })
+      .onConflictDoUpdate({
+        target: tokens.id,
+        set: {
+          scope: 'webhook',
+          projectId: LOCAL_PROJECT_ID,
+          connectorId: fixture.connectorId,
+          name: fixture.name,
+          tokenHash,
+          prefix: fixture.prefix,
+          revokedAt: null,
+        },
+      });
+  }
+  console.warn(`✅  连接器 webhook token 数据就绪：${DEV_TOKENS.length} 条`);
 
   for (const fixture of DEV_EXPERIMENT_DATASETS) {
     if (fixture.sampleCount !== fixture.samples.length) {

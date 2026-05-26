@@ -18,9 +18,11 @@ import {
   connectorIdParamSchema,
   connectorListQuerySchema,
   createConnectorSchema,
+  createWebhookTokenSchema,
   peekConnectorRequestSchema,
   updateConnectorSchema,
 } from '@proofhound/shared';
+import { z } from 'zod';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { LocalActorGuard } from '../../common/guards/local-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
@@ -117,6 +119,72 @@ export class ConnectorController {
     const parse = peekConnectorRequestSchema.safeParse(rawBody ?? {});
     if (!parse.success) throw new BadRequestException(parse.error.issues);
     return this.service.peek(resolveProjectContext(actor).projectId, this.parseConnectorId(connectorId), parse.data, actor);
+  }
+
+  // -------------------------------------------------------------------------
+  // per-connector webhook tokens
+  // 详见 docs/specs/26-connectors.md / docs/specs/06-database-schema.md §3.2
+  // -------------------------------------------------------------------------
+
+  @Get(':connectorId/webhook-tokens')
+  async listWebhookTokens(
+    @Param('connectorId') connectorId: string,
+    @CurrentUser() actor: CurrentUserPayload,
+  ) {
+    return this.service.listWebhookTokens(
+      resolveProjectContext(actor).projectId,
+      this.parseConnectorId(connectorId),
+      actor,
+    );
+  }
+
+  @Post(':connectorId/webhook-tokens')
+  async createWebhookToken(
+    @Param('connectorId') connectorId: string,
+    @Body() rawBody: unknown,
+    @CurrentUser() actor: CurrentUserPayload,
+  ) {
+    const parse = createWebhookTokenSchema.safeParse(rawBody ?? {});
+    if (!parse.success) throw new BadRequestException(parse.error.issues);
+    return this.service.createWebhookToken(
+      resolveProjectContext(actor).projectId,
+      this.parseConnectorId(connectorId),
+      parse.data,
+      actor,
+    );
+  }
+
+  @Delete(':connectorId/webhook-tokens/:tokenId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async revokeWebhookToken(
+    @Param('connectorId') connectorId: string,
+    @Param('tokenId') tokenId: string,
+    @CurrentUser() actor: CurrentUserPayload,
+  ) {
+    const parsedTokenId = z.string().uuid().safeParse(tokenId);
+    if (!parsedTokenId.success) throw new BadRequestException(parsedTokenId.error.issues);
+    await this.service.revokeWebhookToken(
+      resolveProjectContext(actor).projectId,
+      this.parseConnectorId(connectorId),
+      parsedTokenId.data,
+      actor,
+    );
+  }
+
+  @Get(':connectorId/webhook-tokens/:tokenId/plaintext')
+  async revealWebhookToken(
+    @Param('connectorId') connectorId: string,
+    @Param('tokenId') tokenId: string,
+    @CurrentUser() actor: CurrentUserPayload,
+  ) {
+    const parsedTokenId = z.string().uuid().safeParse(tokenId);
+    if (!parsedTokenId.success) throw new BadRequestException(parsedTokenId.error.issues);
+    return this.service.revealWebhookToken(
+      resolveProjectContext(actor).projectId,
+      this.parseConnectorId(connectorId),
+      parsedTokenId.data,
+      actor,
+    );
   }
 
   private parseConnectorId(connectorId: string): string {

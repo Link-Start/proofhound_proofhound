@@ -31,16 +31,14 @@ import {
 import {
   useConnector,
   useConnectorReferences,
+  useConnectorWebhookTokens,
+  useCreateConnectorWebhookToken,
   useDeleteConnector,
   usePeekConnector,
+  useRevealConnectorWebhookToken,
+  useRevokeConnectorWebhookToken,
   useUpdateConnector,
 } from '@/hooks/connector';
-import {
-  useCreateApiToken,
-  useDeleteApiToken,
-  useApiTokens,
-  useRevealApiToken,
-} from '@/hooks/api-token';
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { useI18n, type Language, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
@@ -49,10 +47,10 @@ import { isCanonicalUuid } from '@/lib/uuid';
 import type {
   ConnectorDetailDto,
   ConnectorDirection,
+  ConnectorWebhookTokenSummaryDto,
+  CreateWebhookTokenResponseDto,
   KafkaConnectionConfig,
   PeekConnectorMessageDto,
-  CreateApiTokenResponseDto,
-  ApiTokenSummaryDto,
   RedisConnectionConfig,
   UpdateConnectorDto,
 } from '@proofhound/shared';
@@ -86,11 +84,11 @@ const LATEST_SCHEMA_COLUMNS: TableColumn[] = [
 
 const TOKEN_COLUMNS: TableColumn[] = [
   { key: 'name', width: 'normal' },
-  { key: 'token', width: 'wide' },
-  { key: 'createdBy', width: 'compact' },
-  { key: 'createdAt', width: 'normal' },
-  { key: 'expiresAt', width: 'normal' },
-  { key: 'actions', width: 'narrow' },
+  { key: 'token', width: 'flex', minPx: 220 },
+  { key: 'lastUsedAt', width: 'compact' },
+  { key: 'expiresAt', width: 'compact' },
+  { key: 'createdAt', width: 'compact' },
+  { key: 'actions', width: 'compact', sticky: 'right' },
 ];
 
 const DEFAULT_WEBHOOK_SCHEMA_ZH = {
@@ -139,7 +137,6 @@ interface DetailFormState {
   configTopic: string;
   configFromBeginning: boolean;
   configPartitionKey: string;
-  tokenId: string;
   ipWhitelistRaw: string;
   webhookMode: 'sync' | 'async';
   webhookTimeoutSeconds: string;
@@ -148,6 +145,7 @@ interface DetailFormState {
   webhookSlug: string;
   webhookPathName: string;
   requestFields: RequestField[];
+  // 历史字段已删除:tokenId / token 选择交由 per-connector webhook token 面板管理。
 }
 
 interface DeleteState {
@@ -177,13 +175,18 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
   const canUseApi = isCanonicalUuid(projectId) && isCanonicalUuid(connectorId);
   const query = useConnector(canUseApi ? projectId : '', canUseApi ? connectorId : '');
   const referencesQuery = useConnectorReferences(projectId, connectorId, canUseApi);
-  const tokenQuery = useApiTokens();
+  const isWebhookInput = canUseApi; // hook gate; webhook-only narrowing happens via enabled flag inside body
+  const webhookTokensQuery = useConnectorWebhookTokens(
+    canUseApi ? projectId : '',
+    canUseApi ? connectorId : '',
+    isWebhookInput,
+  );
   const deleteMutation = useDeleteConnector(projectId);
   const updateMutation = useUpdateConnector(projectId);
   const peekMutation = usePeekConnector(projectId);
-  const createTokenMutation = useCreateApiToken();
-  const revealTokenMutation = useRevealApiToken();
-  const deleteTokenMutation = useDeleteApiToken();
+  const createTokenMutation = useCreateConnectorWebhookToken(projectId, connectorId);
+  const revealTokenMutation = useRevealConnectorWebhookToken(projectId, connectorId);
+  const revokeTokenMutation = useRevokeConnectorWebhookToken(projectId, connectorId);
   const connector = query.data ?? null;
   const defaultWebhookSlug = useMemo(
     () => buildDefaultWebhookSlug(connector?.webhookPath ?? connector?.id ?? ''),
@@ -197,11 +200,15 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
   const [deleteState, setDeleteState] = useState<DeleteState>(EMPTY_DELETE);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [generatedTokenResult, setGeneratedTokenResult] = useState<CreateApiTokenResponseDto | null>(null);
+  const [generatedTokenResult, setGeneratedTokenResult] = useState<CreateWebhookTokenResponseDto | null>(null);
   const [revealedTokens, setRevealedTokens] = useState<Record<string, string>>({});
   const [visibleTokenIds, setVisibleTokenIds] = useState<Set<string>>(() => new Set());
   const [tokenCreate, setTokenCreate] = useState<TokenCreateState>(EMPTY_TOKEN_CREATE);
-  const [tokenDeleteTarget, setTokenDeleteTarget] = useState<ApiTokenSummaryDto | null>(null);
+  const [tokenRevokeTarget, setTokenRevokeTarget] = useState<ConnectorWebhookTokenSummaryDto | null>(null);
+  const tokenRows = useMemo<ConnectorWebhookTokenSummaryDto[]>(
+    () => mergeGeneratedToken(webhookTokensQuery.data?.data ?? [], generatedTokenResult),
+    [webhookTokensQuery.data?.data, generatedTokenResult],
+  );
 
   /* eslint-disable react-hooks/set-state-in-effect -- async connector detail seeds the local edit draft once per connector id */
   useEffect(() => {
@@ -211,7 +218,7 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
     setRevealedTokens({});
     setVisibleTokenIds(new Set());
     setTokenCreate(EMPTY_TOKEN_CREATE);
-    setTokenDeleteTarget(null);
+    setTokenRevokeTarget(null);
     setHydratedConnectorId(connector.id);
   }, [connector, defaultWebhookSlug, defaultWebhookSchema, hydratedConnectorId]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -229,9 +236,9 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
 
   const curlExample = useMemo(() => {
     const tokenLabel =
-      generatedTokenResult && visibleTokenIds.has(generatedTokenResult.token.id)
+      generatedTokenResult && visibleTokenIds.has(generatedTokenResult.id)
         ? generatedTokenResult.plaintext
-        : '<PROJECT_API_TOKEN>';
+        : '<WEBHOOK_TOKEN>';
     return [
       `curl -X POST "$PROOFHOUND_API_ORIGIN${webhookApiPath}"`,
       `  -H "Authorization: Bearer ${tokenLabel}"`,
@@ -246,9 +253,9 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
   );
   const asyncQueryCurlExample = useMemo(() => {
     const tokenLabel =
-      generatedTokenResult && visibleTokenIds.has(generatedTokenResult.token.id)
+      generatedTokenResult && visibleTokenIds.has(generatedTokenResult.id)
         ? generatedTokenResult.plaintext
-        : '<PROJECT_API_TOKEN>';
+        : '<WEBHOOK_TOKEN>';
     return [
       `curl "$PROOFHOUND_API_ORIGIN${webhookApiPath}/calls/call_20260521_001"`,
       `  -H "Authorization: Bearer ${tokenLabel}"`,
@@ -392,18 +399,18 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
       return;
     }
     try {
+      // CreateWebhookTokenDto 只接受 name / expiresAt;ip whitelist 走 connector update 路径,
+      // 不再由 token 行单独承载。详见 packages/shared/src/dto/connector.dto.ts 的 createWebhookTokenSchema。
       const created = await createTokenMutation.mutateAsync({
         name,
-        expiresAt,
-        ipWhitelist: parseIpWhitelist(form.ipWhitelistRaw) ?? undefined,
+        ...(expiresAt ? { expiresAt } : {}),
       });
-      await updateMutation.mutateAsync({ connectorId: connector.id, body: { tokenId: created.token.id } });
-      update('tokenId', created.token.id);
       setGeneratedTokenResult(created);
-      setRevealedTokens((prev) => ({ ...prev, [created.token.id]: created.plaintext }));
+      // 默认把刚创建的 token 明文塞进缓存并默认显示一次,方便用户立即复制。
+      setRevealedTokens((prev) => ({ ...prev, [created.id]: created.plaintext }));
       setVisibleTokenIds((prev) => {
         const next = new Set(prev);
-        next.delete(created.token.id);
+        next.add(created.id);
         return next;
       });
       closeTokenCreateDialog();
@@ -414,7 +421,7 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
     }
   }
 
-  async function toggleTokenPlaintext(token: ApiTokenSummaryDto) {
+  async function toggleTokenPlaintext(token: ConnectorWebhookTokenSummaryDto) {
     setError(null);
     if (visibleTokenIds.has(token.id)) {
       setVisibleTokenIds((prev) => {
@@ -443,23 +450,24 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
     }
   }
 
-  async function submitDeleteToken() {
-    if (!tokenDeleteTarget) return;
+  async function submitRevokeToken() {
+    if (!tokenRevokeTarget) return;
     setError(null);
+    const targetId = tokenRevokeTarget.id;
     try {
-      const deleted = await deleteTokenMutation.mutateAsync(tokenDeleteTarget.id);
-      setGeneratedTokenResult((prev) => (prev?.token.id === deleted.tokenId ? null : prev));
+      await revokeTokenMutation.mutateAsync(targetId);
+      setGeneratedTokenResult((prev) => (prev?.id === targetId ? null : prev));
       setRevealedTokens((prev) => {
         const next = { ...prev };
-        delete next[deleted.tokenId];
+        delete next[targetId];
         return next;
       });
       setVisibleTokenIds((prev) => {
         const next = new Set(prev);
-        next.delete(deleted.tokenId);
+        next.delete(targetId);
         return next;
       });
-      setTokenDeleteTarget(null);
+      setTokenRevokeTarget(null);
       setNotice(t('connectors.token.deleted'));
       window.setTimeout(() => setNotice(null), 3000);
     } catch (err) {
@@ -599,7 +607,9 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
               connector={connector}
               form={form}
               webhookApiPath={webhookApiPath}
-              tokenOptions={tokenQuery.data?.data ?? []}
+              tokenRows={tokenRows}
+              tokensLoading={webhookTokensQuery.isLoading}
+              tokensError={webhookTokensQuery.isError}
               generatedTokenResult={generatedTokenResult}
               revealedTokens={revealedTokens}
               visibleTokenIds={visibleTokenIds}
@@ -615,11 +625,11 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
               onRemoveRequestField={removeRequestField}
               onCreateToken={openTokenCreateDialog}
               onToggleTokenPlaintext={(token) => void toggleTokenPlaintext(token)}
-              onDeleteToken={setTokenDeleteTarget}
+              onRevokeToken={setTokenRevokeTarget}
               onCopy={(value, message) => void copyText(value, message)}
-              creatingToken={createTokenMutation.isPending || updateMutation.isPending}
+              creatingToken={createTokenMutation.isPending}
               revealingToken={revealTokenMutation.isPending}
-              deletingToken={deleteTokenMutation.isPending}
+              revokingToken={revokeTokenMutation.isPending}
             />
           )}
 
@@ -712,31 +722,31 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!tokenDeleteTarget} onOpenChange={(open) => !open && setTokenDeleteTarget(null)}>
-        <DialogContent data-testid="project-api-token-delete-dialog">
+      <Dialog open={!!tokenRevokeTarget} onOpenChange={(open) => !open && setTokenRevokeTarget(null)}>
+        <DialogContent data-testid="project-connector-webhook-token-revoke-dialog">
           <DialogHeader>
             <DialogTitle>{t('connectors.token.deleteTitle')}</DialogTitle>
             <DialogDescription>{t('connectors.token.deleteDescription')}</DialogDescription>
           </DialogHeader>
-          {tokenDeleteTarget ? (
+          {tokenRevokeTarget ? (
             <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
-              <span className="font-medium">{tokenDeleteTarget.name}</span>
+              <span className="font-medium">{tokenRevokeTarget.name}</span>
               <span className="ml-2 font-mono text-xs text-muted-foreground">
-                {maskToken(tokenDeleteTarget.prefix)}
+                {maskToken(tokenRevokeTarget.prefix)}
               </span>
             </div>
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setTokenDeleteTarget(null)}>
+            <Button type="button" variant="ghost" onClick={() => setTokenRevokeTarget(null)}>
               {t('common.cancel')}
             </Button>
             <Button
               type="button"
               variant="destructive"
-              onClick={() => void submitDeleteToken()}
-              disabled={deleteTokenMutation.isPending}
+              onClick={() => void submitRevokeToken()}
+              disabled={revokeTokenMutation.isPending}
             >
-              {deleteTokenMutation.isPending
+              {revokeTokenMutation.isPending
                 ? t('connectors.token.deleting')
                 : t('connectors.token.delete')}
             </Button>
@@ -1256,7 +1266,9 @@ function WebhookSection({
   connector,
   form,
   webhookApiPath,
-  tokenOptions,
+  tokenRows,
+  tokensLoading,
+  tokensError,
   generatedTokenResult,
   revealedTokens,
   visibleTokenIds,
@@ -1272,17 +1284,19 @@ function WebhookSection({
   onRemoveRequestField,
   onCreateToken,
   onToggleTokenPlaintext,
-  onDeleteToken,
+  onRevokeToken,
   onCopy,
   creatingToken,
   revealingToken,
-  deletingToken,
+  revokingToken,
 }: {
   connector: ConnectorDetailDto;
   form: DetailFormState;
   webhookApiPath: string;
-  tokenOptions: ApiTokenSummaryDto[];
-  generatedTokenResult: CreateApiTokenResponseDto | null;
+  tokenRows: ConnectorWebhookTokenSummaryDto[];
+  tokensLoading: boolean;
+  tokensError: boolean;
+  generatedTokenResult: CreateWebhookTokenResponseDto | null;
   revealedTokens: Record<string, string>;
   visibleTokenIds: Set<string>;
   curlExample: string;
@@ -1296,15 +1310,14 @@ function WebhookSection({
   onAddRequestField: () => void;
   onRemoveRequestField: (index: number) => void;
   onCreateToken: () => void;
-  onToggleTokenPlaintext: (token: ApiTokenSummaryDto) => void;
-  onDeleteToken: (token: ApiTokenSummaryDto) => void;
+  onToggleTokenPlaintext: (token: ConnectorWebhookTokenSummaryDto) => void;
+  onRevokeToken: (token: ConnectorWebhookTokenSummaryDto) => void;
   onCopy: (value: string, message: string) => void;
   creatingToken: boolean;
   revealingToken: boolean;
-  deletingToken: boolean;
+  revokingToken: boolean;
 }) {
   const { t } = useI18n();
-  const tokenRows = mergeGeneratedToken(tokenOptions, generatedTokenResult);
   return (
     <>
       <Section title={t('connectors.section.webhook')}>
@@ -1443,71 +1456,94 @@ function WebhookSection({
           <Section
             title={t('connectors.section.token')}
             actions={
-              <Button type="button" variant="outline" onClick={onCreateToken} disabled={creatingToken}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onCreateToken}
+                disabled={creatingToken}
+                data-testid="project-connector-webhook-token-create"
+              >
                 <KeyRound className="mr-2 h-4 w-4" />
                 {creatingToken ? t('connectors.token.creating') : t('connectors.token.create')}
               </Button>
             }
           >
-            <div className="overflow-hidden rounded-md border">
-              <Table columns={TOKEN_COLUMNS}>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead column="name">{t('connectors.token.column.name')}</TableHead>
-                    <TableHead column="token">{t('connectors.token.column.token')}</TableHead>
-                    <TableHead column="createdBy">{t('connectors.token.column.createdBy')}</TableHead>
-                    <TableHead column="createdAt">{t('connectors.token.column.createdAt')}</TableHead>
-                    <TableHead column="expiresAt">{t('connectors.token.column.expiresAt')}</TableHead>
-                    <TableHead column="actions" className="text-right">
-                      {t('common.actions')}
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {tokenRows.length === 0 ? (
-                    <TableEmpty>{t('common.noData')}</TableEmpty>
-                  ) : (
-                    tokenRows.map((token) => (
-                      <TableRow key={token.id}>
-                        <TableCell column="name" truncate>
-                          {token.name}
-                        </TableCell>
-                        <TableCell column="token">
-                          <TokenPlaintextCell
-                            token={token}
-                            plaintext={revealedTokens[token.id]}
-                            visible={visibleTokenIds.has(token.id)}
-                            revealing={revealingToken}
-                            onToggle={() => onToggleTokenPlaintext(token)}
-                            onCopy={(plaintext) => onCopy(plaintext, t('connectors.detail.copied'))}
-                          />
-                        </TableCell>
-                        <TableCell column="createdBy" truncate>
-                          {token.createdByDisplayName ?? formatUserId(token.createdBy)}
-                        </TableCell>
-                        <TableCell column="createdAt">{formatDateTime(token.createdAt)}</TableCell>
-                        <TableCell column="expiresAt">
-                          {token.expiresAt ? formatDateTime(token.expiresAt) : '-'}
-                        </TableCell>
-                        <TableCell column="actions">
-                          <div className="flex items-center justify-end">
-                            <TableActionIconButton
-                              label={t('connectors.token.delete')}
-                              onClick={() => onDeleteToken(token)}
-                              disabled={deletingToken}
-                              className="text-destructive hover:text-destructive"
-                              data-testid={`project-api-token-delete-${token.id}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </TableActionIconButton>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+            <p className="text-sm text-muted-foreground">{t('connectors.section.tokenDescription')}</p>
+            {generatedTokenResult ? (
+              <PlaintextResultBanner
+                title={t('connectors.token.initialTitle')}
+                description={t('connectors.token.initialHint')}
+                plaintext={generatedTokenResult.plaintext}
+                onCopy={() => onCopy(generatedTokenResult.plaintext, t('connectors.detail.copied'))}
+              />
+            ) : null}
+            {tokensError ? (
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {t('connectors.token.loadFailed')}
+              </p>
+            ) : (
+              <div className="overflow-hidden rounded-md border" data-testid="project-connector-webhook-token-table">
+                <Table columns={TOKEN_COLUMNS}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead column="name">{t('connectors.token.column.name')}</TableHead>
+                      <TableHead column="token">{t('connectors.token.column.token')}</TableHead>
+                      <TableHead column="lastUsedAt">{t('connectors.token.column.lastUsedAt')}</TableHead>
+                      <TableHead column="expiresAt">{t('connectors.token.column.expiresAt')}</TableHead>
+                      <TableHead column="createdAt">{t('connectors.token.column.createdAt')}</TableHead>
+                      <TableHead column="actions" className="text-right">
+                        {t('common.actions')}
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tokenRows.length === 0 ? (
+                      <TableEmpty>
+                        {tokensLoading ? t('common.loading') : t('connectors.token.empty')}
+                      </TableEmpty>
+                    ) : (
+                      tokenRows.map((token) => (
+                        <TableRow key={token.id}>
+                          <TableCell column="name" truncate>
+                            {token.name}
+                          </TableCell>
+                          <TableCell column="token">
+                            <TokenPlaintextCell
+                              token={token}
+                              plaintext={revealedTokens[token.id]}
+                              visible={visibleTokenIds.has(token.id)}
+                              revealing={revealingToken}
+                              onToggle={() => onToggleTokenPlaintext(token)}
+                              onCopy={(plaintext) => onCopy(plaintext, t('connectors.detail.copied'))}
+                            />
+                          </TableCell>
+                          <TableCell column="lastUsedAt">
+                            {token.lastUsedAt ? formatDateTime(token.lastUsedAt) : '-'}
+                          </TableCell>
+                          <TableCell column="expiresAt">
+                            {token.expiresAt ? formatDateTime(token.expiresAt) : '-'}
+                          </TableCell>
+                          <TableCell column="createdAt">{formatDateTime(token.createdAt)}</TableCell>
+                          <TableCell column="actions">
+                            <div className="flex items-center justify-end">
+                              <TableActionIconButton
+                                label={t('connectors.token.delete')}
+                                onClick={() => onRevokeToken(token)}
+                                disabled={revokingToken}
+                                className="text-destructive hover:text-destructive"
+                                data-testid={`project-connector-webhook-token-revoke-${token.id}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </TableActionIconButton>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </Section>
 
           <Section
@@ -1616,7 +1652,7 @@ function TokenPlaintextCell({
   onToggle,
   onCopy,
 }: {
-  token: ApiTokenSummaryDto;
+  token: ConnectorWebhookTokenSummaryDto;
   plaintext?: string;
   visible: boolean;
   revealing: boolean;
@@ -1656,6 +1692,37 @@ function TokenPlaintextCell({
   );
 }
 
+function PlaintextResultBanner({
+  title,
+  description,
+  plaintext,
+  onCopy,
+}: {
+  title: string;
+  description: string;
+  plaintext: string;
+  onCopy: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="rounded-md border border-primary/30 bg-primary/5 p-3" data-testid="project-connector-webhook-token-plaintext-banner">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        </div>
+        <Button type="button" variant="outline" onClick={onCopy}>
+          <Copy className="mr-2 h-4 w-4" />
+          {t('connectors.token.copy')}
+        </Button>
+      </div>
+      <code className="mt-3 block overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs">
+        {plaintext}
+      </code>
+    </div>
+  );
+}
+
 function connectorToState(
   connector: ConnectorDetailDto | null,
   defaultWebhookSchema: Record<string, unknown>,
@@ -1690,7 +1757,6 @@ function connectorToState(
     configTopic: typeof cfg['topic'] === 'string' ? cfg['topic'] : '',
     configFromBeginning: Boolean(cfg['fromBeginning']),
     configPartitionKey: typeof cfg['partitionKey'] === 'string' ? cfg['partitionKey'] : '',
-    tokenId: connector?.token?.id ?? '',
     ipWhitelistRaw: connector?.ipWhitelist?.join('\n') ?? '',
     webhookMode: (cfg['webhookMode'] as 'sync' | 'async' | undefined) ?? 'sync',
     webhookTimeoutSeconds: cfg['timeoutSeconds'] != null ? String(cfg['timeoutSeconds']) : '30',
@@ -1764,7 +1830,7 @@ function buildUpdatePayload(connector: ConnectorDetailDto, form: DetailFormState
         form.webhookMode === 'sync' && form.webhookTimeoutSeconds ? Number(form.webhookTimeoutSeconds) : undefined,
       expectedPayloadSchema: fieldsToJsonSchema(form.requestFields),
     };
-    if (form.tokenId.trim().length > 0) body.tokenId = form.tokenId.trim();
+    // webhook token 不再通过 connector update 写入(scope='webhook' 自管),只保留 IP 白名单。
     body.ipWhitelist = parseIpWhitelist(form.ipWhitelistRaw);
   } else {
     body.config = { targetUrl: form.webhookTargetUrl.trim(), method: form.webhookMethod };
@@ -1978,12 +2044,23 @@ function buildWebhookAsyncQueryResponseExample(language: Language): string {
   );
 }
 
+// 创建后端口返回的 CreateWebhookTokenResponseDto 不一定立刻出现在 list 接口结果里(query 仍未 refetch
+// 完成)。先 optimistic 把它合并到列表顶端,后续 list 刷新后会以服务端为准。
 function mergeGeneratedToken(
-  tokens: ApiTokenSummaryDto[],
-  generated: CreateApiTokenResponseDto | null,
-): ApiTokenSummaryDto[] {
+  tokens: ConnectorWebhookTokenSummaryDto[],
+  generated: CreateWebhookTokenResponseDto | null,
+): ConnectorWebhookTokenSummaryDto[] {
   if (!generated) return tokens;
-  return [generated.token, ...tokens.filter((token) => token.id !== generated.token.id)];
+  if (tokens.some((token) => token.id === generated.id)) return tokens;
+  const summary: ConnectorWebhookTokenSummaryDto = {
+    id: generated.id,
+    name: generated.name,
+    prefix: generated.prefix,
+    expiresAt: generated.expiresAt,
+    lastUsedAt: null,
+    createdAt: new Date().toISOString(),
+  };
+  return [summary, ...tokens];
 }
 
 function maskToken(prefix: string, plaintext?: string): string {
@@ -2064,10 +2141,6 @@ function normalizeFieldKey(value: string): string {
     .replace(/\s+/g, '_')
     .replace(/[^\w.-]/gu, '')
     .slice(0, 120);
-}
-
-function formatUserId(value: string): string {
-  return value.length > 12 ? `${value.slice(0, 8)}...` : value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

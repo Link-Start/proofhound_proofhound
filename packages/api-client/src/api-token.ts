@@ -1,47 +1,28 @@
+// 单一 user-facing token client：HTTP API + MCP 共用一个 token 模型。
+// 详见 docs/specs/06-database-schema.md §3.2 / docs/specs/34-settings.md。
 import type {
-  CreateApiTokenDto,
-  CreateApiTokenResponseDto,
-  CreateGlobalMcpTokenDto,
-  CreateGlobalMcpTokenResponseDto,
-  DeleteGlobalMcpTokenResponseDto,
-  DeleteApiTokenResponseDto,
-  GetGlobalMcpTokenResponseDto,
-  RevealGlobalMcpTokenResponseDto,
-  ListApiTokensResponseDto,
-  RevealApiTokenResponseDto,
-  UpdateApiTokenDto,
-  UpdateApiTokenResponseDto,
-  UpdateGlobalMcpTokenDto,
-  UpdateGlobalMcpTokenResponseDto,
+  CreateUserTokenDto,
+  CreateUserTokenResponseDto,
+  DeleteUserTokenResponseDto,
+  ListUserTokensResponseDto,
+  RevealUserTokenResponseDto,
+  UpdateUserTokenDto,
+  UpdateUserTokenResponseDto,
 } from '@proofhound/shared';
 import { httpClient } from './http';
 
-export const apiTokenClient = {
-  listApiTokens: () => httpClient.get<ListApiTokensResponseDto>(`/api-tokens`).then((r) => r.data),
+export const tokenClient = {
+  listTokens: () => httpClient.get<ListUserTokensResponseDto>(`/tokens`).then((r) => r.data),
 
-  createApiToken: (body: CreateApiTokenDto) =>
-    httpClient.post<CreateApiTokenResponseDto>(`/api-tokens`, body).then((r) => r.data),
+  createToken: (body: CreateUserTokenDto) =>
+    httpClient.post<CreateUserTokenResponseDto>(`/tokens`, body).then((r) => r.data),
 
-  updateApiToken: (tokenId: string, body: UpdateApiTokenDto) =>
-    httpClient.patch<UpdateApiTokenResponseDto>(`/api-tokens/${tokenId}`, body).then((r) => r.data),
+  updateToken: (tokenId: string, body: UpdateUserTokenDto) =>
+    httpClient.patch<UpdateUserTokenResponseDto>(`/tokens/${tokenId}`, body).then((r) => r.data),
 
-  revealApiToken: (tokenId: string) =>
-    httpClient.get<RevealApiTokenResponseDto>(`/api-tokens/${tokenId}/plaintext`).then((r) => r.data),
+  revealToken: (tokenId: string) =>
+    httpClient.get<RevealUserTokenResponseDto>(`/tokens/${tokenId}/plaintext`).then((r) => r.data),
 
-  deleteApiToken: (tokenId: string) =>
-    httpClient.delete<DeleteApiTokenResponseDto>(`/api-tokens/${tokenId}`).then((r) => r.data),
-
-  getGlobalMcpToken: () => httpClient.get<GetGlobalMcpTokenResponseDto>('/api-tokens/global-mcp').then((r) => r.data),
-
-  createGlobalMcpToken: (body: CreateGlobalMcpTokenDto) =>
-    httpClient.post<CreateGlobalMcpTokenResponseDto>('/api-tokens/global-mcp', body).then((r) => r.data),
-
-  updateGlobalMcpToken: (tokenId: string, body: UpdateGlobalMcpTokenDto) =>
-    httpClient.patch<UpdateGlobalMcpTokenResponseDto>(`/api-tokens/global-mcp/${tokenId}`, body).then((r) => r.data),
-
-  revealGlobalMcpToken: (tokenId: string) =>
-    httpClient.get<RevealGlobalMcpTokenResponseDto>(`/api-tokens/global-mcp/${tokenId}/plaintext`).then((r) => r.data),
-
-  deleteGlobalMcpToken: (tokenId: string) =>
-    httpClient.delete<DeleteGlobalMcpTokenResponseDto>(`/api-tokens/global-mcp/${tokenId}`).then((r) => r.data),
+  deleteToken: (tokenId: string) =>
+    httpClient.delete<DeleteUserTokenResponseDto>(`/tokens/${tokenId}`).then((r) => r.data),
 };

@@ -10,10 +10,13 @@ export interface WebhookConnectorRow {
   name: string;
   config: Record<string, unknown>;
   webhookPath: string | null;
-  tokenId: string | null;
-  tokenHash: string | null;
-  tokenExpiresAt: Date | string | null;
   ipWhitelist: string[] | null;
+}
+
+export interface WebhookConnectorTokenResult {
+  connector: WebhookConnectorRow;
+  tokenId: string;
+  tokenExpiresAt: Date | string | null;
 }
 
 export interface WebhookReleaseRuntimeLineRow {
@@ -71,7 +74,22 @@ export interface WebhookRunResultRow {
 export class WebhookRepository {
   constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
 
-  async findConnectorByPublicPath(webhookSlug: string, pathName: string): Promise<WebhookConnectorRow | null> {
+  /**
+   * 通过 slug + pathName + token hash 一次性定位 connector + 它的 active webhook token。
+   *
+   * 设计:
+   * - 单 query 联查 connectors 与 ph_core.tokens (scope='webhook' AND connector_id=c.id);
+   * - token_hash 必须匹配,否则返回 null;
+   * - expires_at 即便过期也返回 row,由调用方判定 401 invalid_webhook_token / expired_webhook_token;
+   * - 任何 connector 不存在 / token 不匹配的情况都返回 null,调用方统一抛 401(避免 enumerate)。
+   *
+   * 详见 docs/specs/03-orchestration.md §3.6 / docs/specs/06-database-schema.md §3.2。
+   */
+  async findConnectorWithValidToken(
+    webhookSlug: string,
+    pathName: string,
+    tokenHash: string,
+  ): Promise<WebhookConnectorTokenResult | null> {
     const rows = await this.db.execute(sql`
       SELECT
         c.id,
@@ -79,19 +97,18 @@ export class WebhookRepository {
         c.name,
         c.config,
         c.webhook_path,
-        c.webhook_token_id,
         c.ip_whitelist,
-        t.token_hash,
-        t.expires_at
+        t.id AS token_id,
+        t.expires_at AS token_expires_at
       FROM ph_assets.connectors c
-      LEFT JOIN ph_core.api_tokens t
-        ON t.id = c.webhook_token_id
-       AND t.scope = 'project_api'
-       AND t.project_id = c.project_id
+      INNER JOIN ph_core.tokens t
+        ON t.scope = 'webhook'
+       AND t.connector_id = c.id
        AND t.revoked_at IS NULL
       WHERE c.type = 'webhook'
         AND c.direction = 'input'
         AND c.deleted_at IS NULL
+        AND t.token_hash = ${tokenHash}
         AND COALESCE(
           NULLIF(c.config->>'webhookSlug', ''),
           'wh-' || lower(substr(regexp_replace(COALESCE(c.webhook_path, ''), '[^a-zA-Z0-9]', '', 'g'), 1, 8))
@@ -102,21 +119,22 @@ export class WebhookRepository {
     const row = unwrapRows<Record<string, unknown>>(rows)[0];
     if (!row) return null;
     return {
-      id: row['id'] as string,
-      projectId: row['project_id'] as string,
-      name: row['name'] as string,
-      config: (row['config'] as Record<string, unknown> | null) ?? {},
-      webhookPath: (row['webhook_path'] as string | null) ?? null,
-      tokenId: (row['webhook_token_id'] as string | null) ?? null,
-      tokenHash: (row['token_hash'] as string | null) ?? null,
-      tokenExpiresAt: (row['expires_at'] as Date | string | null) ?? null,
-      ipWhitelist: (row['ip_whitelist'] as string[] | null) ?? null,
+      connector: {
+        id: row['id'] as string,
+        projectId: row['project_id'] as string,
+        name: row['name'] as string,
+        config: (row['config'] as Record<string, unknown> | null) ?? {},
+        webhookPath: (row['webhook_path'] as string | null) ?? null,
+        ipWhitelist: (row['ip_whitelist'] as string[] | null) ?? null,
+      },
+      tokenId: row['token_id'] as string,
+      tokenExpiresAt: (row['token_expires_at'] as Date | string | null) ?? null,
     };
   }
 
   async touchTokenLastUsed(tokenId: string): Promise<void> {
     await this.db.execute(sql`
-      UPDATE ph_core.api_tokens
+      UPDATE ph_core.tokens
       SET last_used_at = NOW()
       WHERE id = ${tokenId}::uuid
     `);

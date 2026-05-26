@@ -2,21 +2,22 @@ import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { vi, type Mocked } from 'vitest';
 import { CryptoService } from '../../../infrastructure/crypto/crypto.service';
-import { TokenRepository, type ApiTokenRow } from '../token.repository';
+import { TokenRepository, type UserTokenRow } from '../token.repository';
 import { TokenService } from '../token.service';
 
 const PM = { sub: 'pm-1', email: 'p@p.com', isSuperAdmin: false, isActive: true };
-const PROJECT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+const TOKEN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001';
 
-function fakeRow(overrides: Partial<ApiTokenRow> = {}): ApiTokenRow {
+function fakeRow(overrides: Partial<UserTokenRow> = {}): UserTokenRow {
   return {
-    id: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001',
-    scope: 'project_api',
-    projectId: PROJECT_ID,
-    name: 'webhook-token',
+    id: TOKEN_ID,
+    scope: 'user',
+    projectId: null,
+    connectorId: null,
+    name: 'local-script',
     tokenHash: 'hash',
-    tokenEncrypted: 'enc:ph_proj_plaintext',
-    prefix: 'ph_proj_abc',
+    tokenEncrypted: 'enc:ph_tok_plaintext',
+    prefix: 'ph_tok_abcde',
     ipWhitelist: null,
     lastUsedAt: null,
     expiresAt: null,
@@ -34,42 +35,17 @@ describe('TokenService', () => {
 
   beforeEach(async () => {
     repo = {
-      listApiTokens: vi.fn().mockResolvedValue([{ ...fakeRow(), createdByDisplayName: 'Local User' }]),
-      findApiTokenById: vi.fn().mockResolvedValue({ ...fakeRow(), createdByDisplayName: 'Local User' }),
-      findApiTokenByName: vi.fn().mockResolvedValue(null),
-      findActiveGlobalMcpToken: vi.fn().mockResolvedValue(null),
-      findGlobalMcpTokenById: vi.fn().mockResolvedValue({
-        ...fakeRow({
-          id: 'cccccccc-cccc-4ccc-8ccc-000000000001',
-          scope: 'global_mcp',
-          projectId: null,
-          name: 'mcp-token',
-          tokenEncrypted: 'enc:ph_mcp_plaintext',
-          prefix: 'ph_mcp_abc',
-        }),
-        createdByDisplayName: null,
-      }),
-      insertApiToken: vi.fn().mockImplementation((values) => Promise.resolve(fakeRow(values))),
-      updateApiToken: vi.fn().mockImplementation((_projectId, _tokenId, values) =>
+      listUserTokens: vi.fn().mockResolvedValue([{ ...fakeRow(), createdByDisplayName: 'Local User' }]),
+      findUserTokenById: vi.fn().mockResolvedValue({ ...fakeRow(), createdByDisplayName: 'Local User' }),
+      findUserTokenByName: vi.fn().mockResolvedValue(null),
+      insertUserToken: vi.fn().mockImplementation((values) => Promise.resolve(fakeRow(values))),
+      updateUserToken: vi.fn().mockImplementation((_tokenId, values) =>
         Promise.resolve({
           ...fakeRow(values),
           createdByDisplayName: 'Local User',
         }),
       ),
-      updateGlobalMcpToken: vi.fn().mockImplementation((_tokenId, values) =>
-        Promise.resolve({
-          ...fakeRow({
-            id: 'cccccccc-cccc-4ccc-8ccc-000000000001',
-            scope: 'global_mcp',
-            projectId: null,
-            name: 'mcp-token',
-            ...values,
-          }),
-          createdByDisplayName: null,
-        }),
-      ),
-      revokeApiToken: vi.fn().mockResolvedValue(true),
-      revokeGlobalMcpToken: vi.fn().mockResolvedValue(true),
+      revokeUserToken: vi.fn().mockResolvedValue(true),
     } as unknown as Mocked<TokenRepository>;
     crypto = {
       encryptApiKey: vi.fn((plain: string) => `enc:${plain}`),
@@ -86,135 +62,78 @@ describe('TokenService', () => {
     service = moduleRef.get(TokenService);
   });
 
-  it('lists API tokens without plaintext', async () => {
-    const result = await service.listApiTokens(PROJECT_ID, PM);
+  it('lists user tokens without plaintext', async () => {
+    const result = await service.listUserTokens(PM);
     expect(result.total).toBe(1);
-    expect(result.data[0]).toEqual(expect.objectContaining({ projectId: PROJECT_ID, prefix: 'ph_proj_abc' }));
+    expect(result.data[0]).toEqual(expect.objectContaining({ prefix: 'ph_tok_abcde' }));
     expect(result.data[0]?.createdByDisplayName).toBe('Local User');
     expect(result.data[0]).not.toHaveProperty('plaintext');
   });
 
-  it('rejects duplicate active names', async () => {
-    repo.findApiTokenByName.mockResolvedValueOnce(fakeRow());
-    await expect(service.createApiToken(PROJECT_ID, { name: 'webhook-token' }, PM)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+  it('rejects duplicate active names across all user tokens (no project boundary)', async () => {
+    repo.findUserTokenByName.mockResolvedValueOnce(fakeRow());
+    await expect(service.createUserToken({ name: 'local-script' }, PM)).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('creates a hashed and encrypted API token and returns plaintext', async () => {
-    const result = await service.createApiToken(PROJECT_ID, { name: 'webhook-token' }, PM);
-    expect(result.plaintext).toMatch(/^ph_proj_/);
+  it('creates a hashed and encrypted user token without project_id and returns plaintext', async () => {
+    const result = await service.createUserToken({ name: 'local-script' }, PM);
+    expect(result.plaintext).toMatch(/^ph_tok_/);
     expect(result.token.createdByDisplayName).toBe('Local User');
-    expect(repo.insertApiToken).toHaveBeenCalledWith(
+    expect(repo.insertUserToken).toHaveBeenCalledWith(
       expect.objectContaining({
-        scope: 'project_api',
-        projectId: PROJECT_ID,
-        name: 'webhook-token',
+        scope: 'user',
+        projectId: null,
+        name: 'local-script',
         tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        tokenEncrypted: expect.stringMatching(/^enc:ph_proj_/),
-        prefix: expect.stringMatching(/^ph_proj_/),
+        tokenEncrypted: expect.stringMatching(/^enc:ph_tok_/),
+        prefix: expect.stringMatching(/^ph_tok_/),
       }),
     );
   });
 
-  it('reveals encrypted API token plaintext', async () => {
-    const result = await service.revealApiToken(PROJECT_ID, 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001', PM);
+  it('reveals encrypted user token plaintext', async () => {
+    const result = await service.revealUserToken(TOKEN_ID, PM);
     expect(result).toEqual({
-      tokenId: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001',
-      plaintext: 'ph_proj_plaintext',
+      tokenId: TOKEN_ID,
+      plaintext: 'ph_tok_plaintext',
       available: true,
     });
-    expect(crypto.decryptApiKey).toHaveBeenCalledWith('enc:ph_proj_plaintext');
+    expect(crypto.decryptApiKey).toHaveBeenCalledWith('enc:ph_tok_plaintext');
   });
 
-  it('updates API token name and expiration without changing plaintext fields', async () => {
-    const result = await service.updateApiToken(
-      PROJECT_ID,
-      'bbbbbbbb-bbbb-4bbb-8bbb-000000000001',
-      { name: 'webhook-prod', expiresAt: '2026-06-01T00:00:00.000Z' },
+  it('updates user token name and expiration without changing plaintext fields', async () => {
+    const result = await service.updateUserToken(
+      TOKEN_ID,
+      { name: 'local-script-prod', expiresAt: '2026-06-01T00:00:00.000Z' },
       PM,
     );
-    expect(result.token).toEqual(expect.objectContaining({ name: 'webhook-prod' }));
-    expect(repo.updateApiToken).toHaveBeenCalledWith(PROJECT_ID, 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001', {
-      name: 'webhook-prod',
+    expect(result.token).toEqual(expect.objectContaining({ name: 'local-script-prod' }));
+    expect(repo.updateUserToken).toHaveBeenCalledWith(TOKEN_ID, {
+      name: 'local-script-prod',
       expiresAt: new Date('2026-06-01T00:00:00.000Z'),
     });
   });
 
-  it('rejects updating API token to a duplicate active name', async () => {
-    repo.findApiTokenByName.mockResolvedValueOnce(fakeRow({ id: 'dddddddd-dddd-4ddd-8ddd-000000000001' }));
+  it('rejects updating user token to a duplicate active name', async () => {
+    repo.findUserTokenByName.mockResolvedValueOnce(fakeRow({ id: 'dddddddd-dddd-4ddd-8ddd-000000000001' }));
     await expect(
-      service.updateApiToken(PROJECT_ID, 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001', { name: 'taken-token' }, PM),
+      service.updateUserToken(TOKEN_ID, { name: 'taken-token' }, PM),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('returns unavailable when revealing a legacy hash-only token', async () => {
-    repo.findApiTokenById.mockResolvedValueOnce({
+    repo.findUserTokenById.mockResolvedValueOnce({
       ...fakeRow({ tokenEncrypted: null }),
       createdByDisplayName: 'Local User',
     });
-    const result = await service.revealApiToken(PROJECT_ID, 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001', PM);
+    const result = await service.revealUserToken(TOKEN_ID, PM);
     expect(result.available).toBe(false);
     expect(result.plaintext).toBeNull();
   });
 
-  it('deletes API token by revoking it', async () => {
-    const result = await service.deleteApiToken(PROJECT_ID, 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001', PM);
-    expect(result).toEqual({ tokenId: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001' });
-    expect(repo.revokeApiToken).toHaveBeenCalledWith(
-      PROJECT_ID,
-      'bbbbbbbb-bbbb-4bbb-8bbb-000000000001',
-      expect.any(Date),
-    );
-  });
-
-  it('creates a single global MCP token and returns plaintext', async () => {
-    const result = await service.createGlobalMcpToken({ name: 'mcp-token' }, PM);
-    expect(result.plaintext).toMatch(/^ph_mcp_/);
-    expect(repo.insertApiToken).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: 'global_mcp',
-        name: 'mcp-token',
-        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        tokenEncrypted: expect.stringMatching(/^enc:ph_mcp_/),
-        prefix: expect.stringMatching(/^ph_mcp_/),
-      }),
-    );
-  });
-
-  it('rejects creating a second active global MCP token', async () => {
-    repo.findActiveGlobalMcpToken.mockResolvedValueOnce({
-      ...fakeRow({ scope: 'global_mcp', projectId: null }),
-      createdByDisplayName: null,
-    });
-    await expect(service.createGlobalMcpToken({ name: 'mcp-token' }, PM)).rejects.toBeInstanceOf(ConflictException);
-  });
-
-  it('reveals encrypted global MCP token plaintext', async () => {
-    const result = await service.revealGlobalMcpToken('cccccccc-cccc-4ccc-8ccc-000000000001', PM);
-    expect(result).toEqual({
-      tokenId: 'cccccccc-cccc-4ccc-8ccc-000000000001',
-      plaintext: 'ph_mcp_plaintext',
-      available: true,
-    });
-  });
-
-  it('updates global MCP token name and expiration', async () => {
-    const result = await service.updateGlobalMcpToken(
-      'cccccccc-cccc-4ccc-8ccc-000000000001',
-      { name: 'mcp-prod', expiresAt: null },
-      PM,
-    );
-    expect(result.token).toEqual(expect.objectContaining({ name: 'mcp-prod', expiresAt: null }));
-    expect(repo.updateGlobalMcpToken).toHaveBeenCalledWith('cccccccc-cccc-4ccc-8ccc-000000000001', {
-      name: 'mcp-prod',
-      expiresAt: null,
-    });
-  });
-
-  it('deletes global MCP token by revoking it', async () => {
-    const result = await service.deleteGlobalMcpToken('cccccccc-cccc-4ccc-8ccc-000000000001', PM);
-    expect(result).toEqual({ tokenId: 'cccccccc-cccc-4ccc-8ccc-000000000001' });
-    expect(repo.revokeGlobalMcpToken).toHaveBeenCalledWith('cccccccc-cccc-4ccc-8ccc-000000000001', expect.any(Date));
+  it('deletes user token by revoking it', async () => {
+    const result = await service.deleteUserToken(TOKEN_ID, PM);
+    expect(result).toEqual({ tokenId: TOKEN_ID });
+    expect(repo.revokeUserToken).toHaveBeenCalledWith(TOKEN_ID, expect.any(Date));
   });
 });

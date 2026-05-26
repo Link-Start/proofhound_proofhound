@@ -9,9 +9,11 @@ import {
   connectorIdParamSchema,
   connectorListQuerySchema,
   createConnectorSchema,
+  createWebhookTokenSchema,
   peekConnectorRequestSchema,
   updateConnectorSchema,
 } from '@proofhound/shared';
+import { z } from 'zod';
 import { getMcpActor, resolveMcpProjectContext } from './mcp-context';
 import type { ConnectorService } from '../../modules/connector/connector.service';
 import type { McpToolDefinition } from './mcp.types';
@@ -146,6 +148,73 @@ export function createConnectorTools(service: ConnectorService): McpToolDefiniti
           getMcpActor(ctx),
           'mcp',
         ),
+    },
+    {
+      name: 'connector_list_webhook_tokens',
+      description: '列出该 webhook 输入 connector 的全部 active webhook token',
+      inputSchema: connectorIdInputSchema,
+      handler: async (input, ctx) =>
+        service.listWebhookTokens(
+          resolveMcpProjectContext(ctx).projectId,
+          connectorIdParamSchema.parse(input.connectorId),
+          getMcpActor(ctx),
+        ),
+    },
+    {
+      name: 'connector_create_webhook_token',
+      description: '为 webhook 输入 connector 生成新的入站凭证(明文只在响应里出现一次)',
+      inputSchema: {
+        type: 'object',
+        required: ['connectorId'],
+        properties: {
+          connectorId: { type: 'string', format: 'uuid' },
+          name: { type: 'string' },
+          expiresAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      handler: async (input, ctx) => {
+        const { projectId } = resolveMcpProjectContext(ctx);
+        const connectorId = connectorIdParamSchema.parse(input.connectorId);
+        const dto = createWebhookTokenSchema.parse({ name: input.name, expiresAt: input.expiresAt });
+        return service.createWebhookToken(projectId, connectorId, dto, getMcpActor(ctx), 'mcp');
+      },
+    },
+    {
+      name: 'connector_revoke_webhook_token',
+      description: '吊销 webhook connector 的指定 token(立即生效)',
+      inputSchema: {
+        type: 'object',
+        required: ['connectorId', 'tokenId'],
+        properties: {
+          connectorId: { type: 'string', format: 'uuid' },
+          tokenId: { type: 'string', format: 'uuid' },
+        },
+      },
+      handler: async (input, ctx) => {
+        const { projectId } = resolveMcpProjectContext(ctx);
+        const connectorId = connectorIdParamSchema.parse(input.connectorId);
+        const tokenId = z.string().uuid().parse(input.tokenId);
+        await service.revokeWebhookToken(projectId, connectorId, tokenId, getMcpActor(ctx), 'mcp');
+        return { ok: true };
+      },
+    },
+    {
+      name: 'connector_reveal_webhook_token',
+      description: '查看 webhook connector 指定 token 的明文(从 token_encrypted 解密)',
+      inputSchema: {
+        type: 'object',
+        required: ['connectorId', 'tokenId'],
+        properties: {
+          connectorId: { type: 'string', format: 'uuid' },
+          tokenId: { type: 'string', format: 'uuid' },
+        },
+      },
+      handler: async (input, ctx) => {
+        const { projectId } = resolveMcpProjectContext(ctx);
+        const connectorId = connectorIdParamSchema.parse(input.connectorId);
+        const tokenId = z.string().uuid().parse(input.tokenId);
+        return service.revealWebhookToken(projectId, connectorId, tokenId, getMcpActor(ctx), 'mcp');
+      },
     },
     {
       name: 'connector_peek',

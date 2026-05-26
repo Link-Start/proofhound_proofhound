@@ -300,7 +300,10 @@ const createWebhookInputSchema = z.object({
   ...createCommonBase,
   type: z.literal('webhook'),
   direction: z.literal('input'),
-  tokenId: z.string().uuid(),
+  // @deprecated webhook token 现由 connector 自管(scope='webhook' AND connector_id=...),
+  // 创建 connector 时服务端自动生成首个 webhook token。前端发送的 tokenId 被静默忽略,
+  // 保留字段用于前端旧表单短期兼容。详见 docs/specs/06-database-schema.md §3.2 / §4.5。
+  tokenId: z.string().uuid().optional(),
   ipWhitelist: ipWhitelistSchema.optional(),
   config: webhookInputConfigSchema,
 });
@@ -350,6 +353,7 @@ export const updateConnectorSchema = z
     description: z.string().trim().max(500).nullable().optional(),
     config: connectorConfigShapeSchema.optional(),
     credentials: z.union([redisConnectorCredentialsSchema, kafkaConnectorCredentialsSchema]).optional(),
+    // @deprecated 见 createWebhookInputSchema 注释;update 路径下也会被静默忽略。
     tokenId: z.string().uuid().optional(),
     ipWhitelist: ipWhitelistSchema.nullable().optional(),
   })
@@ -394,6 +398,55 @@ export const connectorTokenSummarySchema = z.object({
 });
 export type ConnectorTokenSummaryDto = z.infer<typeof connectorTokenSummarySchema>;
 
+// per-connector webhook token(scope='webhook' AND connector_id=...)
+// 详见 docs/specs/06-database-schema.md §3.2 与 docs/specs/26-connectors.md
+export const connectorWebhookTokenSummarySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  prefix: z.string(),
+  expiresAt: z.iso.datetime().nullable(),
+  lastUsedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+});
+export type ConnectorWebhookTokenSummaryDto = z.infer<typeof connectorWebhookTokenSummarySchema>;
+
+export const connectorWebhookTokenListSchema = z.object({
+  data: z.array(connectorWebhookTokenSummarySchema),
+  total: z.number().int().nonnegative(),
+});
+export type ConnectorWebhookTokenListDto = z.infer<typeof connectorWebhookTokenListSchema>;
+
+export const createWebhookTokenSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    expiresAt: z.iso
+      .datetime()
+      .optional()
+      .refine((value) => value === undefined || new Date(value).getTime() > Date.now(), {
+        message: 'expiresAt must be in the future',
+      }),
+  })
+  .strict();
+export type CreateWebhookTokenDto = z.infer<typeof createWebhookTokenSchema>;
+
+export const createWebhookTokenResponseSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  prefix: z.string(),
+  plaintext: z.string(),
+  expiresAt: z.iso.datetime().nullable(),
+});
+export type CreateWebhookTokenResponseDto = z.infer<typeof createWebhookTokenResponseSchema>;
+
+// reveal endpoint:从 token_encrypted 解密返回明文,与 user token 的 reveal 对齐。
+// 详见 docs/specs/06-database-schema.md §3.2 "token_encrypted 用于本地管理端按需展示可恢复 Token"
+export const revealWebhookTokenResponseSchema = z.object({
+  tokenId: z.string().uuid(),
+  plaintext: z.string().nullable(),
+  available: z.boolean(),
+});
+export type RevealWebhookTokenResponseDto = z.infer<typeof revealWebhookTokenResponseSchema>;
+
 export const connectorListItemSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
@@ -424,10 +477,26 @@ export type ConnectorListResponseDto = z.infer<typeof connectorListResponseSchem
 
 export const connectorDetailSchema = connectorListItemSchema.extend({
   config: connectorConfigShapeSchema,
-  token: connectorTokenSummarySchema.nullable(),
+  // 该 connector 当前所有 active webhook token 全列表(scope='webhook', revoked_at IS NULL)。
+  // 非 webhook-input connector 始终为空数组。
+  webhookTokens: z.array(connectorWebhookTokenSummarySchema),
   ipWhitelist: z.array(z.string()).nullable(),
 });
 export type ConnectorDetailDto = z.infer<typeof connectorDetailSchema>;
+
+// create 响应额外返回首次自动生成的 webhook token 明文(只在创建时出现一次)。
+export const connectorCreateResponseSchema = connectorDetailSchema.extend({
+  initialWebhookToken: z
+    .object({
+      id: z.string().uuid(),
+      name: z.string(),
+      prefix: z.string(),
+      plaintext: z.string(),
+      expiresAt: z.iso.datetime().nullable(),
+    })
+    .optional(),
+});
+export type ConnectorCreateResponseDto = z.infer<typeof connectorCreateResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Probe / Peek

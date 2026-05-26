@@ -26,10 +26,13 @@ const connector = {
   name: 'sync-webhook-in',
   config: { webhookMode: 'sync', timeoutSeconds: 1 },
   webhookPath: 'a3a1b2c3-d4e5-4f60-8788-aabbccddeeff',
-  tokenId,
-  tokenHash: TOKEN_HASH,
-  tokenExpiresAt: null,
   ipWhitelist: null,
+};
+
+const tokenResult = {
+  connector,
+  tokenId,
+  tokenExpiresAt: null,
 };
 
 const releaseEvent = {
@@ -88,7 +91,7 @@ const runResult: WebhookRunResultRow = {
 
 function makeRepo() {
   return {
-    findConnectorByPublicPath: vi.fn().mockResolvedValue(connector),
+    findConnectorWithValidToken: vi.fn().mockResolvedValue(tokenResult),
     touchTokenLastUsed: vi.fn().mockResolvedValue(undefined),
     findActiveReleaseForConnector: vi.fn().mockResolvedValue(releaseLine),
     incrementReceived: vi.fn().mockResolvedValue(undefined),
@@ -133,7 +136,7 @@ describe('WebhookService', () => {
       userAgent: 'vitest',
     });
 
-    expect(repo.findConnectorByPublicPath).toHaveBeenCalledWith('wh-a3a1b2c3', '');
+    expect(repo.findConnectorWithValidToken).toHaveBeenCalledWith('wh-a3a1b2c3', '', TOKEN_HASH);
     expect(repo.touchTokenLastUsed).toHaveBeenCalledWith(tokenId);
     expect(repo.incrementReceived).toHaveBeenCalledWith(releaseLineEventId);
     expect(bullmq.enqueueLlmJob).toHaveBeenCalledTimes(1);
@@ -161,6 +164,43 @@ describe('WebhookService', () => {
     expect(redis.set).not.toHaveBeenCalled();
   });
 
+  it('rejects an unknown slug / path / token combo with invalid_webhook_token', async () => {
+    const repo = makeRepo();
+    repo.findConnectorWithValidToken.mockResolvedValue(null);
+    const service = makeService(repo);
+
+    await expect(
+      service.receive({
+        webhookSlug: 'wh-a3a1b2c3',
+        pathName: '',
+        body: { id: 'sample-1', text: 'hello' },
+        authorization: `Bearer ${TOKEN}`,
+        ipAddress: null,
+        userAgent: null,
+      }),
+    ).rejects.toMatchObject({ message: 'invalid_webhook_token' });
+  });
+
+  it('rejects an expired webhook token with expired_webhook_token', async () => {
+    const repo = makeRepo();
+    repo.findConnectorWithValidToken.mockResolvedValue({
+      ...tokenResult,
+      tokenExpiresAt: new Date(Date.now() - 1000),
+    });
+    const service = makeService(repo);
+
+    await expect(
+      service.receive({
+        webhookSlug: 'wh-a3a1b2c3',
+        pathName: '',
+        body: { id: 'sample-1', text: 'hello' },
+        authorization: `Bearer ${TOKEN}`,
+        ipAddress: null,
+        userAgent: null,
+      }),
+    ).rejects.toMatchObject({ message: 'expired_webhook_token' });
+  });
+
   it('only enables automatic judgment when webhook payload carries expected output', async () => {
     const repo = makeRepo();
     const service = makeService(repo);
@@ -184,9 +224,9 @@ describe('WebhookService', () => {
 
   it('does not dedupe repeated webhook calls by external id', async () => {
     const repo = makeRepo();
-    repo.findConnectorByPublicPath.mockResolvedValue({
-      ...connector,
-      config: { webhookMode: 'async' },
+    repo.findConnectorWithValidToken.mockResolvedValue({
+      ...tokenResult,
+      connector: { ...connector, config: { webhookMode: 'async' } },
     });
     const service = makeService(repo);
 
@@ -255,9 +295,9 @@ describe('WebhookService', () => {
 
   it('uses externalIdField as the canonical external id source', async () => {
     const repo = makeRepo();
-    repo.findConnectorByPublicPath.mockResolvedValue({
-      ...connector,
-      config: { webhookMode: 'async' },
+    repo.findConnectorWithValidToken.mockResolvedValue({
+      ...tokenResult,
+      connector: { ...connector, config: { webhookMode: 'async' } },
     });
     repo.findActiveReleaseForConnector.mockResolvedValue({
       ...releaseLine,

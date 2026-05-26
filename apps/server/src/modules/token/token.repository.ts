@@ -4,156 +4,90 @@ import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
 import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
 
-const { apiTokens } = schema;
+const { tokens } = schema;
 
-export type ApiTokenRow = typeof apiTokens.$inferSelect;
-export type ApiTokenInsertRow = typeof apiTokens.$inferInsert;
+export type UserTokenRow = typeof tokens.$inferSelect;
+export type UserTokenInsertRow = typeof tokens.$inferInsert;
 
-export interface ApiTokenRowWithCreator extends ApiTokenRow {
+export interface UserTokenRowWithCreator extends UserTokenRow {
   createdByDisplayName: string | null;
 }
 
+// Repository 只处理 scope='user' 行。webhook 行由 ConnectorRepository 自管,本 repo 不读不写。
+// 详见 docs/specs/06-database-schema.md §3.2 / docs/specs/08-saas-adapter-boundary.md §3.5。
 @Injectable()
 export class TokenRepository {
   constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
 
   private readonly selectFields = {
-    id: apiTokens.id,
-    scope: apiTokens.scope,
-    projectId: apiTokens.projectId,
-    name: apiTokens.name,
-    tokenHash: apiTokens.tokenHash,
-    tokenEncrypted: apiTokens.tokenEncrypted,
-    prefix: apiTokens.prefix,
-    ipWhitelist: apiTokens.ipWhitelist,
-    lastUsedAt: apiTokens.lastUsedAt,
-    expiresAt: apiTokens.expiresAt,
-    createdBy: apiTokens.createdBy,
+    id: tokens.id,
+    scope: tokens.scope,
+    projectId: tokens.projectId,
+    connectorId: tokens.connectorId,
+    name: tokens.name,
+    tokenHash: tokens.tokenHash,
+    tokenEncrypted: tokens.tokenEncrypted,
+    prefix: tokens.prefix,
+    ipWhitelist: tokens.ipWhitelist,
+    lastUsedAt: tokens.lastUsedAt,
+    expiresAt: tokens.expiresAt,
+    createdBy: tokens.createdBy,
     createdByDisplayName: sql<string | null>`NULL`,
-    createdAt: apiTokens.createdAt,
-    revokedAt: apiTokens.revokedAt,
+    createdAt: tokens.createdAt,
+    revokedAt: tokens.revokedAt,
   } as const;
 
-  async listApiTokens(projectId: string): Promise<ApiTokenRowWithCreator[]> {
+  async listUserTokens(): Promise<UserTokenRowWithCreator[]> {
     return this.db
       .select(this.selectFields)
-      .from(apiTokens)
-      .where(and(eq(apiTokens.scope, 'project_api'), eq(apiTokens.projectId, projectId), isNull(apiTokens.revokedAt)))
-      .orderBy(desc(apiTokens.createdAt));
+      .from(tokens)
+      .where(and(eq(tokens.scope, 'user'), isNull(tokens.revokedAt)))
+      .orderBy(desc(tokens.createdAt));
   }
 
-  async findApiTokenById(projectId: string, tokenId: string): Promise<ApiTokenRowWithCreator | null> {
+  async findUserTokenById(tokenId: string): Promise<UserTokenRowWithCreator | null> {
     const rows = await this.db
       .select(this.selectFields)
-      .from(apiTokens)
-      .where(
-        and(
-          eq(apiTokens.id, tokenId),
-          eq(apiTokens.scope, 'project_api'),
-          eq(apiTokens.projectId, projectId),
-          isNull(apiTokens.revokedAt),
-        ),
-      )
+      .from(tokens)
+      .where(and(eq(tokens.id, tokenId), eq(tokens.scope, 'user'), isNull(tokens.revokedAt)))
       .limit(1);
     return rows[0] ?? null;
   }
 
-  async findApiTokenByName(projectId: string, name: string): Promise<ApiTokenRow | null> {
+  async findUserTokenByName(name: string): Promise<UserTokenRow | null> {
     const rows = await this.db
       .select()
-      .from(apiTokens)
-      .where(
-        and(
-          eq(apiTokens.scope, 'project_api'),
-          eq(apiTokens.projectId, projectId),
-          eq(apiTokens.name, name),
-          isNull(apiTokens.revokedAt),
-        ),
-      )
+      .from(tokens)
+      .where(and(eq(tokens.scope, 'user'), eq(tokens.name, name), isNull(tokens.revokedAt)))
       .limit(1);
     return rows[0] ?? null;
   }
 
-  async findActiveGlobalMcpToken(): Promise<ApiTokenRowWithCreator | null> {
-    const rows = await this.db
-      .select(this.selectFields)
-      .from(apiTokens)
-      .where(and(eq(apiTokens.scope, 'global_mcp'), isNull(apiTokens.revokedAt)))
-      .orderBy(desc(apiTokens.createdAt))
-      .limit(1);
-    return rows[0] ?? null;
-  }
-
-  async findGlobalMcpTokenById(tokenId: string): Promise<ApiTokenRowWithCreator | null> {
-    const rows = await this.db
-      .select(this.selectFields)
-      .from(apiTokens)
-      .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.scope, 'global_mcp'), isNull(apiTokens.revokedAt)))
-      .limit(1);
-    return rows[0] ?? null;
-  }
-
-  async insertApiToken(values: ApiTokenInsertRow): Promise<ApiTokenRow> {
-    const result = await this.db.insert(apiTokens).values(values).returning();
+  async insertUserToken(values: UserTokenInsertRow): Promise<UserTokenRow> {
+    const result = await this.db.insert(tokens).values(values).returning();
     const row = result[0];
-    if (!row) throw new Error('API token insert returned no row');
+    if (!row) throw new Error('user token insert returned no row');
     return row;
   }
 
-  async updateApiToken(
-    projectId: string,
+  async updateUserToken(
     tokenId: string,
-    values: Pick<ApiTokenInsertRow, 'name' | 'expiresAt'>,
-  ): Promise<ApiTokenRowWithCreator | null> {
+    values: Pick<UserTokenInsertRow, 'name' | 'expiresAt'>,
+  ): Promise<UserTokenRowWithCreator | null> {
     const result = await this.db
-      .update(apiTokens)
+      .update(tokens)
       .set(values)
-      .where(
-        and(
-          eq(apiTokens.id, tokenId),
-          eq(apiTokens.scope, 'project_api'),
-          eq(apiTokens.projectId, projectId),
-          isNull(apiTokens.revokedAt),
-        ),
-      )
+      .where(and(eq(tokens.id, tokenId), eq(tokens.scope, 'user'), isNull(tokens.revokedAt)))
       .returning(this.selectFields);
     return result[0] ?? null;
   }
 
-  async updateGlobalMcpToken(
-    tokenId: string,
-    values: Pick<ApiTokenInsertRow, 'name' | 'expiresAt'>,
-  ): Promise<ApiTokenRowWithCreator | null> {
+  async revokeUserToken(tokenId: string, revokedAt: Date): Promise<boolean> {
     const result = await this.db
-      .update(apiTokens)
-      .set(values)
-      .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.scope, 'global_mcp'), isNull(apiTokens.revokedAt)))
-      .returning(this.selectFields);
-    return result[0] ?? null;
-  }
-
-  async revokeApiToken(projectId: string, tokenId: string, revokedAt: Date): Promise<boolean> {
-    const result = await this.db
-      .update(apiTokens)
+      .update(tokens)
       .set({ revokedAt })
-      .where(
-        and(
-          eq(apiTokens.id, tokenId),
-          eq(apiTokens.scope, 'project_api'),
-          eq(apiTokens.projectId, projectId),
-          isNull(apiTokens.revokedAt),
-        ),
-      )
-      .returning({ id: apiTokens.id });
-    return result.length > 0;
-  }
-
-  async revokeGlobalMcpToken(tokenId: string, revokedAt: Date): Promise<boolean> {
-    const result = await this.db
-      .update(apiTokens)
-      .set({ revokedAt })
-      .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.scope, 'global_mcp'), isNull(apiTokens.revokedAt)))
-      .returning({ id: apiTokens.id });
+      .where(and(eq(tokens.id, tokenId), eq(tokens.scope, 'user'), isNull(tokens.revokedAt)))
+      .returning({ id: tokens.id });
     return result.length > 0;
   }
 }

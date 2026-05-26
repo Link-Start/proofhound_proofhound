@@ -1,6 +1,9 @@
 // 连接器业务服务
 // 详见 docs/specs/26-connectors.md §3 / §7 占用与删除约束
-import { randomUUID } from 'node:crypto';
+// webhook 入站 token 由本模块自管:create 自动生成首个 token,后续通过
+// listWebhookTokens / createWebhookToken / revokeWebhookToken 管理,
+// 详见 docs/specs/06-database-schema.md §3.2 / §4.5
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createLogger } from '@proofhound/logger';
 import type {
@@ -8,6 +11,7 @@ import type {
   BulkDeleteConnectorsRequestDto,
   BulkDeleteConnectorsResponseDto,
   ConnectorConfigShape,
+  ConnectorCreateResponseDto,
   ConnectorDeleteQueryDto,
   ConnectorDetailDto,
   ConnectorListItemDto,
@@ -15,8 +19,12 @@ import type {
   ConnectorListResponseDto,
   ConnectorReferencesResponseDto,
   ConnectorReferencesSummaryDto,
-  ConnectorTokenSummaryDto,
+  ConnectorWebhookTokenListDto,
+  ConnectorWebhookTokenSummaryDto,
   CreateConnectorDto,
+  CreateWebhookTokenDto,
+  CreateWebhookTokenResponseDto,
+  RevealWebhookTokenResponseDto,
   KafkaConnectionConfig,
   PeekConnectorRequestDto,
   PeekConnectorMessageDto,
@@ -34,6 +42,7 @@ import {
   type ConnectorInsertRow,
   type ConnectorProjectAccessRow,
   type ConnectorRowWithJoins,
+  type WebhookTokenRow,
 } from './connector.repository';
 
 type ActionSource = 'api' | 'mcp';
@@ -44,6 +53,7 @@ const EMPTY_REFERENCES: ConnectorReferencesSummaryDto = Object.freeze({
 });
 const MAX_PEEK_SCHEMA_DEPTH = 6;
 const MAX_PEEK_SCHEMA_PROPERTIES = 200;
+const DEFAULT_INITIAL_WEBHOOK_TOKEN_NAME = 'Auto-generated webhook token';
 
 interface BrokerEncryptedConfig {
   password?: string;
@@ -52,6 +62,14 @@ interface BrokerEncryptedConfig {
   securityProtocol?: KafkaConnectionConfig['securityProtocol'];
   saslMechanism?: KafkaConnectionConfig['saslMechanism'];
   saslUsername?: string | null;
+}
+
+interface InitialWebhookTokenSecret {
+  id: string;
+  name: string;
+  prefix: string;
+  plaintext: string;
+  expiresAt: Date | null;
 }
 
 @Injectable()
@@ -76,7 +94,10 @@ export class ConnectorService {
     const rows = await this.repo.listByProject(projectId, query);
     const filtered = this.applySearch(rows, query?.search);
     const references = await this.repo.countReferences(filtered.map((row) => row.id));
-    const data = filtered.map((row) => this.toListItem(row, references.get(row.id) ?? this.cloneEmptyReferences()));
+    const tokenCounts = await this.repo.countActiveWebhookTokensByConnectorIds(filtered.map((row) => row.id));
+    const data = filtered.map((row) =>
+      this.toListItem(row, references.get(row.id) ?? this.cloneEmptyReferences(), tokenCounts.get(row.id) ?? 0),
+    );
     return { data, total: data.length };
   }
 
@@ -85,7 +106,8 @@ export class ConnectorService {
     const row = await this.repo.findById(projectId, connectorId);
     if (!row) throw new NotFoundException(`Connector ${connectorId} not found`);
     const counts = await this.repo.countReferences([row.id]);
-    return this.toDetail(row, counts.get(row.id) ?? this.cloneEmptyReferences());
+    const tokens = await this.loadWebhookTokenSummaries(row);
+    return this.toDetail(row, counts.get(row.id) ?? this.cloneEmptyReferences(), tokens);
   }
 
   async getReferences(
@@ -109,15 +131,34 @@ export class ConnectorService {
     dto: CreateConnectorDto,
     actor: CurrentUserPayload,
     source: ActionSource = 'api',
-  ): Promise<ConnectorDetailDto> {
+  ): Promise<ConnectorCreateResponseDto> {
+    void source;
     await this.getWritableProject(projectId, actor);
     await this.assertNameAvailable(projectId, dto.name);
 
     const id = randomUUID();
-    const insert = await this.buildInsertRow(id, projectId, dto, actor.sub);
+    const insert = this.buildInsertRow(id, projectId, dto, actor.sub);
 
     const created = await this.repo.insert(insert);
-    return this.getDetail(projectId, created.id, actor);
+
+    // webhook input connector 创建时自动生成首个 webhook token
+    let initialWebhookToken: InitialWebhookTokenSecret | null = null;
+    if (dto.type === 'webhook' && dto.direction === 'input') {
+      initialWebhookToken = await this.generateInitialWebhookToken(created.id, projectId, actor.sub);
+    }
+
+    const detail = await this.getDetail(projectId, created.id, actor);
+    if (!initialWebhookToken) return detail;
+    return {
+      ...detail,
+      initialWebhookToken: {
+        id: initialWebhookToken.id,
+        name: initialWebhookToken.name,
+        prefix: initialWebhookToken.prefix,
+        plaintext: initialWebhookToken.plaintext,
+        expiresAt: initialWebhookToken.expiresAt?.toISOString() ?? null,
+      },
+    };
   }
 
   async update(
@@ -127,6 +168,7 @@ export class ConnectorService {
     actor: CurrentUserPayload,
     source: ActionSource = 'api',
   ): Promise<ConnectorDetailDto> {
+    void source;
     await this.getWritableProject(projectId, actor);
     const existing = await this.repo.findById(projectId, connectorId);
     if (!existing) throw new NotFoundException(`Connector ${connectorId} not found`);
@@ -139,7 +181,6 @@ export class ConnectorService {
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.description !== undefined) patch.description = dto.description ?? null;
     if (dto.config !== undefined) {
-      // 校验 config 与现存的 (type, direction) 兼容
       this.assertConfigShape(existing.type, existing.direction, dto.config);
       patch.config = this.mergePersistentConfig(existing.config, dto.config);
     }
@@ -155,19 +196,20 @@ export class ConnectorService {
       );
       if (configEncrypted !== undefined) patch.configEncrypted = configEncrypted;
     }
-    // tokenId / ipWhitelist 只有 webhook 类型才允许
-    if (dto.tokenId !== undefined || dto.ipWhitelist !== undefined) {
+    // ipWhitelist 只有 webhook 类型才允许
+    if (dto.ipWhitelist !== undefined) {
       if (existing.type !== 'webhook') {
-        throw new BadRequestException('tokenId / ipWhitelist apply only to webhook connectors');
+        throw new BadRequestException('ipWhitelist applies only to webhook connectors');
       }
-      if (dto.tokenId !== undefined) {
-        const token = await this.repo.findTokenByIdAndProject(dto.tokenId, projectId);
-        if (!token) throw new BadRequestException(`token ${dto.tokenId} not found`);
-        patch.webhookTokenId = dto.tokenId;
-      }
-      if (dto.ipWhitelist !== undefined) {
-        patch.ipWhitelist = dto.ipWhitelist;
-      }
+      patch.ipWhitelist = dto.ipWhitelist;
+    }
+    // dto.tokenId 已 deprecated:webhook token 由 createWebhookToken / revokeWebhookToken 管理。
+    // 这里静默忽略以保持前端旧表单兼容期。
+    if (dto.tokenId !== undefined) {
+      this.logger.warn(
+        { connectorId, projectId, tokenId: dto.tokenId },
+        'connector_update_tokenId_ignored_deprecated',
+      );
     }
 
     await this.repo.update(projectId, connectorId, patch);
@@ -181,6 +223,7 @@ export class ConnectorService {
     actor: CurrentUserPayload,
     source: ActionSource = 'api',
   ): Promise<void> {
+    void source;
     await this.getWritableProject(projectId, actor);
     const existing = await this.repo.findById(projectId, connectorId);
     if (!existing) throw new NotFoundException(`Connector ${connectorId} not found`);
@@ -202,6 +245,7 @@ export class ConnectorService {
     actor: CurrentUserPayload,
     source: ActionSource = 'api',
   ): Promise<BulkDeleteConnectorsResponseDto> {
+    void source;
     await this.getWritableProject(projectId, actor);
     const force = dto.force ?? false;
     const deletedIds: string[] = [];
@@ -231,6 +275,103 @@ export class ConnectorService {
   }
 
   // -------------------------------------------------------------------------
+  // webhook token: list / create / revoke
+  // -------------------------------------------------------------------------
+  async listWebhookTokens(
+    projectId: string,
+    connectorId: string,
+    actor: CurrentUserPayload,
+  ): Promise<ConnectorWebhookTokenListDto> {
+    await this.getAccessibleProject(projectId, actor);
+    const row = await this.repo.findById(projectId, connectorId);
+    if (!row) throw new NotFoundException(`Connector ${connectorId} not found`);
+    const tokens = await this.repo.listWebhookTokensForConnector(connectorId);
+    const data = tokens.map((token) => this.toWebhookTokenSummary(token));
+    return { data, total: data.length };
+  }
+
+  async createWebhookToken(
+    projectId: string,
+    connectorId: string,
+    dto: CreateWebhookTokenDto,
+    actor: CurrentUserPayload,
+    source: ActionSource = 'api',
+  ): Promise<CreateWebhookTokenResponseDto> {
+    void source;
+    await this.getWritableProject(projectId, actor);
+    const row = await this.repo.findById(projectId, connectorId);
+    if (!row) throw new NotFoundException(`Connector ${connectorId} not found`);
+    if (row.type !== 'webhook' || row.direction !== 'input') {
+      throw new BadRequestException('webhook tokens apply only to webhook input connectors');
+    }
+    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+    const plaintext = this.generateWebhookTokenPlaintext();
+    const tokenHash = this.hashToken(plaintext);
+    const prefix = plaintext.slice(0, 12);
+    const name = dto.name?.trim() && dto.name.trim().length > 0 ? dto.name.trim() : DEFAULT_INITIAL_WEBHOOK_TOKEN_NAME;
+    const inserted = await this.repo.insertWebhookToken({
+      connectorId,
+      projectId,
+      name,
+      tokenHash,
+      tokenEncrypted: this.crypto.encryptApiKey(plaintext),
+      prefix,
+      expiresAt,
+      createdBy: actor.sub,
+    });
+    return {
+      id: inserted.id,
+      name,
+      prefix,
+      plaintext,
+      expiresAt: expiresAt?.toISOString() ?? null,
+    };
+  }
+
+  async revokeWebhookToken(
+    projectId: string,
+    connectorId: string,
+    tokenId: string,
+    actor: CurrentUserPayload,
+    source: ActionSource = 'api',
+  ): Promise<void> {
+    void source;
+    await this.getWritableProject(projectId, actor);
+    const row = await this.repo.findById(projectId, connectorId);
+    if (!row) throw new NotFoundException(`Connector ${connectorId} not found`);
+    const token = await this.repo.findWebhookTokenById(connectorId, tokenId);
+    if (!token) throw new NotFoundException(`webhook token ${tokenId} not found`);
+    const revoked = await this.repo.revokeWebhookToken(connectorId, tokenId);
+    if (!revoked) throw new NotFoundException(`webhook token ${tokenId} not found`);
+    const remaining = await this.repo.countActiveWebhookTokens(connectorId);
+    if (remaining === 0) {
+      this.logger.warn(
+        { projectId, connectorId, tokenId },
+        'connector_webhook_token_revoke_left_zero_active_tokens',
+      );
+    }
+  }
+
+  // 与 token.service 的 revealApiToken / revealGlobalMcpToken 对齐:
+  // 从 token_encrypted 解密返回明文,允许本地管理端重复查看(SPEC 06 §3.2)。
+  async revealWebhookToken(
+    projectId: string,
+    connectorId: string,
+    tokenId: string,
+    actor: CurrentUserPayload,
+    source: ActionSource = 'api',
+  ): Promise<RevealWebhookTokenResponseDto> {
+    void source;
+    await this.getWritableProject(projectId, actor);
+    const row = await this.repo.findById(projectId, connectorId);
+    if (!row) throw new NotFoundException(`Connector ${connectorId} not found`);
+    const token = await this.repo.findWebhookTokenWithEncryptedById(connectorId, tokenId);
+    if (!token) throw new NotFoundException(`webhook token ${tokenId} not found`);
+    const plaintext = token.tokenEncrypted ? this.crypto.decryptApiKey(token.tokenEncrypted) : null;
+    return { tokenId, plaintext, available: Boolean(plaintext) };
+  }
+
+  // -------------------------------------------------------------------------
   // probe / peek (driver)
   // -------------------------------------------------------------------------
   async probe(
@@ -239,6 +380,7 @@ export class ConnectorService {
     actor: CurrentUserPayload,
     source: ActionSource = 'api',
   ): Promise<ProbeConnectorResponseDto> {
+    void source;
     await this.getAccessibleProject(projectId, actor);
     const row = await this.repo.findById(projectId, connectorId);
     if (!row) throw new NotFoundException(`Connector ${connectorId} not found`);
@@ -271,6 +413,7 @@ export class ConnectorService {
     actor: CurrentUserPayload,
     source: ActionSource = 'api',
   ): Promise<PeekConnectorResponseDto> {
+    void source;
     await this.getAccessibleProject(projectId, actor);
     const row = await this.repo.findById(projectId, connectorId);
     if (!row) throw new NotFoundException(`Connector ${connectorId} not found`);
@@ -319,6 +462,53 @@ export class ConnectorService {
   // -------------------------------------------------------------------------
   // helpers
   // -------------------------------------------------------------------------
+  private async generateInitialWebhookToken(
+    connectorId: string,
+    projectId: string,
+    createdBy: string,
+  ): Promise<InitialWebhookTokenSecret> {
+    const plaintext = this.generateWebhookTokenPlaintext();
+    const tokenHash = this.hashToken(plaintext);
+    const prefix = plaintext.slice(0, 12);
+    const name = DEFAULT_INITIAL_WEBHOOK_TOKEN_NAME;
+    const inserted = await this.repo.insertWebhookToken({
+      connectorId,
+      projectId,
+      name,
+      tokenHash,
+      tokenEncrypted: this.crypto.encryptApiKey(plaintext),
+      prefix,
+      expiresAt: null,
+      createdBy,
+    });
+    return { id: inserted.id, name, prefix, plaintext, expiresAt: null };
+  }
+
+  private generateWebhookTokenPlaintext(): string {
+    return `ph_wh_${randomBytes(24).toString('base64url')}`;
+  }
+
+  private hashToken(plaintext: string): string {
+    return createHash('sha256').update(plaintext).digest('hex');
+  }
+
+  private async loadWebhookTokenSummaries(row: ConnectorRowWithJoins): Promise<ConnectorWebhookTokenSummaryDto[]> {
+    if (row.type !== 'webhook' || row.direction !== 'input') return [];
+    const tokens = await this.repo.listWebhookTokensForConnector(row.id);
+    return tokens.map((token) => this.toWebhookTokenSummary(token));
+  }
+
+  private toWebhookTokenSummary(token: WebhookTokenRow): ConnectorWebhookTokenSummaryDto {
+    return {
+      id: token.id,
+      name: token.name,
+      prefix: token.prefix,
+      expiresAt: token.expiresAt?.toISOString() ?? null,
+      lastUsedAt: token.lastUsedAt?.toISOString() ?? null,
+      createdAt: token.createdAt.toISOString(),
+    };
+  }
+
   private withLatestPeekMetadata(
     config: unknown,
     payloadSchema: Record<string, unknown> | null,
@@ -430,12 +620,12 @@ export class ConnectorService {
     if (existing) throw new ConflictException(`connector_name_in_use:${name}`);
   }
 
-  private async buildInsertRow(
+  private buildInsertRow(
     id: string,
     projectId: string,
     dto: CreateConnectorDto,
     createdBy: string,
-  ): Promise<ConnectorInsertRow> {
+  ): ConnectorInsertRow {
     const base = {
       id,
       projectId,
@@ -457,22 +647,19 @@ export class ConnectorService {
         config,
         configEncrypted: this.buildProjectConnectorEncryptedConfig(dto),
         webhookPath: null,
-        webhookTokenId: null,
         ipWhitelist: null,
       };
     }
 
     // webhook 分支
     if (dto.direction === 'input') {
-      const token = await this.repo.findTokenByIdAndProject(dto.tokenId, projectId);
-      if (!token) throw new BadRequestException(`token ${dto.tokenId} not found`);
-      const webhookPath = await this.allocateWebhookPath(projectId);
+      // 注意:webhookPath 在 service 层异步生成会引入嵌套 async,这里走同步分配。
+      // 由于 randomUUID 冲撞概率 ~0,直接生成即可;若真的冲撞,DB unique index 会拒绝。
       return {
         ...base,
         configEncrypted: null,
         config: dto.config,
-        webhookPath,
-        webhookTokenId: dto.tokenId,
+        webhookPath: randomUUID(),
         ipWhitelist: dto.ipWhitelist ?? null,
       };
     }
@@ -482,19 +669,8 @@ export class ConnectorService {
       configEncrypted: null,
       config: dto.config,
       webhookPath: null,
-      webhookTokenId: null,
       ipWhitelist: null,
     };
-  }
-
-  private async allocateWebhookPath(projectId: string): Promise<string> {
-    // 最多 3 次冲撞检测;UUID v4 冲撞概率近 0,但兜底一下
-    for (let i = 0; i < 3; i += 1) {
-      const candidate = randomUUID();
-      const existing = await this.repo.findByWebhookPath(projectId, candidate);
-      if (!existing) return candidate;
-    }
-    throw new ConflictException('failed to allocate webhook path; please retry');
   }
 
   private assertProjectConnectionConfigured(type: 'redis' | 'kafka', config: ConnectorConfigShape): void {
@@ -572,7 +748,6 @@ export class ConnectorService {
   }
 
   private assertConfigShape(type: string, direction: string, _config: unknown): void {
-    // 浅校验:具体字段由 DTO 层 Zod 校验,这里只确保 type/direction 是允许的 config
     if (!['redis', 'kafka', 'webhook'].includes(type)) {
       throw new BadRequestException(`invalid connector type: ${type}`);
     }
@@ -597,11 +772,6 @@ export class ConnectorService {
   // -------------------------------------------------------------------------
   // DTO mappers
   // -------------------------------------------------------------------------
-  private toTokenSummary(row: ConnectorRowWithJoins): ConnectorTokenSummaryDto | null {
-    if (!row.webhookTokenId || !row.tokenName || !row.tokenPrefix) return null;
-    return { id: row.webhookTokenId, name: row.tokenName, prefix: row.tokenPrefix };
-  }
-
   private toConfigSummary(row: ConnectorRowWithJoins): string {
     const config = row.config as Record<string, unknown> | null;
     if (!config) return '';
@@ -626,7 +796,11 @@ export class ConnectorService {
     return '';
   }
 
-  private toListItem(row: ConnectorRowWithJoins, references: ConnectorReferencesSummaryDto): ConnectorListItemDto {
+  private toListItem(
+    row: ConnectorRowWithJoins,
+    references: ConnectorReferencesSummaryDto,
+    activeWebhookTokenCount: number,
+  ): ConnectorListItemDto {
     const ipWhitelistArr = (row.ipWhitelist as string[] | null) ?? null;
     return {
       id: row.id,
@@ -636,7 +810,7 @@ export class ConnectorService {
       direction: row.direction as ConnectorListItemDto['direction'],
       type: row.type as ConnectorListItemDto['type'],
       webhookPath: row.webhookPath ?? null,
-      hasToken: !!row.webhookTokenId,
+      hasToken: activeWebhookTokenCount > 0,
       ipWhitelistCount: ipWhitelistArr?.length ?? 0,
       configSummary: this.toConfigSummary(row),
       healthStatus: row.healthStatus as ConnectorListItemDto['healthStatus'],
@@ -650,29 +824,17 @@ export class ConnectorService {
     };
   }
 
-  private toDetail(row: ConnectorRowWithJoins, references: ConnectorReferencesSummaryDto): ConnectorDetailDto {
-    const listItem = this.toListItem(row, references);
+  private toDetail(
+    row: ConnectorRowWithJoins,
+    references: ConnectorReferencesSummaryDto,
+    webhookTokens: ConnectorWebhookTokenSummaryDto[],
+  ): ConnectorDetailDto {
+    const listItem = this.toListItem(row, references, webhookTokens.length);
     return {
       ...listItem,
       config: row.config as ConnectorDetailDto['config'],
-      token: this.toTokenSummary(row),
+      webhookTokens,
       ipWhitelist: (row.ipWhitelist as string[] | null) ?? null,
     };
-  }
-
-  private toCreateAuditPayload(dto: CreateConnectorDto): Record<string, unknown> {
-    return {
-      name: dto.name,
-      direction: dto.direction,
-      type: dto.type,
-    };
-  }
-
-  private toUpdateAuditPayload(dto: UpdateConnectorDto): Record<string, unknown> {
-    const fields: string[] = [];
-    for (const [key, value] of Object.entries(dto)) {
-      if (value !== undefined) fields.push(key);
-    }
-    return { fields };
   }
 }

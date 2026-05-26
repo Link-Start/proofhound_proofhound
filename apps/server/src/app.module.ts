@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ContractsModule } from './common/contracts/contracts.module';
 import { HealthController } from './common/health.controller';
 import { HealthService } from './common/health.service';
 import { ProjectContextModule } from './common/project-context.module';
@@ -25,6 +26,7 @@ import { TokenModule } from './modules/token/token.module';
 @Module({
   imports: [
     ConfigModule,
+    ContractsModule,
     ProjectContextModule,
     CryptoModule,
     DatabaseModule,

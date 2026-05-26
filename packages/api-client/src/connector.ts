@@ -1,15 +1,20 @@
 import type {
   BulkDeleteConnectorsRequestDto,
   BulkDeleteConnectorsResponseDto,
+  ConnectorCreateResponseDto,
   ConnectorDetailDto,
   ConnectorListItemDto,
   ConnectorListQueryDto,
   ConnectorListResponseDto,
   ConnectorReferencesResponseDto,
+  ConnectorWebhookTokenListDto,
   CreateConnectorDto,
+  CreateWebhookTokenDto,
+  CreateWebhookTokenResponseDto,
   PeekConnectorRequestDto,
   PeekConnectorResponseDto,
   ProbeConnectorResponseDto,
+  RevealWebhookTokenResponseDto,
   UpdateConnectorDto,
 } from '@proofhound/shared';
 import { httpClient } from './http';
@@ -54,7 +59,7 @@ export const connectorClient = {
       .then((r) => r.data),
 
   create: (projectId: string, body: CreateConnectorDto) =>
-    httpClient.post<ConnectorDetailDto>(`/connectors`, body).then((r) => r.data),
+    httpClient.post<ConnectorCreateResponseDto>(`/connectors`, body).then((r) => r.data),
 
   update: (projectId: string, connectorId: string, body: UpdateConnectorDto) =>
     httpClient
@@ -79,6 +84,28 @@ export const connectorClient = {
   peek: (projectId: string, connectorId: string, body: PeekConnectorRequestDto) =>
     httpClient
       .post<PeekConnectorResponseDto>(`/connectors/${connectorId}/peek`, body)
+      .then((r) => r.data),
+
+  // per-connector webhook tokens (scope='webhook', AND connector_id=...)
+  // 详见 docs/specs/26-connectors.md / docs/specs/06-database-schema.md §3.2
+  listWebhookTokens: (projectId: string, connectorId: string) =>
+    httpClient
+      .get<ConnectorWebhookTokenListDto>(`/connectors/${connectorId}/webhook-tokens`)
+      .then((r) => r.data),
+
+  createWebhookToken: (projectId: string, connectorId: string, body: CreateWebhookTokenDto) =>
+    httpClient
+      .post<CreateWebhookTokenResponseDto>(`/connectors/${connectorId}/webhook-tokens`, body)
+      .then((r) => r.data),
+
+  revokeWebhookToken: (projectId: string, connectorId: string, tokenId: string) =>
+    httpClient
+      .delete<void>(`/connectors/${connectorId}/webhook-tokens/${tokenId}`)
+      .then(() => undefined),
+
+  revealWebhookToken: (projectId: string, connectorId: string, tokenId: string) =>
+    httpClient
+      .get<RevealWebhookTokenResponseDto>(`/connectors/${connectorId}/webhook-tokens/${tokenId}/plaintext`)
       .then((r) => r.data),
 };
 

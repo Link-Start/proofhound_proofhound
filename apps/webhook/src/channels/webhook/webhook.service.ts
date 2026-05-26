@@ -5,7 +5,6 @@ import {
   ConflictException,
   Inject,
   Injectable,
-  NotFoundException,
   RequestTimeoutException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -182,27 +181,33 @@ export class WebhookService {
     return formatAsyncCallReceipt(receipt, expiresInSeconds);
   }
 
+  /**
+   * 校验 webhook 入站凭证:
+   * - 通过 slug + pathName + token_hash 一次性查 connector + 它的 active webhook token;
+   * - 任何"connector 不存在 / token 不匹配"统一返回 401 `invalid_webhook_token`,避免 enumerate;
+   * - 过期则单独返回 `expired_webhook_token`,与 invalid 区分以便上游运维。
+   *
+   * 详见 docs/specs/03-orchestration.md §3.6。
+   */
   private async authorizeConnector(input: {
     webhookSlug: string;
     pathName: string;
     authorization: string | null;
   }): Promise<WebhookConnectorRow> {
     const token = parseBearerToken(input.authorization);
-    const connector = await this.repo.findConnectorByPublicPath(
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const result = await this.repo.findConnectorWithValidToken(
       normalizeSlug(input.webhookSlug),
       normalizePathName(input.pathName),
+      tokenHash,
     );
-    if (!connector) throw new NotFoundException('webhook_not_found');
-    const tokenHash = createHash('sha256').update(token).digest('hex');
-    const expiresAt = connector.tokenExpiresAt ? new Date(connector.tokenExpiresAt).getTime() : null;
-    if (!connector.tokenId || !connector.tokenHash || connector.tokenHash !== tokenHash) {
-      throw new UnauthorizedException('invalid_api_token');
-    }
+    if (!result) throw new UnauthorizedException('invalid_webhook_token');
+    const expiresAt = result.tokenExpiresAt ? new Date(result.tokenExpiresAt).getTime() : null;
     if (expiresAt !== null && expiresAt <= Date.now()) {
-      throw new UnauthorizedException('expired_api_token');
+      throw new UnauthorizedException('expired_webhook_token');
     }
-    await this.repo.touchTokenLastUsed(connector.tokenId);
-    return connector;
+    await this.repo.touchTokenLastUsed(result.tokenId);
+    return result.connector;
   }
 
   private async waitForRunResult(runResultId: string, timeoutMs: number): Promise<WebhookRunResultRow> {

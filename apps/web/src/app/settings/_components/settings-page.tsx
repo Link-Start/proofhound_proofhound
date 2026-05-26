@@ -1,12 +1,7 @@
 'use client';
 
-import type {
-  ApiTokenSummaryDto,
-  CreateApiTokenResponseDto,
-  CreateGlobalMcpTokenResponseDto,
-  GlobalMcpTokenSummaryDto,
-} from '@proofhound/shared';
-import { Copy, Eye, EyeOff, KeyRound, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import type { CreateUserTokenResponseDto, UserTokenSummaryDto } from '@proofhound/shared';
+import { Copy, Eye, EyeOff, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -33,24 +28,18 @@ import {
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { Main } from '@/components/layout/main';
 import {
-  useApiTokens,
-  useCreateApiToken,
-  useCreateGlobalMcpToken,
-  useDeleteApiToken,
-  useDeleteGlobalMcpToken,
-  useGlobalMcpToken,
-  useRevealApiToken,
-  useRevealGlobalMcpToken,
-  useUpdateApiToken,
-  useUpdateGlobalMcpToken,
-} from '@/hooks/api-token';
+  useCreateToken,
+  useDeleteToken,
+  useRevealToken,
+  useTokens,
+  useUpdateToken,
+} from '@/hooks/token';
 import { useI18n } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 type TokenExpiryPreset = 'never' | '7d' | '30d' | '90d' | 'custom';
-type TokenKind = 'api' | 'mcp';
 
 interface TokenCreateState {
   open: boolean;
@@ -84,19 +73,10 @@ const EMPTY_EDIT_STATE: TokenEditState = {
   customExpiresAt: '',
 };
 
-const API_TOKEN_COLUMNS: TableColumn[] = [
+const TOKEN_COLUMNS: TableColumn[] = [
   { key: 'name', width: 'flex', minPx: 140, sticky: 'left' },
   { key: 'token', width: 'flex', minPx: 240 },
   { key: 'ipWhitelist', width: 'compact' },
-  { key: 'lastUsedAt', width: 'compact' },
-  { key: 'expiresAt', width: 'compact' },
-  { key: 'createdAt', width: 'compact' },
-  { key: 'actions', width: 'compact', sticky: 'right' },
-];
-
-const MCP_TOKEN_COLUMNS: TableColumn[] = [
-  { key: 'name', width: 'flex', minPx: 180, sticky: 'left' },
-  { key: 'token', width: 'flex', minPx: 280 },
   { key: 'lastUsedAt', width: 'compact' },
   { key: 'expiresAt', width: 'compact' },
   { key: 'createdAt', width: 'compact' },
@@ -135,7 +115,7 @@ function toDatetimeLocalValue(value: string | null | undefined): string {
   );
 }
 
-function createEditState(token: Pick<ApiTokenSummaryDto, 'id' | 'name' | 'expiresAt'>): TokenEditState {
+function createEditState(token: Pick<UserTokenSummaryDto, 'id' | 'name' | 'expiresAt'>): TokenEditState {
   return {
     open: true,
     tokenId: token.id,
@@ -150,10 +130,10 @@ function maskToken(prefix: string, plaintext?: string): string {
   return `${visiblePrefix}••••••`;
 }
 
-function mergeCreatedApiToken(
-  rows: ApiTokenSummaryDto[],
-  created: CreateApiTokenResponseDto | null,
-): ApiTokenSummaryDto[] {
+function mergeCreatedToken(
+  rows: UserTokenSummaryDto[],
+  created: CreateUserTokenResponseDto | null,
+): UserTokenSummaryDto[] {
   if (!created) return rows;
   if (rows.some((row) => row.id === created.token.id)) return rows;
   return [created.token, ...rows];
@@ -173,38 +153,25 @@ function deleteSetValue<T>(current: Set<T>, value: T): Set<T> {
 
 export function SettingsPage() {
   const { t } = useI18n();
-  const apiTokensQuery = useApiTokens();
-  const globalMcpTokenQuery = useGlobalMcpToken();
-  const createApiToken = useCreateApiToken();
-  const revealApiToken = useRevealApiToken();
-  const updateApiToken = useUpdateApiToken();
-  const deleteApiToken = useDeleteApiToken();
-  const createGlobalMcpToken = useCreateGlobalMcpToken();
-  const revealGlobalMcpToken = useRevealGlobalMcpToken();
-  const updateGlobalMcpToken = useUpdateGlobalMcpToken();
-  const deleteGlobalMcpToken = useDeleteGlobalMcpToken();
+  const tokensQuery = useTokens();
+  const createTokenMutation = useCreateToken();
+  const revealTokenMutation = useRevealToken();
+  const updateTokenMutation = useUpdateToken();
+  const deleteTokenMutation = useDeleteToken();
 
-  const [apiCreate, setApiCreate] = useState<TokenCreateState>(EMPTY_CREATE_STATE);
-  const [mcpCreate, setMcpCreate] = useState<TokenCreateState>(EMPTY_CREATE_STATE);
-  const [apiEdit, setApiEdit] = useState<TokenEditState>(EMPTY_EDIT_STATE);
-  const [mcpEdit, setMcpEdit] = useState<TokenEditState>(EMPTY_EDIT_STATE);
-  const [apiDeleteTarget, setApiDeleteTarget] = useState<ApiTokenSummaryDto | null>(null);
-  const [mcpDeleteTarget, setMcpDeleteTarget] = useState<GlobalMcpTokenSummaryDto | null>(null);
-  const [createdApiToken, setCreatedApiToken] = useState<CreateApiTokenResponseDto | null>(null);
-  const [createdMcpToken, setCreatedMcpToken] = useState<CreateGlobalMcpTokenResponseDto | null>(null);
-  const [apiPlaintexts, setApiPlaintexts] = useState<Record<string, string>>({});
-  const [mcpPlaintexts, setMcpPlaintexts] = useState<Record<string, string>>({});
-  const [visibleApiTokenIds, setVisibleApiTokenIds] = useState<Set<string>>(() => new Set());
-  const [visibleMcpTokenIds, setVisibleMcpTokenIds] = useState<Set<string>>(() => new Set());
+  const [createState, setCreateState] = useState<TokenCreateState>(EMPTY_CREATE_STATE);
+  const [editState, setEditState] = useState<TokenEditState>(EMPTY_EDIT_STATE);
+  const [deleteTarget, setDeleteTarget] = useState<UserTokenSummaryDto | null>(null);
+  const [createdToken, setCreatedToken] = useState<CreateUserTokenResponseDto | null>(null);
+  const [plaintexts, setPlaintexts] = useState<Record<string, string>>({});
+  const [visibleTokenIds, setVisibleTokenIds] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const apiRows = useMemo(
-    () => mergeCreatedApiToken(apiTokensQuery.data?.data ?? [], createdApiToken),
-    [apiTokensQuery.data?.data, createdApiToken],
+  const rows = useMemo(
+    () => mergeCreatedToken(tokensQuery.data?.data ?? [], createdToken),
+    [tokensQuery.data?.data, createdToken],
   );
-  const globalMcpToken = globalMcpTokenQuery.data?.token ?? createdMcpToken?.token ?? null;
-  const mcpRows = globalMcpToken ? [globalMcpToken] : [];
 
   function showNotice(message: string) {
     setNotice(message);
@@ -225,178 +192,93 @@ export function SettingsPage() {
     }
   }
 
-  async function submitCreateApiToken() {
-    const expiresAt = resolveExpiresAt(apiCreate);
+  async function submitCreateToken() {
+    const expiresAt = resolveExpiresAt(createState);
     if (expiresAt === undefined) {
       showError(t('settings.token.invalidExpiresAt'));
       return;
     }
 
     try {
-      const result = await createApiToken.mutateAsync({
-        name: apiCreate.name.trim(),
-        ipWhitelist: parseIpWhitelist(apiCreate.ipWhitelistRaw),
+      const result = await createTokenMutation.mutateAsync({
+        name: createState.name.trim(),
+        ipWhitelist: parseIpWhitelist(createState.ipWhitelistRaw),
         expiresAt,
       });
-      setCreatedApiToken(result);
-      setApiPlaintexts((prev) => ({ ...prev, [result.token.id]: result.plaintext }));
-      setVisibleApiTokenIds((prev) => addSetValue(prev, result.token.id));
-      setApiCreate(EMPTY_CREATE_STATE);
-      showNotice(t('settings.apiToken.created'));
+      setCreatedToken(result);
+      setPlaintexts((prev) => ({ ...prev, [result.token.id]: result.plaintext }));
+      setVisibleTokenIds((prev) => addSetValue(prev, result.token.id));
+      setCreateState(EMPTY_CREATE_STATE);
+      showNotice(t('settings.token.created'));
     } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.apiToken.createFailed'));
+      showError(getApiErrorMessage(err) ?? t('settings.token.createFailed'));
     }
   }
 
-  async function submitCreateMcpToken() {
-    const expiresAt = resolveExpiresAt(mcpCreate);
-    if (expiresAt === undefined) {
-      showError(t('settings.token.invalidExpiresAt'));
+  async function toggleTokenPlaintext(token: UserTokenSummaryDto) {
+    if (visibleTokenIds.has(token.id)) {
+      setVisibleTokenIds((prev) => deleteSetValue(prev, token.id));
       return;
     }
 
-    try {
-      const result = await createGlobalMcpToken.mutateAsync({
-        name: mcpCreate.name.trim(),
-        expiresAt,
-      });
-      setCreatedMcpToken(result);
-      setMcpPlaintexts((prev) => ({ ...prev, [result.token.id]: result.plaintext }));
-      setVisibleMcpTokenIds((prev) => addSetValue(prev, result.token.id));
-      setMcpCreate(EMPTY_CREATE_STATE);
-      showNotice(t('settings.mcpToken.created'));
-    } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.mcpToken.createFailed'));
-    }
-  }
-
-  async function toggleApiTokenPlaintext(token: ApiTokenSummaryDto) {
-    if (visibleApiTokenIds.has(token.id)) {
-      setVisibleApiTokenIds((prev) => deleteSetValue(prev, token.id));
-      return;
-    }
-
-    const cached = apiPlaintexts[token.id];
+    const cached = plaintexts[token.id];
     if (cached) {
-      setVisibleApiTokenIds((prev) => addSetValue(prev, token.id));
+      setVisibleTokenIds((prev) => addSetValue(prev, token.id));
       return;
     }
 
     try {
-      const result = await revealApiToken.mutateAsync(token.id);
+      const result = await revealTokenMutation.mutateAsync(token.id);
       if (!result.available || !result.plaintext) {
         showError(t('settings.token.revealUnavailable'));
         return;
       }
-      setApiPlaintexts((prev) => ({ ...prev, [token.id]: result.plaintext! }));
-      setVisibleApiTokenIds((prev) => addSetValue(prev, token.id));
+      setPlaintexts((prev) => ({ ...prev, [token.id]: result.plaintext! }));
+      setVisibleTokenIds((prev) => addSetValue(prev, token.id));
     } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.apiToken.revealFailed'));
+      showError(getApiErrorMessage(err) ?? t('settings.token.revealFailed'));
     }
   }
 
-  async function toggleMcpTokenPlaintext(token: GlobalMcpTokenSummaryDto) {
-    if (visibleMcpTokenIds.has(token.id)) {
-      setVisibleMcpTokenIds((prev) => deleteSetValue(prev, token.id));
-      return;
-    }
-
-    const cached = mcpPlaintexts[token.id];
-    if (cached) {
-      setVisibleMcpTokenIds((prev) => addSetValue(prev, token.id));
-      return;
-    }
-
-    try {
-      const result = await revealGlobalMcpToken.mutateAsync(token.id);
-      if (!result.available || !result.plaintext) {
-        showError(t('settings.token.revealUnavailable'));
-        return;
-      }
-      setMcpPlaintexts((prev) => ({ ...prev, [token.id]: result.plaintext! }));
-      setVisibleMcpTokenIds((prev) => addSetValue(prev, token.id));
-    } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.mcpToken.revealFailed'));
-    }
-  }
-
-  async function submitUpdateApiToken() {
-    const expiresAt = resolveExpiresAt(apiEdit);
+  async function submitUpdateToken() {
+    const expiresAt = resolveExpiresAt(editState);
     if (expiresAt === undefined) {
       showError(t('settings.token.invalidExpiresAt'));
       return;
     }
 
     try {
-      const result = await updateApiToken.mutateAsync({
-        tokenId: apiEdit.tokenId,
-        body: { name: apiEdit.name.trim(), expiresAt },
+      const result = await updateTokenMutation.mutateAsync({
+        tokenId: editState.tokenId,
+        body: { name: editState.name.trim(), expiresAt },
       });
-      setCreatedApiToken((prev) => (prev?.token.id === result.token.id ? { ...prev, token: result.token } : prev));
-      setApiEdit(EMPTY_EDIT_STATE);
-      showNotice(t('settings.apiToken.updated'));
+      setCreatedToken((prev) => (prev?.token.id === result.token.id ? { ...prev, token: result.token } : prev));
+      setEditState(EMPTY_EDIT_STATE);
+      showNotice(t('settings.token.updated'));
     } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.apiToken.updateFailed'));
+      showError(getApiErrorMessage(err) ?? t('settings.token.updateFailed'));
     }
   }
 
-  async function submitUpdateMcpToken() {
-    const expiresAt = resolveExpiresAt(mcpEdit);
-    if (expiresAt === undefined) {
-      showError(t('settings.token.invalidExpiresAt'));
-      return;
-    }
-
+  async function submitDeleteToken() {
+    if (!deleteTarget) return;
     try {
-      const result = await updateGlobalMcpToken.mutateAsync({
-        tokenId: mcpEdit.tokenId,
-        body: { name: mcpEdit.name.trim(), expiresAt },
-      });
-      setCreatedMcpToken((prev) => (prev?.token.id === result.token.id ? { ...prev, token: result.token } : prev));
-      setMcpEdit(EMPTY_EDIT_STATE);
-      showNotice(t('settings.mcpToken.updated'));
-    } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.mcpToken.updateFailed'));
-    }
-  }
-
-  async function submitDeleteApiToken() {
-    if (!apiDeleteTarget) return;
-    try {
-      await deleteApiToken.mutateAsync(apiDeleteTarget.id);
-      setApiPlaintexts((prev) => {
+      await deleteTokenMutation.mutateAsync(deleteTarget.id);
+      setPlaintexts((prev) => {
         const next = { ...prev };
-        delete next[apiDeleteTarget.id];
+        delete next[deleteTarget.id];
         return next;
       });
-      setVisibleApiTokenIds((prev) => deleteSetValue(prev, apiDeleteTarget.id));
-      setCreatedApiToken((prev) => (prev?.token.id === apiDeleteTarget.id ? null : prev));
-      setApiDeleteTarget(null);
-      showNotice(t('settings.apiToken.deleted'));
+      setVisibleTokenIds((prev) => deleteSetValue(prev, deleteTarget.id));
+      setCreatedToken((prev) => (prev?.token.id === deleteTarget.id ? null : prev));
+      setDeleteTarget(null);
+      showNotice(t('settings.token.deleted'));
     } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.apiToken.deleteFailed'));
+      showError(getApiErrorMessage(err) ?? t('settings.token.deleteFailed'));
     }
   }
 
-  async function submitDeleteMcpToken() {
-    if (!mcpDeleteTarget) return;
-    try {
-      await deleteGlobalMcpToken.mutateAsync(mcpDeleteTarget.id);
-      setMcpPlaintexts((prev) => {
-        const next = { ...prev };
-        delete next[mcpDeleteTarget.id];
-        return next;
-      });
-      setVisibleMcpTokenIds((prev) => deleteSetValue(prev, mcpDeleteTarget.id));
-      setCreatedMcpToken((prev) => (prev?.token.id === mcpDeleteTarget.id ? null : prev));
-      setMcpDeleteTarget(null);
-      showNotice(t('settings.mcpToken.deleted'));
-    } catch (err) {
-      showError(getApiErrorMessage(err) ?? t('settings.mcpToken.deleteFailed'));
-    }
-  }
-
-  const loading = apiTokensQuery.isLoading || globalMcpTokenQuery.isLoading;
+  const loading = tokensQuery.isLoading;
 
   return (
     <Main className="gap-0">
@@ -411,42 +293,42 @@ export function SettingsPage() {
 
         {loading ? <PlatformLoader /> : null}
 
-        <section className="space-y-4 rounded-lg border bg-card p-4" data-testid="settings-api-token-section">
+        <section className="space-y-4 rounded-lg border bg-card p-4" data-testid="settings-token-section">
           <SectionHeader
-            icon={<ShieldCheck className="h-4 w-4" />}
-            title={t('settings.apiToken.title')}
-            description={t('settings.apiToken.description')}
+            icon={<KeyRound className="h-4 w-4" />}
+            title={t('settings.token.title')}
+            description={t('settings.token.description')}
             actions={
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setApiCreate({ ...EMPTY_CREATE_STATE, open: true })}
-                disabled={createApiToken.isPending}
+                onClick={() => setCreateState({ ...EMPTY_CREATE_STATE, open: true })}
+                disabled={createTokenMutation.isPending}
               >
                 <Plus className="mr-2 h-4 w-4" />
-                {t('settings.apiToken.create')}
+                {t('settings.token.create')}
               </Button>
             }
           />
 
-          {createdApiToken ? (
+          {createdToken ? (
             <PlaintextResult
-              title={t('settings.apiToken.createdTitle')}
-              plaintext={createdApiToken.plaintext}
-              onCopy={() => void copyValue(createdApiToken.plaintext)}
+              title={t('settings.token.createdTitle')}
+              plaintext={createdToken.plaintext}
+              onCopy={() => void copyValue(createdToken.plaintext)}
             />
           ) : null}
 
-          {apiTokensQuery.isError ? (
-            <StatusBanner tone="error">{t('settings.apiToken.loadFailed')}</StatusBanner>
+          {tokensQuery.isError ? (
+            <StatusBanner tone="error">{t('settings.token.loadFailed')}</StatusBanner>
           ) : (
             <div className="overflow-hidden rounded-md border">
-              <Table columns={API_TOKEN_COLUMNS}>
+              <Table columns={TOKEN_COLUMNS}>
                 <TableHeader>
                   <TableRow>
                     <TableHead column="name">{t('settings.token.column.name')}</TableHead>
                     <TableHead column="token">{t('settings.token.column.token')}</TableHead>
-                    <TableHead column="ipWhitelist">{t('settings.apiToken.column.ipWhitelist')}</TableHead>
+                    <TableHead column="ipWhitelist">{t('settings.token.column.ipWhitelist')}</TableHead>
                     <TableHead column="lastUsedAt">{t('settings.token.column.lastUsedAt')}</TableHead>
                     <TableHead column="expiresAt">{t('settings.token.column.expiresAt')}</TableHead>
                     <TableHead column="createdAt">{t('settings.token.column.createdAt')}</TableHead>
@@ -456,29 +338,28 @@ export function SettingsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {apiRows.length === 0 ? (
-                    <TableEmpty>{t('settings.apiToken.empty')}</TableEmpty>
+                  {rows.length === 0 ? (
+                    <TableEmpty>{t('settings.token.empty')}</TableEmpty>
                   ) : (
-                    apiRows.map((token) => (
+                    rows.map((token) => (
                       <TableRow key={token.id}>
                         <TableCell column="name" truncate>
                           {token.name}
                         </TableCell>
                         <TableCell column="token">
                           <TokenPlaintextCell
-                            kind="api"
                             prefix={token.prefix}
-                            plaintext={apiPlaintexts[token.id]}
-                            visible={visibleApiTokenIds.has(token.id)}
-                            revealing={revealApiToken.isPending}
-                            onToggle={() => void toggleApiTokenPlaintext(token)}
+                            plaintext={plaintexts[token.id]}
+                            visible={visibleTokenIds.has(token.id)}
+                            revealing={revealTokenMutation.isPending}
+                            onToggle={() => void toggleTokenPlaintext(token)}
                             onCopy={(plaintext) => void copyValue(plaintext)}
                           />
                         </TableCell>
                         <TableCell column="ipWhitelist" truncate>
                           {token.ipWhitelist?.length
                             ? token.ipWhitelist.join(', ')
-                            : t('settings.apiToken.ipWhitelistNone')}
+                            : t('settings.token.ipWhitelistNone')}
                         </TableCell>
                         <TableCell column="lastUsedAt">{formatDateTime(token.lastUsedAt)}</TableCell>
                         <TableCell column="expiresAt">{formatDateTime(token.expiresAt)}</TableCell>
@@ -486,112 +367,16 @@ export function SettingsPage() {
                         <TableCell column="actions">
                           <div className="flex items-center justify-end gap-0.5">
                             <TableActionIconButton
-                              label={t('settings.apiToken.edit')}
-                              onClick={() => setApiEdit(createEditState(token))}
-                              disabled={updateApiToken.isPending}
+                              label={t('settings.token.edit')}
+                              onClick={() => setEditState(createEditState(token))}
+                              disabled={updateTokenMutation.isPending}
                             >
                               <Pencil className="h-4 w-4" />
                             </TableActionIconButton>
                             <TableActionIconButton
-                              label={t('settings.apiToken.delete')}
-                              onClick={() => setApiDeleteTarget(token)}
-                              disabled={deleteApiToken.isPending}
-                              className="text-destructive hover:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </TableActionIconButton>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-4 rounded-lg border bg-card p-4" data-testid="settings-mcp-token-section">
-          <SectionHeader
-            icon={<KeyRound className="h-4 w-4" />}
-            title={t('settings.mcpToken.title')}
-            description={t('settings.mcpToken.description')}
-            actions={
-              globalMcpToken ? null : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setMcpCreate({ ...EMPTY_CREATE_STATE, open: true })}
-                  disabled={createGlobalMcpToken.isPending || globalMcpTokenQuery.isLoading}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  {t('settings.mcpToken.create')}
-                </Button>
-              )
-            }
-          />
-
-          {createdMcpToken ? (
-            <PlaintextResult
-              title={t('settings.mcpToken.createdTitle')}
-              plaintext={createdMcpToken.plaintext}
-              onCopy={() => void copyValue(createdMcpToken.plaintext)}
-            />
-          ) : null}
-
-          {globalMcpTokenQuery.isError ? (
-            <StatusBanner tone="error">{t('settings.mcpToken.loadFailed')}</StatusBanner>
-          ) : (
-            <div className="overflow-hidden rounded-md border">
-              <Table columns={MCP_TOKEN_COLUMNS}>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead column="name">{t('settings.token.column.name')}</TableHead>
-                    <TableHead column="token">{t('settings.token.column.token')}</TableHead>
-                    <TableHead column="lastUsedAt">{t('settings.token.column.lastUsedAt')}</TableHead>
-                    <TableHead column="expiresAt">{t('settings.token.column.expiresAt')}</TableHead>
-                    <TableHead column="createdAt">{t('settings.token.column.createdAt')}</TableHead>
-                    <TableHead column="actions" className="text-right">
-                      {t('common.actions')}
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mcpRows.length === 0 ? (
-                    <TableEmpty>{t('settings.mcpToken.empty')}</TableEmpty>
-                  ) : (
-                    mcpRows.map((token) => (
-                      <TableRow key={token.id}>
-                        <TableCell column="name" truncate>
-                          {token.name}
-                        </TableCell>
-                        <TableCell column="token">
-                          <TokenPlaintextCell
-                            kind="mcp"
-                            prefix={token.prefix}
-                            plaintext={mcpPlaintexts[token.id]}
-                            visible={visibleMcpTokenIds.has(token.id)}
-                            revealing={revealGlobalMcpToken.isPending}
-                            onToggle={() => void toggleMcpTokenPlaintext(token)}
-                            onCopy={(plaintext) => void copyValue(plaintext)}
-                          />
-                        </TableCell>
-                        <TableCell column="lastUsedAt">{formatDateTime(token.lastUsedAt)}</TableCell>
-                        <TableCell column="expiresAt">{formatDateTime(token.expiresAt)}</TableCell>
-                        <TableCell column="createdAt">{formatDateTime(token.createdAt)}</TableCell>
-                        <TableCell column="actions">
-                          <div className="flex items-center justify-end gap-0.5">
-                            <TableActionIconButton
-                              label={t('settings.mcpToken.edit')}
-                              onClick={() => setMcpEdit(createEditState(token))}
-                              disabled={updateGlobalMcpToken.isPending}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </TableActionIconButton>
-                            <TableActionIconButton
-                              label={t('settings.mcpToken.delete')}
-                              onClick={() => setMcpDeleteTarget(token)}
-                              disabled={deleteGlobalMcpToken.isPending}
+                              label={t('settings.token.delete')}
+                              onClick={() => setDeleteTarget(token)}
+                              disabled={deleteTokenMutation.isPending}
                               className="text-destructive hover:text-destructive"
                             >
                               <Trash2 className="h-4 w-4" />
@@ -608,54 +393,26 @@ export function SettingsPage() {
         </section>
 
         <CreateTokenDialog
-          kind="api"
-          state={apiCreate}
-          pending={createApiToken.isPending}
-          onChange={setApiCreate}
-          onCancel={() => setApiCreate(EMPTY_CREATE_STATE)}
-          onSubmit={() => void submitCreateApiToken()}
-        />
-        <CreateTokenDialog
-          kind="mcp"
-          state={mcpCreate}
-          pending={createGlobalMcpToken.isPending}
-          onChange={setMcpCreate}
-          onCancel={() => setMcpCreate(EMPTY_CREATE_STATE)}
-          onSubmit={() => void submitCreateMcpToken()}
+          state={createState}
+          pending={createTokenMutation.isPending}
+          onChange={setCreateState}
+          onCancel={() => setCreateState(EMPTY_CREATE_STATE)}
+          onSubmit={() => void submitCreateToken()}
         />
         <EditTokenDialog
-          kind="api"
-          state={apiEdit}
-          pending={updateApiToken.isPending}
-          onChange={setApiEdit}
-          onCancel={() => setApiEdit(EMPTY_EDIT_STATE)}
-          onSubmit={() => void submitUpdateApiToken()}
-        />
-        <EditTokenDialog
-          kind="mcp"
-          state={mcpEdit}
-          pending={updateGlobalMcpToken.isPending}
-          onChange={setMcpEdit}
-          onCancel={() => setMcpEdit(EMPTY_EDIT_STATE)}
-          onSubmit={() => void submitUpdateMcpToken()}
+          state={editState}
+          pending={updateTokenMutation.isPending}
+          onChange={setEditState}
+          onCancel={() => setEditState(EMPTY_EDIT_STATE)}
+          onSubmit={() => void submitUpdateToken()}
         />
         <DeleteTokenDialog
-          kind="api"
-          open={Boolean(apiDeleteTarget)}
-          name={apiDeleteTarget?.name ?? ''}
-          prefix={apiDeleteTarget?.prefix ?? ''}
-          pending={deleteApiToken.isPending}
-          onCancel={() => setApiDeleteTarget(null)}
-          onConfirm={() => void submitDeleteApiToken()}
-        />
-        <DeleteTokenDialog
-          kind="mcp"
-          open={Boolean(mcpDeleteTarget)}
-          name={mcpDeleteTarget?.name ?? ''}
-          prefix={mcpDeleteTarget?.prefix ?? ''}
-          pending={deleteGlobalMcpToken.isPending}
-          onCancel={() => setMcpDeleteTarget(null)}
-          onConfirm={() => void submitDeleteMcpToken()}
+          open={Boolean(deleteTarget)}
+          name={deleteTarget?.name ?? ''}
+          prefix={deleteTarget?.prefix ?? ''}
+          pending={deleteTokenMutation.isPending}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void submitDeleteToken()}
         />
       </div>
     </Main>
@@ -713,14 +470,12 @@ function Field({
 }
 
 function CreateTokenDialog({
-  kind,
   state,
   pending,
   onChange,
   onCancel,
   onSubmit,
 }: {
-  kind: TokenKind;
   state: TokenCreateState;
   pending: boolean;
   onChange: (state: TokenCreateState) => void;
@@ -728,8 +483,7 @@ function CreateTokenDialog({
   onSubmit: () => void;
 }) {
   const { t } = useI18n();
-  const isApi = kind === 'api';
-  const idPrefix = kind === 'api' ? 'settings-api-token' : 'settings-mcp-token';
+  const idPrefix = 'settings-token-create';
   const disabled =
     pending ||
     state.name.trim().length < 2 ||
@@ -739,12 +493,8 @@ function CreateTokenDialog({
     <Dialog open={state.open} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            {isApi ? t('settings.apiToken.createDialogTitle') : t('settings.mcpToken.createDialogTitle')}
-          </DialogTitle>
-          <DialogDescription>
-            {isApi ? t('settings.apiToken.createDialogDescription') : t('settings.mcpToken.createDialogDescription')}
-          </DialogDescription>
+          <DialogTitle>{t('settings.token.createDialogTitle')}</DialogTitle>
+          <DialogDescription>{t('settings.token.createDialogDescription')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <Field htmlFor={`${idPrefix}-name`} label={t('settings.token.name')} required>
@@ -756,22 +506,20 @@ function CreateTokenDialog({
               required
             />
           </Field>
-          {isApi ? (
-            <Field
-              htmlFor={`${idPrefix}-ip-whitelist`}
-              label={t('settings.apiToken.ipWhitelist')}
-              hint={t('settings.apiToken.ipWhitelistHint')}
-            >
-              <textarea
-                id={`${idPrefix}-ip-whitelist`}
-                rows={3}
-                className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
-                value={state.ipWhitelistRaw}
-                onChange={(event) => onChange({ ...state, ipWhitelistRaw: event.target.value })}
-                placeholder="10.0.0.0/8&#10;192.168.1.10"
-              />
-            </Field>
-          ) : null}
+          <Field
+            htmlFor={`${idPrefix}-ip-whitelist`}
+            label={t('settings.token.ipWhitelist')}
+            hint={t('settings.token.ipWhitelistHint')}
+          >
+            <textarea
+              id={`${idPrefix}-ip-whitelist`}
+              rows={3}
+              className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
+              value={state.ipWhitelistRaw}
+              onChange={(event) => onChange({ ...state, ipWhitelistRaw: event.target.value })}
+              placeholder="10.0.0.0/8&#10;192.168.1.10"
+            />
+          </Field>
           <Field htmlFor={`${idPrefix}-expires-at`} label={t('settings.token.expiresAt')}>
             <select
               id={`${idPrefix}-expires-at`}
@@ -818,14 +566,12 @@ function CreateTokenDialog({
 }
 
 function EditTokenDialog({
-  kind,
   state,
   pending,
   onChange,
   onCancel,
   onSubmit,
 }: {
-  kind: TokenKind;
   state: TokenEditState;
   pending: boolean;
   onChange: (state: TokenEditState) => void;
@@ -833,8 +579,7 @@ function EditTokenDialog({
   onSubmit: () => void;
 }) {
   const { t } = useI18n();
-  const isApi = kind === 'api';
-  const idPrefix = kind === 'api' ? 'settings-api-token-edit' : 'settings-mcp-token-edit';
+  const idPrefix = 'settings-token-edit';
   const disabled =
     pending ||
     state.name.trim().length < 2 ||
@@ -844,12 +589,8 @@ function EditTokenDialog({
     <Dialog open={state.open} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            {isApi ? t('settings.apiToken.editDialogTitle') : t('settings.mcpToken.editDialogTitle')}
-          </DialogTitle>
-          <DialogDescription>
-            {isApi ? t('settings.apiToken.editDialogDescription') : t('settings.mcpToken.editDialogDescription')}
-          </DialogDescription>
+          <DialogTitle>{t('settings.token.editDialogTitle')}</DialogTitle>
+          <DialogDescription>{t('settings.token.editDialogDescription')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <Field htmlFor={`${idPrefix}-name`} label={t('settings.token.name')} required>
@@ -907,7 +648,6 @@ function EditTokenDialog({
 }
 
 function DeleteTokenDialog({
-  kind,
   open,
   name,
   prefix,
@@ -915,7 +655,6 @@ function DeleteTokenDialog({
   onCancel,
   onConfirm,
 }: {
-  kind: TokenKind;
   open: boolean;
   name: string;
   prefix: string;
@@ -924,16 +663,13 @@ function DeleteTokenDialog({
   onConfirm: () => void;
 }) {
   const { t } = useI18n();
-  const isApi = kind === 'api';
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{isApi ? t('settings.apiToken.deleteTitle') : t('settings.mcpToken.deleteTitle')}</DialogTitle>
-          <DialogDescription>
-            {isApi ? t('settings.apiToken.deleteDescription') : t('settings.mcpToken.deleteDescription')}
-          </DialogDescription>
+          <DialogTitle>{t('settings.token.deleteTitle')}</DialogTitle>
+          <DialogDescription>{t('settings.token.deleteDescription')}</DialogDescription>
         </DialogHeader>
         <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
           <span className="font-medium">{name}</span>
@@ -953,7 +689,6 @@ function DeleteTokenDialog({
 }
 
 function TokenPlaintextCell({
-  kind,
   prefix,
   plaintext,
   visible,
@@ -961,7 +696,6 @@ function TokenPlaintextCell({
   onToggle,
   onCopy,
 }: {
-  kind: TokenKind;
   prefix: string;
   plaintext?: string;
   visible: boolean;
@@ -972,7 +706,6 @@ function TokenPlaintextCell({
   const { t } = useI18n();
   const canCopy = Boolean(plaintext);
   const displayValue = visible && plaintext ? plaintext : maskToken(prefix, plaintext);
-  const labelPrefix = kind === 'api' ? t('settings.apiToken.title') : t('settings.mcpToken.title');
 
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -995,7 +728,7 @@ function TokenPlaintextCell({
         size="icon"
         onClick={() => plaintext && onCopy(plaintext)}
         disabled={!canCopy}
-        aria-label={`${labelPrefix} ${t('settings.token.copyPlaintext')}`}
+        aria-label={t('settings.token.copyPlaintext')}
       >
         <Copy className="h-4 w-4" />
       </Button>

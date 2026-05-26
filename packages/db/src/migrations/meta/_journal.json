@@ -8,6 +8,20 @@
       "when": 1779592574534,
       "tag": "0000_woozy_thunderbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779776328615,
+      "tag": "0001_webhook_token_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779862728615,
+      "tag": "0002_tokens_table_unify_scope",
+      "breakpoints": true
     }
   ]
 }

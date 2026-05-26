@@ -3,8 +3,16 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Main } from '@/components/layout/main';
@@ -44,7 +52,6 @@ interface FormState {
   configFromBeginning: boolean;
   configPartitionKey: string;
   // webhook fields
-  tokenId: string;
   ipWhitelistRaw: string;
   webhookMode: 'sync' | 'async';
   webhookTimeoutSeconds: string;
@@ -75,7 +82,6 @@ const EMPTY_STATE: FormState = {
   configTopic: '',
   configFromBeginning: false,
   configPartitionKey: '',
-  tokenId: '',
   ipWhitelistRaw: '',
   webhookMode: 'sync',
   webhookTimeoutSeconds: '30',
@@ -105,6 +111,10 @@ export function ConnectorFormPage({
 
   const [state, setState] = useState<FormState>(EMPTY_STATE);
   const [error, setError] = useState<string | null>(null);
+  const [initialTokenPlaintext, setInitialTokenPlaintext] = useState<{ plaintext: string; createdConnectorId: string } | null>(
+    null,
+  );
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (mode === 'edit' && existingQuery.data) {
@@ -138,7 +148,6 @@ export function ConnectorFormPage({
         configTopic: typeof cfg.topic === 'string' ? cfg.topic : '',
         configFromBeginning: Boolean(cfg.fromBeginning),
         configPartitionKey: typeof cfg.partitionKey === 'string' ? cfg.partitionKey : '',
-        tokenId: c.token?.id ?? '',
         ipWhitelistRaw: c.ipWhitelist?.join('\n') ?? '',
         webhookMode: (cfg.webhookMode as 'sync' | 'async') ?? 'sync',
         webhookTimeoutSeconds: cfg.timeoutSeconds != null ? String(cfg.timeoutSeconds) : '30',
@@ -251,12 +260,13 @@ export function ConnectorFormPage({
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
     if (state.direction === 'input') {
+      // webhook token 由后端在创建 connector 时自动签发并写入 ph_assets.tokens
+      // (scope='webhook'),前端不再选择/绑定 user token。详见 docs/specs/26-connectors.md
       return {
         type: 'webhook',
         direction: 'input',
         name,
         description,
-        tokenId: state.tokenId.trim(),
         ipWhitelist: ipWhitelist.length > 0 ? ipWhitelist : undefined,
         config: {
           webhookMode: state.webhookMode,
@@ -282,10 +292,20 @@ export function ConnectorFormPage({
       if (mode === 'create') {
         const payload = buildCreatePayload();
         if (!payload) return;
-        await createMutation.mutateAsync(payload);
+        const created = await createMutation.mutateAsync(payload);
+        // 当创建的是 webhook input connector 时,后端在响应里附带 initialWebhookToken 明文。
+        // 一次性展示给用户(关闭后无法再次获取),用户点继续才跳到详情页。
+        if (created.initialWebhookToken?.plaintext) {
+          setInitialTokenPlaintext({
+            plaintext: created.initialWebhookToken.plaintext,
+            createdConnectorId: created.id,
+          });
+          return;
+        }
         router.push(`/connectors`);
       } else if (connectorId) {
-        // edit only updates description / config / ipWhitelist / tokenId
+        // edit only updates name / description / config / ipWhitelist;
+        // webhook token 在 connector 详情页的 Webhook Tokens 面板单独管理。
         const ipWhitelist = state.ipWhitelistRaw
           .split('\n')
           .map((line) => line.trim())
@@ -320,7 +340,6 @@ export function ConnectorFormPage({
             webhookMode: state.webhookMode,
             timeoutSeconds: state.webhookTimeoutSeconds ? Number(state.webhookTimeoutSeconds) : undefined,
           };
-          if (state.tokenId.trim().length > 0) body.tokenId = state.tokenId.trim();
           body.ipWhitelist = ipWhitelist.length > 0 ? ipWhitelist : null;
         } else {
           body.config = { targetUrl: state.webhookTargetUrl.trim(), method: state.webhookMethod };
@@ -659,18 +678,14 @@ export function ConnectorFormPage({
               <legend className="px-1 text-sm font-medium">{t('connectors.section.webhook')}</legend>
               {state.direction === 'input' && (
                 <>
-                  <div>
-                    <Label>{t('connectors.form.webhook.token')}</Label>
-                    <Input
-                      value={state.tokenId}
-                      onChange={(event) => update('tokenId', event.target.value)}
-                      placeholder="UUID"
-                      data-testid="project-connector-webhook-token"
-                    />
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('connectors.form.webhook.tokenEmpty')}
+                  {mode === 'create' ? (
+                    <p
+                      className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground"
+                      data-testid="project-connector-webhook-token-hint"
+                    >
+                      {t('connectors.form.webhook.tokenAutoCreated')}
                     </p>
-                  </div>
+                  ) : null}
                   <div>
                     <Label>{t('connectors.form.webhook.ipWhitelist')}</Label>
                     <textarea
@@ -751,6 +766,68 @@ export function ConnectorFormPage({
             </Button>
           </div>
         </form>
+
+        <Dialog
+          open={!!initialTokenPlaintext}
+          onOpenChange={(open) => {
+            if (!open && initialTokenPlaintext) {
+              const targetId = initialTokenPlaintext.createdConnectorId;
+              setInitialTokenPlaintext(null);
+              setCopyNotice(null);
+              router.push(`/connectors/${targetId}`);
+            }
+          }}
+        >
+          <DialogContent data-testid="project-connector-initial-token-dialog">
+            <DialogHeader>
+              <DialogTitle>{t('connectors.token.initialTitle')}</DialogTitle>
+              <DialogDescription>{t('connectors.token.initialHint')}</DialogDescription>
+            </DialogHeader>
+            {initialTokenPlaintext ? (
+              <div className="space-y-3">
+                <code
+                  className="block overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs"
+                  data-testid="project-connector-initial-token-value"
+                >
+                  {initialTokenPlaintext.plaintext}
+                </code>
+                {copyNotice ? (
+                  <p className="text-xs text-muted-foreground">{copyNotice}</p>
+                ) : null}
+              </div>
+            ) : null}
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={async () => {
+                  if (!initialTokenPlaintext) return;
+                  try {
+                    await navigator.clipboard.writeText(initialTokenPlaintext.plaintext);
+                    setCopyNotice(t('connectors.detail.copied'));
+                  } catch {
+                    setCopyNotice(t('connectors.token.copyFailed'));
+                  }
+                }}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                {t('connectors.token.copy')}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  if (!initialTokenPlaintext) return;
+                  const targetId = initialTokenPlaintext.createdConnectorId;
+                  setInitialTokenPlaintext(null);
+                  setCopyNotice(null);
+                  router.push(`/connectors/${targetId}`);
+                }}
+              >
+                {t('connectors.token.initialContinue')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </Main>
   );

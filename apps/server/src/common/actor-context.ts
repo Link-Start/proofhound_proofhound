@@ -1,4 +1,4 @@
-export type ActorKind = 'local_admin' | 'project_api_token' | 'global_mcp_token' | 'system';
+export type ActorKind = 'local_admin' | 'user_token' | 'system';
 
 export interface ActorContext {
   actorId: string;

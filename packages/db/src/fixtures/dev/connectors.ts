@@ -5,10 +5,9 @@
 // fixture 内部用 `kind` 字段做 discriminator(便于 seed-dev.ts switch);实际表里这一列不存在,
 // 拆成 direction + type 两列。`config` 形状对齐 packages/shared/src/dto/connector.dto.ts 的
 // 6 种 (type, direction) config schema。
+//
+// 注:webhook 入站 token 不在本 fixture 关联;token 在 fixtures/dev/api-tokens.ts 用 connectorId 反向挂到 connector 上。
 
-import { DEV_API_TOKENS } from './api-tokens';
-
-const WEBHOOK_TOKEN_ID = DEV_API_TOKENS[0]!.id;
 const REDIS_CONNECTION = {
   source: 'local_config' as const,
   host: 'localhost',
@@ -85,7 +84,6 @@ export type DevConnectorFixture =
       id: string;
       name: string;
       description: string;
-      tokenId: string;
       webhookPath: string;
       config: {
         webhookMode: 'sync' | 'async';
@@ -133,7 +131,6 @@ export const DEV_CONNECTORS: DevConnectorFixture[] = [
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000005',
     name: 'sync-webhook-in',
     description: 'Webhook 输入 · 同步模式(上游 POST 等待 LLM 完成再返回)',
-    tokenId: WEBHOOK_TOKEN_ID,
     webhookPath: 'a3a1b2c3-d4e5-4f60-8788-aabbccddeeff',
     config: {
       webhookMode: 'sync',
@@ -146,7 +143,6 @@ export const DEV_CONNECTORS: DevConnectorFixture[] = [
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000006',
     name: 'async-webhook-in',
     description: 'Webhook 输入 · 异步模式(立即返回 callId,结果由输出连接器或查询接口取回)',
-    tokenId: WEBHOOK_TOKEN_ID,
     webhookPath: 'b4b2c3d4-e5f6-4071-8899-bbccddeeff00',
     config: {
       webhookMode: 'async',

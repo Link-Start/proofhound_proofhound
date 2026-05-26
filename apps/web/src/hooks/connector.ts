@@ -8,6 +8,7 @@ import type {
   ConnectorListQueryDto,
   ConnectorListResponseDto,
   CreateConnectorDto,
+  CreateWebhookTokenDto,
   PeekConnectorRequestDto,
   PeekConnectorResponseDto,
   UpdateConnectorDto,
@@ -29,6 +30,9 @@ const detailKey = (projectId: string, connectorId: string) =>
 
 const referencesKey = (projectId: string, connectorId: string) =>
   ['connector-refs', projectId, connectorId] as const;
+
+const webhookTokensKey = (projectId: string, connectorId: string) =>
+  ['connector-webhook-tokens', projectId, connectorId] as const;
 
 export function useConnectors(projectId: string, query?: ConnectorListQueryDto) {
   return useQuery({
@@ -133,6 +137,45 @@ export function usePeekConnector(projectId: string) {
       void qc.invalidateQueries({ queryKey: ['connectors', projectId], exact: false });
       void qc.invalidateQueries({ queryKey: detailKey(projectId, connectorId) });
     },
+  });
+}
+
+// per-connector webhook tokens hooks
+// 见 packages/api-client/src/connector.ts + docs/specs/26-connectors.md
+export function useConnectorWebhookTokens(projectId: string, connectorId: string, enabled = true) {
+  return useQuery({
+    queryKey: webhookTokensKey(projectId, connectorId),
+    queryFn: () => connectorClient.listWebhookTokens(projectId, connectorId),
+    enabled: enabled && projectId.length > 0 && connectorId.length > 0,
+  });
+}
+
+export function useCreateConnectorWebhookToken(projectId: string, connectorId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateWebhookTokenDto) =>
+      connectorClient.createWebhookToken(projectId, connectorId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: webhookTokensKey(projectId, connectorId) });
+      void qc.invalidateQueries({ queryKey: detailKey(projectId, connectorId) });
+    },
+  });
+}
+
+export function useRevokeConnectorWebhookToken(projectId: string, connectorId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tokenId: string) => connectorClient.revokeWebhookToken(projectId, connectorId, tokenId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: webhookTokensKey(projectId, connectorId) });
+      void qc.invalidateQueries({ queryKey: detailKey(projectId, connectorId) });
+    },
+  });
+}
+
+export function useRevealConnectorWebhookToken(projectId: string, connectorId: string) {
+  return useMutation({
+    mutationFn: (tokenId: string) => connectorClient.revealWebhookToken(projectId, connectorId, tokenId),
   });
 }
 
