@@ -48,8 +48,6 @@ deps.svg
 .claude/
 .calude/
 
-# Local agent/spec source files
-AGENTS.md
-CLAUDE.md
+# Local spec source files
 docs/specs/
 .agents/skills/
