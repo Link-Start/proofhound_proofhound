@@ -55,10 +55,6 @@
     "docker:up": "docker compose -f dev/docker-compose.yml up -d",
     "docker:down": "docker compose -f dev/docker-compose.yml down",
     "docker:logs": "docker compose -f dev/docker-compose.yml logs -f",
-    "changeset": "changeset",
-    "release": "pnpm run release:version && pnpm run ci && pnpm run release:commit",
-    "release:commit": "node scripts/release-commit.mjs",
-    "release:version": "changeset version",
     "deps:check": "madge --circular --extensions ts,tsx --exclude '(^|/)dist/' packages/ apps/",
     "deps:graph": "madge --image deps.svg --extensions ts,tsx packages/ apps/",
     "deps:orphans": "madge --orphans --extensions ts,tsx packages/ apps/",
@@ -74,7 +70,6 @@
     ]
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9.39.4",
     "@types/node": "^24.12.4",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
