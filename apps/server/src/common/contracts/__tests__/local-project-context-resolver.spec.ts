@@ -4,7 +4,7 @@ import { LocalProjectContextResolver } from '../local-project-context.resolver';
 import type { ActorContext } from '../../actor-context';
 
 describe('LocalProjectContextResolver', () => {
-  const actor: ActorContext = { actorId: 'a', actorKind: 'user_token' };
+  const actor: ActorContext = { actorId: 'a', actorKind: 'script' };
 
   it('忽略 hint，固定返回 LOCAL_PROJECT_CONTEXT', async () => {
     const resolver = new LocalProjectContextResolver();

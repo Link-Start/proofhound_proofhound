@@ -13,9 +13,8 @@ import { ActorContextResolver } from '../contracts/actor-context.resolver';
 import type { ActorContext } from '../actor-context';
 import type { CurrentUserPayload } from '../decorators/current-user.decorator';
 
-// Export kept to avoid breaking other historical callers; new code must not depend on this constant.
-// The real actorId is determined by the ph_core.tokens row primary key.
-export const LOCAL_ACTOR_ID = '00000000-0000-4000-8000-000000000001';
+// Re-exported for historical callers; the authoritative definition lives in actor-context.ts.
+export { LOCAL_ACTOR_ID } from '../actor-context';
 
 @Injectable()
 export class LocalActorGuard implements CanActivate {
@@ -42,7 +41,14 @@ function toCurrentUserPayload(actor: ActorContext): CurrentUserPayload {
     // The SaaS form can populate its own actor.claims inside RemoteActorContextResolver, exposed via a dedicated decorator;
     // OSS business code MUST NOT read claims (SPEC §8 red line).
     email: '',
-    isSuperAdmin: actor.actorKind === 'local_admin',
+    isSuperAdmin: isOwnerActor(actor.actorKind),
     isActive: true,
   };
+}
+
+// OSS single-workspace: UI session user and API-token script both represent the local owner,
+// so both bypass project-ownership checks via isSuperAdmin. system_* actors do NOT — they
+// flow through access-control's SYSTEM_KINDS bypass instead.
+function isOwnerActor(kind: ActorContext['actorKind']): boolean {
+  return kind === 'local_user' || kind === 'script';
 }

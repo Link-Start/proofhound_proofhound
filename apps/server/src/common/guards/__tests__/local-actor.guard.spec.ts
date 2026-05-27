@@ -15,7 +15,7 @@ function buildContext(req: Record<string, unknown>): ExecutionContext {
 describe('LocalActorGuard', () => {
   it('成功路径：注入 request.user 为 CurrentUserPayload', async () => {
     const resolver: Pick<ActorContextResolver, 'resolveFromHttp' | 'resolveFromUserToken'> = {
-      resolveFromHttp: vi.fn().mockResolvedValue({ actorId: 'tok-1', actorKind: 'user_token' }),
+      resolveFromHttp: vi.fn().mockResolvedValue({ actorId: 'tok-1', actorKind: 'script' }),
       resolveFromUserToken: vi.fn(),
     };
     const guard = new LocalActorGuard(resolver as ActorContextResolver);
@@ -26,10 +26,11 @@ describe('LocalActorGuard', () => {
     expect(req.user).toEqual({
       sub: 'tok-1',
       actorId: 'tok-1',
-      actorKind: 'user_token',
+      actorKind: 'script',
       projectId: undefined,
       email: '',
-      isSuperAdmin: false,
+      // script actor 是 owner-created API token，OSS 视为 super admin
+      isSuperAdmin: true,
       isActive: true,
     });
   });
@@ -45,14 +46,25 @@ describe('LocalActorGuard', () => {
     );
   });
 
-  it('local_admin actor 映射 isSuperAdmin=true', async () => {
+  it('local_user actor (UI session) 映射 isSuperAdmin=true', async () => {
     const resolver: Pick<ActorContextResolver, 'resolveFromHttp' | 'resolveFromUserToken'> = {
-      resolveFromHttp: vi.fn().mockResolvedValue({ actorId: 'admin-1', actorKind: 'local_admin' }),
+      resolveFromHttp: vi.fn().mockResolvedValue({ actorId: 'admin-1', actorKind: 'local_user' }),
       resolveFromUserToken: vi.fn(),
     };
     const guard = new LocalActorGuard(resolver as ActorContextResolver);
     const req: Record<string, unknown> = { headers: { authorization: 'Bearer x' } };
     await guard.canActivate(buildContext(req));
     expect((req.user as { isSuperAdmin: boolean }).isSuperAdmin).toBe(true);
+  });
+
+  it('system_mcp actor 映射 isSuperAdmin=false（系统 actor 走 access-control 系统旁路）', async () => {
+    const resolver: Pick<ActorContextResolver, 'resolveFromHttp' | 'resolveFromUserToken'> = {
+      resolveFromHttp: vi.fn().mockResolvedValue({ actorId: 'mcp-1', actorKind: 'system_mcp' }),
+      resolveFromUserToken: vi.fn(),
+    };
+    const guard = new LocalActorGuard(resolver as ActorContextResolver);
+    const req: Record<string, unknown> = { headers: { authorization: 'Bearer x' } };
+    await guard.canActivate(buildContext(req));
+    expect((req.user as { isSuperAdmin: boolean }).isSuperAdmin).toBe(false);
   });
 });

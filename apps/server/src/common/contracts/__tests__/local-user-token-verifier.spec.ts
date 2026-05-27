@@ -45,8 +45,8 @@ describe('LocalUserTokenVerifier', () => {
   it('happy path: 返回 ActorContext，actorKind=user_token, actorId=token.id', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: null, expiresAt: null });
     const verifier = new LocalUserTokenVerifier(db);
-    const actor = await verifier.verify(TOKEN);
-    expect(actor).toEqual({ actorId: TOKEN_ID, actorKind: 'user_token' });
+    const actor = await verifier.verify(TOKEN, { actorKind: 'script' });
+    expect(actor).toEqual({ actorId: TOKEN_ID, actorKind: 'script' });
   });
 
   it('使用 sha256 hash 查表（hash 长度 64 hex）', async () => {
@@ -57,62 +57,62 @@ describe('LocalUserTokenVerifier', () => {
 
   it('空 token 抛 invalid_user_token', async () => {
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify('')).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(verifier.verify('')).rejects.toThrow(/invalid_user_token/);
+    await expect(verifier.verify('', { actorKind: 'script' })).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(verifier.verify('', { actorKind: 'script' })).rejects.toThrow(/invalid_user_token/);
   });
 
   it('未命中行抛 invalid_user_token', async () => {
     withRow(null);
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN)).rejects.toThrow(/invalid_user_token/);
+    await expect(verifier.verify(TOKEN, { actorKind: 'script' })).rejects.toThrow(/invalid_user_token/);
   });
 
   it('过期 token 抛 expired_user_token', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: null, expiresAt: new Date(Date.now() - 1000) });
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN)).rejects.toThrow(/expired_user_token/);
+    await expect(verifier.verify(TOKEN, { actorKind: 'script' })).rejects.toThrow(/expired_user_token/);
   });
 
   it('未过期 token (expiresAt 未来) 正常通过', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: null, expiresAt: new Date(Date.now() + 60_000) });
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN)).resolves.toEqual({ actorId: TOKEN_ID, actorKind: 'user_token' });
+    await expect(verifier.verify(TOKEN, { actorKind: 'script' })).resolves.toEqual({ actorId: TOKEN_ID, actorKind: 'script' });
   });
 
   it('ip_whitelist 命中：clientIp 在列表内通过', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: ['10.0.0.1', '127.0.0.1'], expiresAt: null });
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN, { clientIp: '127.0.0.1' })).resolves.toEqual({
+    await expect(verifier.verify(TOKEN, { actorKind: 'script', clientIp: '127.0.0.1' })).resolves.toEqual({
       actorId: TOKEN_ID,
-      actorKind: 'user_token',
+      actorKind: 'script',
     });
   });
 
   it('ip_whitelist 不命中：抛 ip_not_allowed', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: ['10.0.0.1'], expiresAt: null });
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN, { clientIp: '192.168.1.1' })).rejects.toThrow(/ip_not_allowed/);
+    await expect(verifier.verify(TOKEN, { actorKind: 'script', clientIp: '192.168.1.1' })).rejects.toThrow(/ip_not_allowed/);
   });
 
   it('ip_whitelist 存在但 clientIp 未提供：跳过校验（用于 resolveFromUserToken 直接调用）', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: ['10.0.0.1'], expiresAt: null });
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN)).resolves.toEqual({ actorId: TOKEN_ID, actorKind: 'user_token' });
+    await expect(verifier.verify(TOKEN, { actorKind: 'script' })).resolves.toEqual({ actorId: TOKEN_ID, actorKind: 'script' });
   });
 
   it('ip_whitelist 为空数组时不强制校验', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: [], expiresAt: null });
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN, { clientIp: '8.8.8.8' })).resolves.toEqual({
+    await expect(verifier.verify(TOKEN, { actorKind: 'script', clientIp: '8.8.8.8' })).resolves.toEqual({
       actorId: TOKEN_ID,
-      actorKind: 'user_token',
+      actorKind: 'script',
     });
   });
 
   it('成功路径异步 touch last_used_at（不阻塞调用）', async () => {
     withRow({ id: TOKEN_ID, ipWhitelist: null, expiresAt: null });
     const verifier = new LocalUserTokenVerifier(db);
-    await verifier.verify(TOKEN);
+    await verifier.verify(TOKEN, { actorKind: 'script' });
     // update should be called exactly once (fire-and-forget)
     expect(updateChain.update).toHaveBeenCalledTimes(1);
   });
@@ -121,6 +121,6 @@ describe('LocalUserTokenVerifier', () => {
     withRow({ id: TOKEN_ID, ipWhitelist: null, expiresAt: null });
     updateChain.where.mockRejectedValueOnce(new Error('db down'));
     const verifier = new LocalUserTokenVerifier(db);
-    await expect(verifier.verify(TOKEN)).resolves.toEqual({ actorId: TOKEN_ID, actorKind: 'user_token' });
+    await expect(verifier.verify(TOKEN, { actorKind: 'script' })).resolves.toEqual({ actorId: TOKEN_ID, actorKind: 'script' });
   });
 });

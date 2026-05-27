@@ -26,11 +26,11 @@ export class LocalMcpAuthResolver extends McpAuthResolver {
   async resolveFromMcp(metadata: McpRequestMetadataLike): Promise<ActorContext> {
     const token = this.extractToken(metadata);
     if (!token) throw new UnauthorizedException('missing_user_token');
-    return this.verifier.verify(token);
+    return this.verifier.verify(token, { actorKind: 'system_mcp' });
   }
 
   async resolveFromUserToken(token: string): Promise<ActorContext> {
-    return this.verifier.verify(token);
+    return this.verifier.verify(token, { actorKind: 'system_mcp' });
   }
 
   private extractToken(metadata: McpRequestMetadataLike): string | null {

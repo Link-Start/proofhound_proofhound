@@ -6,7 +6,7 @@ import { MonitoringService } from '../monitoring.service';
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 const ACTOR: CurrentUserPayload = {
   sub: '00000000-0000-4000-8000-000000000001',
-  actorKind: 'local_admin',
+  actorKind: 'local_user',
   email: 'local-admin@proofhound.local',
   isActive: true,
   isSuperAdmin: true,

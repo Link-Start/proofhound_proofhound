@@ -39,7 +39,7 @@ export function getMcpActor(ctx: McpToolContext): CurrentUserPayload {
   return {
     sub: ctx.actorUserId,
     actorId: ctx.actorUserId,
-    actorKind: 'user_token',
+    actorKind: 'system_mcp',
     projectId: projectContext.projectId,
     email: ctx.email ?? '',
     isSuperAdmin: ctx.isSuperAdmin ?? false,
@@ -83,7 +83,9 @@ function toCurrentUserPayload(actor: ActorContext, projectId: string): CurrentUs
     actorKind: actor.actorKind,
     projectId,
     email: '',
-    isSuperAdmin: actor.actorKind === 'local_admin',
+    // MCP actors are system_mcp; the MCP channel grants no admin-bypass to the project layer
+    // (system_* actors flow through access-control's SYSTEM_KINDS bypass instead).
+    isSuperAdmin: false,
     isActive: true,
   };
 }

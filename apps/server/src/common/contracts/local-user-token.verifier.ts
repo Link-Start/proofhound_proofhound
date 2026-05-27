@@ -22,7 +22,7 @@ import { createLogger } from '@proofhound/logger';
 import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
 import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
-import type { ActorContext } from '../actor-context';
+import type { ActorContext, ActorKind } from '../actor-context';
 
 const { tokens } = schema;
 
@@ -33,6 +33,13 @@ export interface VerifyUserTokenOptions {
    * When not provided, IP validation is skipped (resolveFromUserToken / MCP paths).
    */
   clientIp?: string;
+  /**
+   * Channel that the caller is verifying for. The verifier itself does not have
+   * channel semantics — the resolver decides whether this token verification
+   * produces a 'script' (HTTP API) or 'system_mcp' (MCP channel) actor.
+   * Must be one of the channels that consume the user-token pool.
+   */
+  actorKind: Extract<ActorKind, 'script' | 'system_mcp'>;
 }
 
 interface UserTokenRowMinimal {
@@ -47,7 +54,7 @@ export class LocalUserTokenVerifier {
 
   constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
 
-  async verify(token: string, options: VerifyUserTokenOptions = {}): Promise<ActorContext> {
+  async verify(token: string, options: VerifyUserTokenOptions): Promise<ActorContext> {
     if (!token || typeof token !== 'string') {
       throw new UnauthorizedException('invalid_user_token');
     }
@@ -77,12 +84,9 @@ export class LocalUserTokenVerifier {
     // Fire-and-forget touch last_used_at
     this.touchLastUsed(row.id);
 
-    // TODO(spec-§3.2-actor-kind): the SPEC draft discusses narrowing HTTP user token actor.kind to
-    // `script:<tokenId>`; the OSS ActorKind enum currently only has 'user_token' and is kept as-is;
-    // to be decided together with ZiqiXiao when the ActorContext shape evolves.
     return {
       actorId: row.id,
-      actorKind: 'user_token',
+      actorKind: options.actorKind,
     };
   }
 
