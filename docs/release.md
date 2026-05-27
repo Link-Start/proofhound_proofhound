@@ -2,7 +2,7 @@
 
 ProofHound 使用 release-please 管理根 `proofhound` 包的 SemVer、`CHANGELOG.md` 与 GitHub Release。
 
-合并到 `master` 后，`.github/workflows/release-please.yml` 会创建或更新 release PR。提交信息遵循 Conventional Commits：`fix:` 产生 patch，`feat:` 在 `0.x` 阶段产生 patch，`!` 或 `BREAKING CHANGE` 在 `0.x` 阶段产生 minor。
+需要发布新版本时，在 GitHub Actions 中手动触发 `.github/workflows/release-please.yml`，它会创建或更新 release PR。提交信息遵循 Conventional Commits：`fix:` 产生 patch，`feat:` 在 `0.x` 阶段产生 patch，`!` 或 `BREAKING CHANGE` 在 `0.x` 阶段产生 minor。
 
 合并 release PR 后，release-please 会更新 `package.json`、`CHANGELOG.md`、`.release-please-manifest.json`，并创建对应的 git tag 与 GitHub Release。
 
