@@ -6,6 +6,7 @@ import type {
   DatasetImportItemDto,
 } from '@proofhound/shared';
 import { httpClient } from './http';
+import { getServerBaseUrl } from './public-env';
 
 export const datasetImportClient = {
   getDatasetImport: (projectId: string, importId: string) =>
@@ -22,6 +23,13 @@ export const datasetImportClient = {
       .then((r) => r.data),
   abortDatasetImport: (projectId: string, importId: string) =>
     httpClient.post<void>(`/dataset-imports/${importId}/abort`, {}).then(() => undefined),
+  // Fire-and-forget abort that survives page unload (tab close / refresh), where a normal fetch is
+  // cancelled by the browser. Auth rides the same trusted-header / LOCAL_ACTOR path as other UI calls
+  // (no JS-set Authorization header), so carrying no header is fine. Returns false when unsupported.
+  abortDatasetImportBeacon: (projectId: string, importId: string): boolean => {
+    if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return false;
+    return navigator.sendBeacon(`${getServerBaseUrl()}/dataset-imports/${importId}/abort`);
+  },
 };
 
 export type DatasetImportClient = typeof datasetImportClient;

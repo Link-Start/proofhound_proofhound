@@ -9,6 +9,7 @@ import type {
   DatasetFieldRole,
   DatasetImportSourceFormat,
 } from '@proofhound/shared';
+import { datasetImportClient } from '@proofhound/api-client';
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, FileText, Loader2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -224,6 +225,7 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
   const [isImporting, setIsImporting] = useState(false);
   const [isLargeFile, setIsLargeFile] = useState(false);
   const importAbortRef = useRef<AbortController | null>(null);
+  const importIdRef = useRef<string | null>(null);
   const leaveActionRef = useRef<(() => void) | null>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
 
@@ -238,6 +240,14 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
+    };
+
+    // The page is actually being torn down (prompt resolved in favor of leaving). A normal fetch
+    // would be cancelled mid-flight, so use sendBeacon to tell the server to clear staging rows.
+    const onPageHide = (event: PageTransitionEvent) => {
+      if (event.persisted) return; // bfcache: page may be restored, keep the session alive.
+      const importId = importIdRef.current;
+      if (importId) datasetImportClient.abortDatasetImportBeacon(projectId, importId);
     };
 
     const promptLeave = (action: () => void) => {
@@ -273,14 +283,16 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
 
     window.history.pushState(null, '', window.location.href);
     window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('pagehide', onPageHide);
     document.addEventListener('click', onClickCapture, true);
     window.addEventListener('popstate', onPopState);
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('pagehide', onPageHide);
       document.removeEventListener('click', onClickCapture, true);
       window.removeEventListener('popstate', onPopState);
     };
-  }, [isImporting, router]);
+  }, [isImporting, router, projectId]);
 
   const confirmLeaveImport = () => {
     setLeaveDialogOpen(false);
@@ -393,6 +405,9 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
           controller.signal,
         ),
         signal: controller.signal,
+        onCreated: (id) => {
+          importIdRef.current = id;
+        },
       });
       uploadProgress.complete(totalBytes);
       router.push(`/datasets`);
@@ -401,6 +416,7 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
     } finally {
       setIsImporting(false);
       importAbortRef.current = null;
+      importIdRef.current = null;
     }
   };
 
@@ -430,6 +446,9 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
         createBody,
         batches: chunkSamples(samples, IMPORT_BATCH_SIZE),
         signal: controller.signal,
+        onCreated: (id) => {
+          importIdRef.current = id;
+        },
         onProgress: ({ receivedRows }) =>
           uploadProgress.update({
             loadedBytes: totalRows > 0 ? Math.round((estimatedBytes * receivedRows) / totalRows) : estimatedBytes,
@@ -443,6 +462,7 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
     } finally {
       setIsImporting(false);
       importAbortRef.current = null;
+      importIdRef.current = null;
     }
   };
 
