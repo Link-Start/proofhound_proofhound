@@ -1,0 +1,4 @@
+ALTER TABLE "ph_runs"."run_results" ADD COLUMN "webhook_token_id" uuid;--> statement-breakpoint
+ALTER TABLE "ph_runs"."run_results" ADD CONSTRAINT "run_results_webhook_token_id_tokens_id_fk" FOREIGN KEY ("webhook_token_id") REFERENCES "ph_core"."tokens"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "idx_run_results_webhook_token" ON "ph_runs"."run_results" USING btree ("webhook_token_id","created_at") WHERE "ph_runs"."run_results"."webhook_token_id" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "ph_core"."tokens" ADD CONSTRAINT "tokens_name_length_check" CHECK (char_length("ph_core"."tokens"."name") <= 64);

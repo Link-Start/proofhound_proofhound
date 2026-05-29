@@ -138,6 +138,9 @@ describe('LlmConsumer webhook async receipts', () => {
     );
 
     expect(writeRunResult).toHaveBeenCalledTimes(1);
+    expect(writeRunResult).toHaveBeenCalledWith(
+      expect.objectContaining({ webhookTokenId: validUuid('08888') }),
+    );
     expect(redis.set).toHaveBeenCalledTimes(1);
     const [, raw, ex, ttl] = redis.set.mock.calls[0]!;
     expect(ex).toBe('EX');
@@ -163,6 +166,7 @@ function makeWebhookPayload(): LlmJobPayload {
     runResultId: callId,
     promptId: validUuid('06666'),
     externalId: 'sample-1',
+    webhookTokenId: validUuid('08888'),
     renderedPrompt: { prompt: 'hello' },
     webhookAsyncCall: {
       callId,

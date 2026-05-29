@@ -1,4 +1,4 @@
-import type { AcquireArgs, RateLimiter, ReleaseArgs, UsageSnapshot } from './types';
+import type { AcquireArgs, RateLimiter, ReleaseArgs, ReportOutcomeArgs, UsageSnapshot } from './types';
 
 // Test stub — always passes; useful for unit tests
 export class StubLimiter implements RateLimiter {
@@ -7,6 +7,10 @@ export class StubLimiter implements RateLimiter {
   }
 
   async release(_args: ReleaseArgs) {
+    return;
+  }
+
+  async reportOutcome(_args: ReportOutcomeArgs) {
     return;
   }
 

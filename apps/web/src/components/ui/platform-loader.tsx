@@ -35,7 +35,7 @@ export function PlatformLoader({ className, size = 'lg' }: PlatformLoaderProps) 
       data-testid="platform-loader"
       className={cn('flex flex-col items-center justify-center gap-4 text-center', className)}
     >
-      <ProofHoundMarkTile size={loaderLogoSize[size]} className="shadow-sm" />
+      <ProofHoundMarkTile size={loaderLogoSize[size]} className="ph-loader-wobble shadow-sm" />
       <span className={cn('font-medium text-muted-foreground', labelSizeClass[size])}>{label}</span>
     </div>
   );
@@ -46,5 +46,23 @@ export function PlatformLoadingScreen() {
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <PlatformLoader />
     </main>
+  );
+}
+
+interface PlatformLoaderOverlayProps {
+  className?: string;
+  size?: PlatformLoaderSize;
+}
+
+export function PlatformLoaderOverlay({ className, size = 'md' }: PlatformLoaderOverlayProps) {
+  return (
+    <div
+      className={cn(
+        'absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-background/55 backdrop-blur-[1px]',
+        className,
+      )}
+    >
+      <PlatformLoader size={size} />
+    </div>
   );
 }

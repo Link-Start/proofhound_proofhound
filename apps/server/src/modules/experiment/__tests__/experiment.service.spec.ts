@@ -100,12 +100,24 @@ function makeRunResults(): Mocked<RunResultService> {
   } as unknown as Mocked<RunResultService>;
 }
 
+function makeSelectQuery(rows: unknown[]) {
+  const query = {
+    from: vi.fn(() => query),
+    innerJoin: vi.fn(() => query),
+    where: vi.fn(() => query),
+    limit: vi.fn().mockResolvedValue(rows),
+  };
+
+  return query;
+}
+
 describe('ExperimentService', () => {
   let service: ExperimentService;
   let repo: Mocked<ExperimentRepository>;
   let launcher: { launch: Mock; resume: Mock; retry: Mock };
   let modelService: Mocked<ModelService>;
   let runResults: Mocked<RunResultService>;
+  let db: { select: Mock; update: Mock };
 
   beforeEach(async () => {
     repo = makeRepo();
@@ -118,6 +130,10 @@ describe('ExperimentService', () => {
     modelService = {
       findModelAccessibleToProject: vi.fn().mockResolvedValue(null),
     } as unknown as Mocked<ModelService>;
+    db = {
+      select: vi.fn(),
+      update: vi.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -125,7 +141,7 @@ describe('ExperimentService', () => {
         { provide: ExperimentLauncher, useValue: launcher },
         { provide: ModelService, useValue: modelService },
         { provide: RunResultService, useValue: runResults },
-        { provide: DATABASE_CLIENT, useValue: {} },
+        { provide: DATABASE_CLIENT, useValue: db },
         ExperimentService,
       ],
     }).compile();
@@ -181,6 +197,64 @@ describe('ExperimentService', () => {
 
     expect(repo.createExperiment).not.toHaveBeenCalled();
     expect(launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('creates experiments for large datasets without an implementation sample-count cap', async () => {
+    repo.findProjectAccess.mockResolvedValue(projectAccess());
+    repo.findExperimentByProjectAndName.mockResolvedValue(null);
+    repo.createExperiment.mockResolvedValue('22222222-2222-4222-8222-222222222222');
+    repo.findExperimentById.mockResolvedValue(
+      experimentRow({ datasetSamples: 598000, totalSamples: 598000, processedSamples: 0 }),
+    );
+    modelService.findModelAccessibleToProject.mockResolvedValue({
+      deletedAt: null,
+      isActive: true,
+    } as never);
+    db.select
+      .mockReturnValueOnce(
+        makeSelectQuery([
+          {
+            promptVersionId: '33333333-3333-4333-8333-333333333333',
+            promptId: '66666666-6666-4666-8666-666666666666',
+            promptName: 'sql-risk-judge',
+            versionNumber: 17,
+            body: 'Judge {{text}}',
+            variables: [{ name: 'text', type: 'text', required: true, datasetField: 'text' }],
+            outputSchema: null,
+            judgmentRules: null,
+            isFrozen: true,
+            promptDeletedAt: null,
+          },
+        ]),
+      )
+      .mockReturnValueOnce(
+        makeSelectQuery([
+          {
+            id: '44444444-4444-4444-8444-444444444444',
+            sampleCount: 598000,
+            deletedAt: null,
+          },
+        ]),
+      );
+
+    await service.createExperiment(
+      '77777777-7777-4777-8777-777777777777',
+      {
+        name: 'large-yelp-full-run',
+        promptVersionId: '33333333-3333-4333-8333-333333333333',
+        datasetId: '44444444-4444-4444-8444-444444444444',
+        modelId: '55555555-5555-4555-8555-555555555555',
+      },
+      actor,
+    );
+
+    expect(repo.createExperiment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        datasetId: '44444444-4444-4444-8444-444444444444',
+        totalSamples: 598000,
+      }),
+    );
+    expect(launcher.launch).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222');
   });
 
   it('stops a running experiment', async () => {

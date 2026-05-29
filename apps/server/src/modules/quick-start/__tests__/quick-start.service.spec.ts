@@ -23,6 +23,7 @@ const draftModel: CreateProjectModelDto = {
   rpm: { limit: 60 },
   tpm: { limit: 100000 },
   concurrency: { limit: 20 },
+  autoConcurrency: true,
   pricing: { inputPerMillion: 0.15, outputPerMillion: 0.6 },
   capabilities: { image: 'none' },
   extraBody: {},

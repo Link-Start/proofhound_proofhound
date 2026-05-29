@@ -6,19 +6,19 @@ import type {
   DatasetCategoryDistributionDto,
   DatasetCreateResponseDto,
   DatasetExportFormatDto,
-  DatasetFieldMappingDto,
   DatasetFieldSchemaDto,
-  DatasetFieldSchemaRole,
   DatasetListItemDto,
   DatasetReferencesDto,
   DatasetSampleDto,
   DatasetSamplesListResponseDto,
+  DatasetSamplesQueryDto,
   DeleteDatasetSamplesDto,
   DeleteDatasetSamplesResponseDto,
   UpdateDatasetMetadataDto,
 } from '@proofhound/shared';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { accessControl } from '../../common/access-control';
+import { buildDatasetFieldSchema } from './dataset-field-schema.util';
 import {
   DatasetRepository,
   type DatasetProjectAccessRow,
@@ -70,12 +70,16 @@ export class DatasetService {
     projectId: string,
     datasetId: string,
     actor: CurrentUserPayload,
+    query: DatasetSamplesQueryDto,
   ): Promise<DatasetSamplesListResponseDto> {
     await this.getDataset(projectId, datasetId, actor);
 
-    const rows = await this.repo.listDatasetSamples(datasetId);
-    const data = rows.map((row) => this.toDatasetSample(row));
-    return { data, total: data.length };
+    const { rows, total } = await this.repo.listDatasetSamplesPage(datasetId, {
+      limit: query.pageSize,
+      offset: (query.page - 1) * query.pageSize,
+      search: query.search,
+    });
+    return { data: rows.map((row) => this.toDatasetSample(row)), total };
   }
 
   async exportDataset(
@@ -113,7 +117,7 @@ export class DatasetService {
     }
 
     const datasetId = randomUUID();
-    const fieldSchema = this.buildFieldSchema(dto.fieldMappings, dto.samples);
+    const fieldSchema = buildDatasetFieldSchema(dto.fieldMappings, dto.samples);
     const externalIdFieldName = dto.fieldMappings.find((field) => field.role === 'id')?.name ?? null;
     const hasImages = fieldSchema.some((field) => ['image', 'image_url', 'image_base64'].includes(field.role));
     const storagePrefix = `datasets/${projectId}/raw/${datasetId}/${dto.uploadSource.fileName}`;
@@ -255,55 +259,6 @@ export class DatasetService {
     }
   }
 
-  private buildFieldSchema(
-    mappings: DatasetFieldMappingDto[],
-    samples: Array<Record<string, unknown>>,
-  ): DatasetFieldSchemaDto[] {
-    return mappings.map((field) => ({
-      name: field.name,
-      role: this.toSchemaRole(field, samples),
-      type: this.inferFieldType(field.name, samples),
-    }));
-  }
-
-  private toSchemaRole(field: DatasetFieldMappingDto, samples: Array<Record<string, unknown>>): DatasetFieldSchemaRole {
-    if (field.role === 'expected') return 'expected_output';
-    if (field.role === 'id') return 'metadata';
-    if (field.role !== 'image') return field.role;
-
-    const firstValue = samples.map((sample) => this.firstImageReference(sample[field.name])).find(Boolean);
-    if (!firstValue) return 'image';
-    if (/^https?:\/\//iu.test(firstValue)) return 'image_url';
-    if (/^data:image\//iu.test(firstValue)) return 'image_base64';
-    return 'image';
-  }
-
-  private firstImageReference(value: unknown): string | null {
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      return trimmed.length > 0 ? trimmed : null;
-    }
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (typeof item !== 'string') continue;
-        const trimmed = item.trim();
-        if (trimmed.length > 0) return trimmed;
-      }
-    }
-
-    return null;
-  }
-
-  private inferFieldType(fieldName: string, samples: Array<Record<string, unknown>>): DatasetFieldSchemaDto['type'] {
-    const value = samples.map((sample) => sample[fieldName]).find((item) => item !== undefined);
-    if (value === null) return 'null';
-    if (Array.isArray(value)) return 'array';
-    const type = typeof value;
-    if (type === 'string' || type === 'number' || type === 'boolean' || type === 'object') return type;
-    return 'unknown';
-  }
-
   private toDatasetListItem(
     row: DatasetRow,
     categoryDistribution = this.buildCategoryDistribution(this.toFieldSchema(row.fieldSchema), []),
@@ -335,32 +290,37 @@ export class DatasetService {
   }
 
   private async getCategoryDistributions(rows: DatasetRow[]) {
-    const rowsWithExpectedOutput = rows.filter((row) =>
-      this.getExpectedOutputField(this.toFieldSchema(row.fieldSchema)),
-    );
-    const samples = await this.repo.listDatasetSampleDataByDatasetIds(rowsWithExpectedOutput.map((row) => row.id));
-    const samplesByDatasetId = new Map<string, Array<{ data: unknown }>>();
-
-    for (const sample of samples) {
-      const datasetSamples = samplesByDatasetId.get(sample.datasetId) ?? [];
-      datasetSamples.push({ data: sample.data });
-      samplesByDatasetId.set(sample.datasetId, datasetSamples);
-    }
-
-    return new Map(
-      rows.map((row) => [
+    const entries = await Promise.all(
+      rows.map(async (row): Promise<[string, DatasetCategoryDistributionDto]> => [
         row.id,
-        this.buildCategoryDistribution(this.toFieldSchema(row.fieldSchema), samplesByDatasetId.get(row.id) ?? []),
+        await this.getCategoryDistribution(row),
       ]),
     );
+    return new Map(entries);
   }
 
-  private async getCategoryDistribution(row: DatasetRow) {
+  // Category distribution comes from a SQL GROUP BY, never an in-memory scan of all samples, so it scales to large datasets.
+  private async getCategoryDistribution(row: DatasetRow): Promise<DatasetCategoryDistributionDto> {
     const fieldSchema = this.toFieldSchema(row.fieldSchema);
-    if (!this.getExpectedOutputField(fieldSchema)) return this.buildCategoryDistribution(fieldSchema, []);
+    const expectedField = this.getExpectedOutputField(fieldSchema);
+    if (!expectedField) return { field: null, total: 0, categories: [] };
 
-    const samples = await this.repo.listDatasetSampleDataByDatasetIds([row.id]);
-    return this.buildCategoryDistribution(fieldSchema, samples);
+    const aggregated = await this.repo.aggregateCategoryDistribution(row.id, expectedField.name);
+    return this.toCategoryDistributionDto(expectedField.name, aggregated);
+  }
+
+  private toCategoryDistributionDto(
+    fieldName: string,
+    aggregated: Array<{ label: string; count: number }>,
+  ): DatasetCategoryDistributionDto {
+    const categories = aggregated
+      .map((entry) => ({ label: entry.label, count: entry.count }))
+      .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+    return {
+      field: fieldName,
+      total: categories.reduce((sum, category) => sum + category.count, 0),
+      categories,
+    };
   }
 
   private buildCategoryDistribution(

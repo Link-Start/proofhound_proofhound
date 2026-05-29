@@ -614,6 +614,32 @@
 }
 
 @layer components {
+  @keyframes ph-loader-wobble {
+    0%,
+    100% {
+      transform: scale(1, 1);
+    }
+    25% {
+      transform: scale(1.18, 0.82);
+    }
+    50% {
+      transform: scale(0.86, 1.16);
+    }
+    75% {
+      transform: scale(1.1, 0.92);
+    }
+  }
+
+  .ph-loader-wobble {
+    animation: ph-loader-wobble 1.4s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ph-loader-wobble {
+      animation: none;
+    }
+  }
+
   .status-running {
     background: var(--status-running-bg);
     color: var(--status-running-fg);

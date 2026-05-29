@@ -22,7 +22,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { KanbanScrollArea } from '@/components/ui/kanban-scroll-area';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { ListRowsSkeleton } from '@/components/ui/list-page-skeleton';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
 import { SlidingViewToggle } from '@/components/ui/sliding-view-toggle';
 import {
@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/table';
 import { TableActionRow, type TableActionDescriptor } from '@/components/ui/table-action';
 import { useOptimizations, useControlOptimization, useDeleteOptimization } from '@/hooks/optimization';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from '@/hooks/use-auto-refresh';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
@@ -541,6 +542,7 @@ export function OptimizationsListPage({ projectId }: { projectId: string }) {
   });
   const { refetch: refetchOptimizations } = optimizationsQuery;
 
+  const optimizationsLoading = useDelayedLoading(optimizationsQuery.isLoading);
   const controlMutation = useControlOptimization(projectId);
   const deleteMutation = useDeleteOptimization(projectId);
   const mutationPending = controlMutation.isPending || deleteMutation.isPending;
@@ -867,10 +869,8 @@ export function OptimizationsListPage({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          {optimizationsQuery.isLoading ? (
-            <div className="flex min-h-[280px] items-center justify-center px-4 py-12">
-              <PlatformLoader />
-            </div>
+          {optimizationsLoading ? (
+            <ListRowsSkeleton rows={6} />
           ) : viewMode === 'table' ? (
             <OptimizationsTable
               items={paged}

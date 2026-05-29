@@ -4,8 +4,8 @@ import { useParams } from 'next/navigation';
 import { useProjectContext } from '@/providers/project-context-provider';
 import { Main } from '@/components/layout/main';
 import { Button } from '@/components/ui/button';
-import { PlatformLoader } from '@/components/ui/platform-loader';
-import { useDataset, useDatasetSamples } from '@/hooks/dataset';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
+import { useDataset } from '@/hooks/dataset';
 import { useI18n } from '@/i18n';
 import { isCanonicalUuid } from '@/lib/uuid';
 import { DatasetDetailPage } from '../_components/dataset-detail-page';
@@ -22,20 +22,23 @@ export default function ProjectDatasetDetailRoute() {
   const { projectId } = useProjectContext();
   const datasetId = getParam(params.datasetId);
   const canUseApi = isCanonicalUuid(projectId) && isCanonicalUuid(datasetId);
+  // Samples are fetched inside DatasetDetailPage (server-paginated); the route only resolves dataset metadata.
   const datasetQuery = useDataset(canUseApi ? projectId : '', canUseApi ? datasetId : '');
-  const samplesQuery = useDatasetSamples(canUseApi ? projectId : '', canUseApi ? datasetId : '');
 
-  if (canUseApi && (datasetQuery.isLoading || samplesQuery.isLoading)) {
+  const dataset = datasetQuery.data ? toProjectDataset(datasetQuery.data) : null;
+
+  // Show the skeleton until the dataset query has actually settled. Without this the page briefly renders the
+  // "not found" card during SSR / before the client query resolves (projectId is client-only) — the Not-Found flash.
+  const settled = canUseApi && datasetQuery.isFetched && !datasetQuery.isFetching;
+  if (!dataset && !settled) {
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="dataset-detail-page">
-          <PlatformLoader className="min-h-[560px]" />
+          <DetailPageSkeleton />
         </div>
       </Main>
     );
   }
-
-  const dataset = datasetQuery.data ? toProjectDataset(datasetQuery.data) : null;
 
   if (!dataset) {
     return (
@@ -53,5 +56,5 @@ export default function ProjectDatasetDetailRoute() {
     );
   }
 
-  return <DatasetDetailPage key={dataset.id} projectId={projectId} dataset={dataset} samplesData={samplesQuery.data?.data} />;
+  return <DatasetDetailPage key={dataset.id} projectId={projectId} dataset={dataset} />;
 }

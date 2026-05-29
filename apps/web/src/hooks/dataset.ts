@@ -41,11 +41,23 @@ export function useDataset(projectId: string, datasetId: string) {
   });
 }
 
-export function useDatasetSamples(projectId: string, datasetId: string) {
+export interface DatasetSamplesQuery {
+  page: number;
+  pageSize: number;
+  search: string;
+}
+
+export function useDatasetSamples(projectId: string, datasetId: string, query: DatasetSamplesQuery) {
   return useQuery({
-    queryKey: ['dataset-samples', projectId, datasetId],
-    queryFn: () => datasetClient.listDatasetSamples(projectId, datasetId),
+    queryKey: ['dataset-samples', projectId, datasetId, query.page, query.pageSize, query.search],
+    queryFn: () =>
+      datasetClient.listDatasetSamples(projectId, datasetId, {
+        page: query.page,
+        pageSize: query.pageSize,
+        search: query.search || undefined,
+      }),
     enabled: projectId.length > 0 && datasetId.length > 0,
+    // Keep the previous page visible while the next page / search result loads.
     placeholderData: (previousData) => previousData,
   });
 }

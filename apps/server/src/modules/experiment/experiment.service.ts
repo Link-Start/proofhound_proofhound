@@ -36,7 +36,6 @@ import { ExperimentLauncher } from './experiment.launcher';
 import { ExperimentRepository, type ExperimentProjectAccessRow, type ExperimentRow } from './experiment.repository';
 
 const { datasets, promptVersions, prompts } = schema;
-const MAX_DATASET_SAMPLES = 5000;
 
 const MONTHLY_COST_QUOTA = 200;
 
@@ -355,9 +354,6 @@ export class ExperimentService {
     if (!ds) throw new BadRequestException('dataset_not_found');
     if (ds.deletedAt) throw new BadRequestException('dataset_deleted');
     if (ds.sampleCount <= 0) throw new BadRequestException('dataset_empty');
-    if (ds.sampleCount > MAX_DATASET_SAMPLES) {
-      throw new BadRequestException(`dataset_too_large: ${ds.sampleCount} > ${MAX_DATASET_SAMPLES}`);
-    }
 
     const model = await this.modelService.findModelAccessibleToProject(projectId, dto.modelId);
     if (!model) throw new BadRequestException('model_not_found');

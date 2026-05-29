@@ -148,4 +148,86 @@ describeIf('RedisLimiter (integration, real Redis)', () => {
     expect(usage.rpmUsed).toBe(0);
     expect(usage.tpmUsed).toBe(0);
   }, 5_000);
+
+  // --- auto-concurrency (Little's Law + AIMD backoff), exercised through the real Lua ---
+
+  it('auto-concurrency gates at the derived effective (not the ceiling)', async () => {
+    // Seed autostate: 5s latency, 1000 tok/req, backoff 1.0
+    await redis.hset(`${keyPrefix}:a1:autostate`, 'lat', 5000, 'tok', 1000, 'bf', 1);
+    // 60 rpm = 1 req/s; 5s latency → effective = ceil(1 × 5) = 5, far below ceiling 50
+    const limits = { rpmLimit: 60, tpmLimit: -1, concurrencyLimit: 50 };
+
+    for (let i = 0; i < 5; i += 1) {
+      await limiter.acquire({ modelId: 'a1', estimatedTokens: 100, limits, autoConcurrency: true, timeoutMs: 0 });
+    }
+    await expect(
+      limiter.acquire({
+        modelId: 'a1',
+        estimatedTokens: 100,
+        limits,
+        autoConcurrency: true,
+        timeoutMs: 0,
+        pollIntervalMs: 0,
+      }),
+    ).rejects.toMatchObject({ reason: 'concurrency' });
+  });
+
+  it('auto=false ignores autostate and uses the ceiling', async () => {
+    // Same seed that would shrink effective to ~5 under auto
+    await redis.hset(`${keyPrefix}:a2:autostate`, 'lat', 5000, 'tok', 1000, 'bf', 0.1);
+    const limits = { rpmLimit: 600, tpmLimit: -1, concurrencyLimit: 8 };
+
+    // Without autoConcurrency, 8 (the ceiling) in-flight all succeed
+    for (let i = 0; i < 8; i += 1) {
+      await limiter.acquire({ modelId: 'a2', estimatedTokens: 10, limits, timeoutMs: 0 });
+    }
+    await expect(
+      limiter.acquire({ modelId: 'a2', estimatedTokens: 10, limits, timeoutMs: 0, pollIntervalMs: 0 }),
+    ).rejects.toMatchObject({ reason: 'concurrency' });
+  });
+
+  it('upstream_throttle drives the backoff factor down to the floor', async () => {
+    const tuned = new RedisLimiter(redis, {
+      keyPrefix,
+      windowMs: 1_000,
+      backoffMult: 0.5,
+      backoffFloor: 0.1,
+    });
+    for (let i = 0; i < 10; i += 1) {
+      await tuned.reportOutcome({ modelId: 'a3', kind: 'upstream_throttle' });
+    }
+    const usage = await tuned.getUsage('a3');
+    expect(usage.backoffFactor).toBeCloseTo(0.1, 5);
+  });
+
+  it('success recovers the backoff additively and updates the latency EWMA', async () => {
+    const tuned = new RedisLimiter(redis, {
+      keyPrefix,
+      windowMs: 1_000,
+      ewmaAlpha: 0.3,
+      backoffRecoverStep: 0.05,
+      backoffMult: 0.5,
+      backoffFloor: 0.1,
+    });
+    // Drive backoff down first, then recover with successes
+    await tuned.reportOutcome({ modelId: 'a4', kind: 'upstream_throttle' }); // bf: 1 → 0.5
+    await tuned.reportOutcome({ modelId: 'a4', kind: 'success', latencyMs: 2000, tokens: 500 }); // bf: 0.55
+    await tuned.reportOutcome({ modelId: 'a4', kind: 'success', latencyMs: 2000, tokens: 500 }); // bf: 0.60
+
+    const usage = await tuned.getUsage('a4');
+    expect(usage.backoffFactor).toBeCloseTo(0.6, 5);
+    // First success seeds EWMA at 2000 (no prior), second keeps it at 2000
+    expect(usage.latencyEwmaMs).toBe(2000);
+    expect(usage.tokensEwma).toBe(500);
+  });
+
+  it('throttle never touches latency/token EWMA', async () => {
+    const tuned = new RedisLimiter(redis, { keyPrefix, windowMs: 1_000 });
+    await tuned.reportOutcome({ modelId: 'a5', kind: 'success', latencyMs: 3000, tokens: 800 });
+    await tuned.reportOutcome({ modelId: 'a5', kind: 'upstream_throttle' });
+    const usage = await tuned.getUsage('a5');
+    expect(usage.latencyEwmaMs).toBe(3000);
+    expect(usage.tokensEwma).toBe(800);
+    expect(usage.backoffFactor).toBeLessThan(1);
+  });
 });

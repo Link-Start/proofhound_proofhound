@@ -75,6 +75,26 @@ describe('orchestration-shared contracts', () => {
     expect(probeJobPayloadSchema.safeParse({ modelId: 'not-a-uuid' }).success).toBe(false);
   });
 
+  it('parses an optional webhookTokenId on LLM jobs and rejects a non-uuid', () => {
+    const base = {
+      projectId: 'a1b2c3d4-e5f6-4789-a012-345678901111',
+      source: 'release' as const,
+      sourceId: 'a1b2c3d4-e5f6-4789-a012-345678902222',
+      promptVersionId: 'a1b2c3d4-e5f6-4789-a012-345678903333',
+      modelId: 'a1b2c3d4-e5f6-4789-a012-345678904444',
+      renderedPrompt: { prompt: 'hello' },
+    };
+    const withToken = llmJobPayloadSchema.safeParse({
+      ...base,
+      webhookTokenId: 'a1b2c3d4-e5f6-4789-a012-345678907777',
+    });
+    expect(withToken.success).toBe(true);
+    if (withToken.success) {
+      expect(withToken.data.webhookTokenId).toBe('a1b2c3d4-e5f6-4789-a012-345678907777');
+    }
+    expect(llmJobPayloadSchema.safeParse({ ...base, webhookTokenId: 'nope' }).success).toBe(false);
+  });
+
   it('parses webhook async call context on LLM jobs', () => {
     const call = {
       callId: 'a1b2c3d4-e5f6-4789-a012-345678905555',

@@ -59,6 +59,7 @@ export const tokens = phCore.table(
   },
   (t) => [
     check('tokens_scope_check', sql`${t.scope} IN ('user', 'webhook')`),
+    check('tokens_name_length_check', sql`char_length(${t.name}) <= 64`),
     check(
       'tokens_scope_fields_check',
       sql`(

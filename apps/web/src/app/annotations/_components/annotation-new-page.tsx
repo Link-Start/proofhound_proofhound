@@ -9,9 +9,10 @@ import { Main } from '@/components/layout/main';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { Segmented } from '@/components/ui/segmented';
 import { useAnnotationTaskOptions, useCreateAnnotationTask } from '@/hooks/annotation';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
@@ -102,11 +103,12 @@ export function AnnotationNewPage({ projectId }: { projectId: string }) {
     );
   }
 
-  if (optionsQuery.isLoading && !optionsQuery.data) {
+  const optionsLoading = useDelayedLoading(optionsQuery.isLoading && !optionsQuery.data);
+  if (optionsLoading) {
     return (
       <Main fixed className="bg-muted/35">
-        <div className="mx-auto flex min-h-[520px] w-full max-w-[1280px] items-center justify-center">
-          <PlatformLoader />
+        <div className="mx-auto w-full max-w-[1280px]" data-testid="annotation-new-page">
+          <DetailPageSkeleton />
         </div>
       </Main>
     );

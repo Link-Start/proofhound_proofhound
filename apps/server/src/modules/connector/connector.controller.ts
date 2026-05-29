@@ -24,12 +24,12 @@ import {
 } from '@proofhound/shared';
 import { z } from 'zod';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { ConnectorService } from './connector.service';
 
 @Controller('connectors')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class ConnectorController {
   constructor(private readonly service: ConnectorService) {}
 

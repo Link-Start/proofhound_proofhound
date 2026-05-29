@@ -14,7 +14,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { PlatformLoader } from '@/components/ui/platform-loader';
 import {
   Table,
   TableBody,
@@ -23,6 +22,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableSkeletonRows,
   type TableColumn,
 } from '@/components/ui/table';
 import { TableActionIconButton } from '@/components/ui/table-action';
@@ -291,8 +291,6 @@ export function SettingsPage() {
         {notice ? <StatusBanner tone="success">{notice}</StatusBanner> : null}
         {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
 
-        {loading ? <PlatformLoader /> : null}
-
         <section className="space-y-4 rounded-lg border bg-card p-4" data-testid="settings-token-section">
           <SectionHeader
             icon={<KeyRound className="h-4 w-4" />}
@@ -338,7 +336,9 @@ export function SettingsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.length === 0 ? (
+                  {loading ? (
+                    <TableSkeletonRows />
+                  ) : rows.length === 0 ? (
                     <TableEmpty>{t('settings.token.empty')}</TableEmpty>
                   ) : (
                     rows.map((token) => (

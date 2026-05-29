@@ -16,9 +16,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { SlidingViewToggle } from '@/components/ui/sliding-view-toggle';
 import { useConnector, useCreateConnector, useUpdateConnector } from '@/hooks/connector';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { isCanonicalUuid } from '@/lib/uuid';
@@ -355,14 +356,15 @@ export function ConnectorFormPage({
   const directionLocked = mode === 'edit';
   const typeLocked = mode === 'edit';
 
-  const isInitialLoading =
-    (mode === 'edit' && existingQuery.isLoading && !existingQuery.data);
+  const isInitialLoading = useDelayedLoading(
+    mode === 'edit' && existingQuery.isLoading && !existingQuery.data,
+  );
 
   if (isInitialLoading) {
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 lg:px-8" data-testid="project-connector-form-page">
-          <PlatformLoader className="min-h-[560px]" />
+          <DetailPageSkeleton />
         </div>
       </Main>
     );

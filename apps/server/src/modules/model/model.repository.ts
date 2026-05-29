@@ -50,6 +50,7 @@ export class ModelRepository {
     rpmLimit: models.rpmLimit,
     tpmLimit: models.tpmLimit,
     concurrencyLimit: models.concurrencyLimit,
+    autoConcurrency: models.autoConcurrency,
     inputTokenPricePerMillion: models.inputTokenPricePerMillion,
     outputTokenPricePerMillion: models.outputTokenPricePerMillion,
     capabilities: models.capabilities,

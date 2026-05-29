@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RedisLimiter } from './redis-limiter';
+import { RedisLimiter, deriveEffectiveConcurrency } from './redis-limiter';
 import { RateLimitExceededError } from './types';
 
 describe('RedisLimiter', () => {
@@ -18,13 +18,18 @@ describe('RedisLimiter', () => {
     await limiter.release({ modelId: 'model-1' });
 
     expect(evalMock).toHaveBeenCalledTimes(2);
-    expect(evalMock.mock.calls[0]?.[1]).toBe(4);
+    // ACQUIRE now takes 5 KEYS (rpm/tpm/tpm:total/concurrency/autostate); RELEASE takes 1
+    expect(evalMock.mock.calls[0]?.[1]).toBe(5);
     expect(evalMock.mock.calls[1]?.[1]).toBe(1);
 
-    // The 6th ARGV of ACQUIRE is concurrency_ttl_ms (default 5 min)
+    // ACQUIRE ARGV carries concurrency TTL (5 min), autostate TTL (30 min), default latency (3000ms),
+    // the auto-concurrency flag (0 when not requested), and a string request member.
     const acquireArgs = evalMock.mock.calls[0]!;
-    expect(acquireArgs[acquireArgs.length - 2]).toBe(5 * 60_000);
-    expect(typeof acquireArgs[acquireArgs.length - 1]).toBe('string');
+    expect(acquireArgs).toContain(5 * 60_000);
+    expect(acquireArgs).toContain(30 * 60_000);
+    expect(acquireArgs).toContain(3000);
+    expect(acquireArgs).toContain(0);
+    expect(acquireArgs.some((arg) => typeof arg === 'string' && /^[0-9a-f-]{36}$/u.test(arg))).toBe(true);
   });
 
   it('uses Redis sorted sets for RPM and TPM sliding windows', async () => {
@@ -145,11 +150,11 @@ describe('RedisLimiter', () => {
     });
     expect(usage.windowEndsAt).toBe(new Date(sampledAtMs).toISOString());
     expect(evalMock).toHaveBeenCalledTimes(1);
-    expect(evalMock.mock.calls[0]?.[1]).toBe(4);
+    expect(evalMock.mock.calls[0]?.[1]).toBe(5);
   });
 
   it('getUsage returns zeros when keys are missing', async () => {
-    const redis = { eval: vi.fn(async () => [0, 0, 0, Date.now()]) };
+    const redis = { eval: vi.fn(async () => [0, 0, 0, Date.now(), -1, -1, -1]) };
     const limiter = new RedisLimiter(redis as never);
 
     const usage = await limiter.getUsage('cold-model');
@@ -159,5 +164,138 @@ describe('RedisLimiter', () => {
       tpmUsed: 0,
       concurrencyInUse: 0,
     });
+    expect(usage.latencyEwmaMs).toBeUndefined();
+    expect(usage.tokensEwma).toBeUndefined();
+    expect(usage.backoffFactor).toBeUndefined();
+  });
+
+  it('passes the auto-concurrency flag and returns the derived snapshot on acquire', async () => {
+    const evalMock = vi.fn(async () => [1, 0, 'ok', 7, 850, 2500]);
+    const limiter = new RedisLimiter({ eval: evalMock });
+
+    const result = await limiter.acquire({
+      modelId: 'm',
+      estimatedTokens: 100,
+      autoConcurrency: true,
+      limits: { rpmLimit: 60, tpmLimit: 1000, concurrencyLimit: 20 },
+    });
+
+    expect(result).toEqual({ effectiveConcurrency: 7, backoffFactor: 0.85, latencyEwmaMs: 2500 });
+    // auto flag (1) is present in ARGV
+    expect(evalMock.mock.calls[0]).toContain(1);
+  });
+
+  it('getUsage surfaces auto-concurrency state (latency / tokens / backoff)', async () => {
+    const sampledAtMs = Date.UTC(2026, 4, 20, 1, 2, 3);
+    const redis = { eval: vi.fn(async () => [3, 450, 2, sampledAtMs, 2500, 1200, 850]) };
+    const limiter = new RedisLimiter(redis as never);
+
+    const usage = await limiter.getUsage('m');
+    expect(usage).toMatchObject({ latencyEwmaMs: 2500, tokensEwma: 1200, backoffFactor: 0.85 });
+  });
+
+  it('reportOutcome(success) sends latency + tokens to the REPORT script', async () => {
+    const evalMock = vi.fn(async (_script: string, _keyCount: number, ..._args: Array<string | number>) => 1000);
+    const limiter = new RedisLimiter({ eval: evalMock });
+
+    await limiter.reportOutcome({ modelId: 'm', kind: 'success', latencyMs: 1234, tokens: 42 });
+
+    const call = evalMock.mock.calls[0]!;
+    expect(call[0]).toMatch(/HSET/);
+    expect(call[1]).toBe(1); // single autostate key
+    expect(call).toContain('success');
+    expect(call).toContain(1234);
+    expect(call).toContain(42);
+  });
+
+  it('reportOutcome(upstream_throttle) omits latency/tokens (sentinel -1)', async () => {
+    const evalMock = vi.fn(async (_script: string, _keyCount: number, ..._args: Array<string | number>) => 500);
+    const limiter = new RedisLimiter({ eval: evalMock });
+
+    await limiter.reportOutcome({ modelId: 'm', kind: 'upstream_throttle' });
+
+    const call = evalMock.mock.calls[0]!;
+    expect(call).toContain('upstream_throttle');
+    // latency and tokens both passed as -1 sentinel
+    expect(call.filter((arg) => arg === -1).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('deriveEffectiveConcurrency (Little\'s Law + AIMD backoff)', () => {
+  it('RPM binds: effective = ceil(rpm/60 × latency_s), clamped to ceiling', () => {
+    // 60 rpm = 1 req/s; 5s latency → 5 concurrent needed
+    expect(
+      deriveEffectiveConcurrency({
+        rpmLimit: 60,
+        tpmLimit: -1,
+        ceiling: 50,
+        latencyEwmaMs: 5000,
+        tokensEwma: 1000,
+        backoffFactor: 1,
+      }),
+    ).toBe(5);
+  });
+
+  it('TPM binds when it implies fewer req/s than RPM', () => {
+    // 6000 tpm / 1000 tok = 6 req/min = 0.1 req/s; 10s latency → ceil(1) = 1
+    expect(
+      deriveEffectiveConcurrency({
+        rpmLimit: -1,
+        tpmLimit: 6000,
+        ceiling: 50,
+        latencyEwmaMs: 10_000,
+        tokensEwma: 1000,
+        backoffFactor: 1,
+      }),
+    ).toBe(1);
+  });
+
+  it('both unlimited → target is the ceiling, scaled by backoff', () => {
+    expect(
+      deriveEffectiveConcurrency({
+        rpmLimit: -1,
+        tpmLimit: -1,
+        ceiling: 8,
+        latencyEwmaMs: 3000,
+        tokensEwma: 1000,
+        backoffFactor: 1,
+      }),
+    ).toBe(8);
+    expect(
+      deriveEffectiveConcurrency({
+        rpmLimit: -1,
+        tpmLimit: -1,
+        ceiling: 8,
+        latencyEwmaMs: 3000,
+        tokensEwma: 1000,
+        backoffFactor: 0.5,
+      }),
+    ).toBe(4);
+  });
+
+  it('clamps to the ceiling when the target exceeds it', () => {
+    expect(
+      deriveEffectiveConcurrency({
+        rpmLimit: 100_000,
+        tpmLimit: -1,
+        ceiling: 20,
+        latencyEwmaMs: 60_000,
+        tokensEwma: 1000,
+        backoffFactor: 1,
+      }),
+    ).toBe(20);
+  });
+
+  it('never drops below 1 even with a tiny backoff factor', () => {
+    expect(
+      deriveEffectiveConcurrency({
+        rpmLimit: 60,
+        tpmLimit: -1,
+        ceiling: 50,
+        latencyEwmaMs: 2000,
+        tokensEwma: 1000,
+        backoffFactor: 0.1,
+      }),
+    ).toBe(1);
   });
 });

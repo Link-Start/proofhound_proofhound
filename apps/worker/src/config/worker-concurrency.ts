@@ -1,4 +1,4 @@
-export const DEFAULT_WORKER_CONCURRENCY = 4;
+export const DEFAULT_WORKER_CONCURRENCY = 64;
 
 export function resolveWorkerConcurrency(
   raw: string | number | undefined = process.env['WORKER_CONCURRENCY'],

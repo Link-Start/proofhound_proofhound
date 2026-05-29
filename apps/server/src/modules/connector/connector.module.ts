@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
 import { CryptoModule } from '../../infrastructure/crypto/crypto.module';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { ConnectorController } from './connector.controller';
@@ -10,7 +9,7 @@ import { ConnectorService } from './connector.service';
 @Module({
   imports: [CryptoModule, DatabaseModule],
   controllers: [ConnectorController],
-  providers: [ConnectorRepository, ConnectorService, ConnectorDriverFactory, LocalActorGuard],
+  providers: [ConnectorRepository, ConnectorService, ConnectorDriverFactory],
   exports: [ConnectorService, ConnectorDriverFactory],
 })
 export class ConnectorModule {}

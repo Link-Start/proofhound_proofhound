@@ -5,6 +5,7 @@ export * from './types';
 export * from './project-context.resolver';
 export * from './actor-context.resolver';
 export * from './mcp-auth.resolver';
+export * from './http-actor.guard';
 export * from './local-project-context.resolver';
 export * from './local-actor-context.resolver';
 export * from './local-mcp-auth.resolver';

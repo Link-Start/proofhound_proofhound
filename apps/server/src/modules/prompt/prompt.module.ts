@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { RedisModule } from '../../infrastructure/redis/redis.module';
 import { PromptTryRunService } from './prompt-try-run.service';
@@ -10,7 +9,7 @@ import { PromptService } from './prompt.service';
 @Module({
   imports: [DatabaseModule, RedisModule],
   controllers: [PromptController],
-  providers: [PromptRepository, PromptService, PromptTryRunService, LocalActorGuard],
+  providers: [PromptRepository, PromptService, PromptTryRunService],
   exports: [PromptService, PromptRepository],
 })
 export class PromptModule {}

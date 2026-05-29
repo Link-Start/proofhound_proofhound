@@ -157,6 +157,7 @@ export class PromptTryRunService {
       rpmLimit: row.rpmLimit,
       tpmLimit: row.tpmLimit,
       concurrencyLimit: row.concurrencyLimit,
+      autoConcurrency: row.autoConcurrency,
       inputTokenPricePerMillion: row.inputTokenPricePerMillion,
       outputTokenPricePerMillion: row.outputTokenPricePerMillion,
       extraBody: toExtraBody(row.extraBody),

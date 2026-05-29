@@ -17,12 +17,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { ListRowsSkeleton } from '@/components/ui/list-page-skeleton';
+import { PlatformLoaderOverlay } from '@/components/ui/platform-loader';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
 import { SlidingViewToggle } from '@/components/ui/sliding-view-toggle';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, type TableColumn } from '@/components/ui/table';
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { useBulkDeleteConnectors, useConnectors, useDeleteConnector } from '@/hooks/connector';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from '@/hooks/use-auto-refresh';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
@@ -128,15 +130,7 @@ export function ConnectorsListPage({ projectId }: { projectId: string }) {
   const offset = (currentPage - 1) * pageSize;
   const paginated = filtered.slice(offset, offset + pageSize);
 
-  if (connectorsQuery.isLoading && !connectorsQuery.data) {
-    return (
-      <Main className="gap-0 bg-muted/35 p-0">
-        <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="project-connectors-page">
-          <PlatformLoader className="min-h-[560px]" />
-        </div>
-      </Main>
-    );
-  }
+  const connectorsLoading = useDelayedLoading(connectorsQuery.isLoading && !connectorsQuery.data);
 
   function toggleSelection(id: string) {
     setSelection((prev) => {
@@ -309,45 +303,54 @@ export function ConnectorsListPage({ projectId }: { projectId: string }) {
         )}
 
         {/* table or cards */}
-        {view === 'list' ? (
-          <ListView
-            projectId={projectId}
-            items={paginated}
-            allSelected={paginated.every((item) => selection.has(item.id))}
-            onToggleAll={selectAllOnPage}
-            isSelected={(id) => selection.has(id)}
-            onToggle={toggleSelection}
-            onDelete={(id) => openDeleteDialog([id])}
-          />
+        {connectorsLoading ? (
+          <div className="relative rounded-lg border bg-card">
+            <ListRowsSkeleton rows={8} />
+            <PlatformLoaderOverlay />
+          </div>
         ) : (
-          <CardView
-            projectId={projectId}
-            items={paginated}
-            isSelected={(id) => selection.has(id)}
-            onToggle={toggleSelection}
-            onDelete={(id) => openDeleteDialog([id])}
-          />
-        )}
+          <>
+            {view === 'list' ? (
+              <ListView
+                projectId={projectId}
+                items={paginated}
+                allSelected={paginated.every((item) => selection.has(item.id))}
+                onToggleAll={selectAllOnPage}
+                isSelected={(id) => selection.has(id)}
+                onToggle={toggleSelection}
+                onDelete={(id) => openDeleteDialog([id])}
+              />
+            ) : (
+              <CardView
+                projectId={projectId}
+                items={paginated}
+                isSelected={(id) => selection.has(id)}
+                onToggle={toggleSelection}
+                onDelete={(id) => openDeleteDialog([id])}
+              />
+            )}
 
-        {filtered.length === 0 && (
-          <p className="mt-8 text-center text-sm text-muted-foreground" data-testid="project-connectors-empty">
-            {t('connectors.empty')}
-          </p>
-        )}
+            {filtered.length === 0 && (
+              <p className="mt-8 text-center text-sm text-muted-foreground" data-testid="project-connectors-empty">
+                {t('connectors.empty')}
+              </p>
+            )}
 
-        <ResourcePaginationFooter
-          pageIndex={currentPage - 1}
-          pageCount={totalPages}
-          pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          previousPageLabel="Previous"
-          nextPageLabel="Next"
-          onPageChange={(index) => setPage(index + 1)}
-          onPageSizeChange={(next) => {
-            setPageSize(next);
-            setPage(1);
-          }}
-        />
+            <ResourcePaginationFooter
+              pageIndex={currentPage - 1}
+              pageCount={totalPages}
+              pageSize={pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              previousPageLabel="Previous"
+              nextPageLabel="Next"
+              onPageChange={(index) => setPage(index + 1)}
+              onPageSizeChange={(next) => {
+                setPageSize(next);
+                setPage(1);
+              }}
+            />
+          </>
+        )}
       </div>
 
       {/* delete dialog */}

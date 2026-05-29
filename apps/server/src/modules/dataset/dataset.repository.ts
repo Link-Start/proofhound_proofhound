@@ -36,11 +36,6 @@ export interface DatasetSampleRow {
   updatedAt: Date;
 }
 
-export interface DatasetSampleDataRow {
-  datasetId: string;
-  data: unknown;
-}
-
 export interface CreateDatasetRecordArgs {
   datasetId: string;
   projectId: string;
@@ -118,6 +113,7 @@ export class DatasetRepository {
     return rows[0] ?? null;
   }
 
+  // Full scan — only for export (complete dump). Detail browsing must use listDatasetSamplesPage.
   async listDatasetSamples(datasetId: string): Promise<DatasetSampleRow[]> {
     return this.db
       .select()
@@ -126,16 +122,52 @@ export class DatasetRepository {
       .orderBy(asc(datasetSamples.createdAt), asc(datasetSamples.id));
   }
 
-  async listDatasetSampleDataByDatasetIds(datasetIds: string[]): Promise<DatasetSampleDataRow[]> {
-    if (datasetIds.length === 0) return [];
+  // Server-side paginated browse with optional cross-field search (data::text ILIKE), so the detail page
+  // never loads an entire (potentially 100k+ sample) dataset into memory.
+  async listDatasetSamplesPage(
+    datasetId: string,
+    options: { limit: number; offset: number; search?: string },
+  ): Promise<{ rows: DatasetSampleRow[]; total: number }> {
+    const searchTerm = options.search?.trim();
+    const where = searchTerm
+      ? and(eq(datasetSamples.datasetId, datasetId), sql`${datasetSamples.data}::text ILIKE ${`%${searchTerm}%`}`)
+      : eq(datasetSamples.datasetId, datasetId);
 
-    return this.db
-      .select({
-        datasetId: datasetSamples.datasetId,
-        data: datasetSamples.data,
-      })
+    const [rows, countResult] = await Promise.all([
+      this.db
+        .select()
+        .from(datasetSamples)
+        .where(where)
+        .orderBy(asc(datasetSamples.createdAt), asc(datasetSamples.id))
+        .limit(options.limit)
+        .offset(options.offset),
+      this.db.select({ count: sql<number>`count(*)::int` }).from(datasetSamples).where(where),
+    ]);
+
+    return { rows, total: Number(countResult[0]?.count ?? 0) };
+  }
+
+  // SQL GROUP BY on the expected-output field so list/detail never load all sample rows into memory.
+  // Mirrors DatasetService.toCategoryLabel: only scalar (string/number/boolean), non-blank, trimmed labels count.
+  async aggregateCategoryDistribution(
+    datasetId: string,
+    fieldName: string,
+  ): Promise<Array<{ label: string; count: number }>> {
+    const label = sql<string>`btrim(${datasetSamples.data} ->> ${fieldName})`;
+    const rows = await this.db
+      .select({ label, count: sql<number>`count(*)::int` })
       .from(datasetSamples)
-      .where(inArray(datasetSamples.datasetId, datasetIds));
+      .where(
+        and(
+          eq(datasetSamples.datasetId, datasetId),
+          sql`jsonb_typeof(${datasetSamples.data} -> ${fieldName}) IN ('string', 'number', 'boolean')`,
+          sql`btrim(${datasetSamples.data} ->> ${fieldName}) <> ''`,
+        ),
+      )
+      // GROUP BY ordinal: the same ${fieldName} binds to different param positions in select vs group-by,
+      // so Postgres won't match the expressions textually. Referencing select column 1 sidesteps that.
+      .groupBy(sql`1`);
+    return rows.map((row) => ({ label: String(row.label), count: Number(row.count) }));
   }
 
   async hardDeleteDataset(projectId: string, datasetId: string): Promise<number> {

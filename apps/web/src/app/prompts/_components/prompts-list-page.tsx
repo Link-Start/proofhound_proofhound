@@ -15,11 +15,14 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { ListRowsSkeleton } from '@/components/ui/list-page-skeleton';
+import { PlatformLoaderOverlay } from '@/components/ui/platform-loader';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, type TableColumn } from '@/components/ui/table';
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { useCreatePrompt, useDeletePrompt, usePromptDeleteImpact, usePrompts } from '@/hooks/prompt';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { isProjectNameTaken } from '@/lib/project-name';
@@ -343,6 +346,7 @@ export function PromptsListPage({
   const router = useRouter();
   const searchParams = useSearchParams();
   const promptsQuery = usePrompts(projectId);
+  const promptsLoading = useDelayedLoading(promptsQuery.isLoading);
   const createPromptMutation = useCreatePrompt(projectId);
   const deletePromptMutation = useDeletePrompt(projectId);
   const prompts = useMemo(
@@ -431,30 +435,26 @@ export function PromptsListPage({
     }
   };
 
-  if (promptsQuery.isLoading) {
-    return (
-      <Main className="gap-0 bg-muted/35 p-0">
-        <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="prompts-page">
-          <PlatformLoader className="min-h-[560px]" />
-        </div>
-      </Main>
-    );
-  }
-
   return (
     <Main className="gap-0 bg-muted/35 p-0">
       <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="prompts-page">
         <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <h1 className="text-[26px] font-semibold">{t('prompts.title')}</h1>
-            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[12.5px] text-muted-foreground">
-              <HeaderStat label={t('prompts.header.items')} value={String(prompts.length)} />
-              <span>·</span>
-              <HeaderStat label={t('prompts.header.online')} value={String(onlineCount)} />
-              <span>·</span>
-              <HeaderStat label={t('prompts.header.editable')} value={String(editableCount)} />
-              <span>·</span>
-              <HeaderStat label={t('prompts.header.frozen')} value={String(frozenCount)} />
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted-foreground">
+              {promptsLoading ? (
+                <Skeleton className="h-3.5 w-64" />
+              ) : (
+                <>
+                  <HeaderStat label={t('prompts.header.items')} value={String(prompts.length)} />
+                  <span>·</span>
+                  <HeaderStat label={t('prompts.header.online')} value={String(onlineCount)} />
+                  <span>·</span>
+                  <HeaderStat label={t('prompts.header.editable')} value={String(editableCount)} />
+                  <span>·</span>
+                  <HeaderStat label={t('prompts.header.frozen')} value={String(frozenCount)} />
+                </>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -517,34 +517,43 @@ export function PromptsListPage({
             </div>
           </div>
 
-          <PromptsTable
-            prompts={pagedPrompts}
-            selectedIds={selectedIds}
-            onDelete={deletePrompt}
-            onToggleSelected={toggleSelected}
-          />
+          {promptsLoading ? (
+            <div className="relative">
+              <ListRowsSkeleton rows={8} />
+              <PlatformLoaderOverlay />
+            </div>
+          ) : (
+            <>
+              <PromptsTable
+                prompts={pagedPrompts}
+                selectedIds={selectedIds}
+                onDelete={deletePrompt}
+                onToggleSelected={toggleSelected}
+              />
 
-          <ResourcePaginationFooter
-            summary={
-              <>
-                {t('prompts.totalPrefix')}{' '}
-                <span className="font-mono font-medium text-foreground">{filteredPrompts.length}</span>{' '}
-                {t('prompts.totalSuffix')} · {t('prompts.selected')}{' '}
-                <span className="font-mono font-medium text-foreground">{selectedIds.length}</span>
-              </>
-            }
-            pageIndex={safePageIndex}
-            pageCount={pageCount}
-            pageSize={pageSize}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
-            previousPageLabel={t('common.previousPage')}
-            nextPageLabel={t('common.nextPage')}
-            onPageChange={setPageIndex}
-            onPageSizeChange={(nextPageSize) => {
-              setPageSize(nextPageSize);
-              setPageIndex(0);
-            }}
-          />
+              <ResourcePaginationFooter
+                summary={
+                  <>
+                    {t('prompts.totalPrefix')}{' '}
+                    <span className="font-mono font-medium text-foreground">{filteredPrompts.length}</span>{' '}
+                    {t('prompts.totalSuffix')} · {t('prompts.selected')}{' '}
+                    <span className="font-mono font-medium text-foreground">{selectedIds.length}</span>
+                  </>
+                }
+                pageIndex={safePageIndex}
+                pageCount={pageCount}
+                pageSize={pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                previousPageLabel={t('common.previousPage')}
+                nextPageLabel={t('common.nextPage')}
+                onPageChange={setPageIndex}
+                onPageSizeChange={(nextPageSize) => {
+                  setPageSize(nextPageSize);
+                  setPageIndex(0);
+                }}
+              />
+            </>
+          )}
         </section>
       </div>
 

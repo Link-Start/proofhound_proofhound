@@ -139,6 +139,7 @@ export class LlmConsumer extends WorkerHost {
         attempt: job.attemptsMade ?? 1,
         dbosWorkflowId: payload.dbosWorkflowId ?? null,
         bullmqJobId: String(job.id),
+        webhookTokenId: payload.webhookTokenId ?? null,
       });
       this.logger.info(
         {

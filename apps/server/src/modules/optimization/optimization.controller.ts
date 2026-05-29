@@ -18,12 +18,12 @@ import {
   createOptimizationSchema,
 } from '@proofhound/shared';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { OptimizationService } from './optimization.service';
 
 @Controller('optimizations')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class OptimizationController {
   constructor(private readonly optimizationService: OptimizationService) {}
 

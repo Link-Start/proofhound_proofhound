@@ -7,6 +7,7 @@ import {
   createDatasetSchema,
   datasetExportFormatSchema,
   datasetIdParamSchema,
+  datasetSamplesQuerySchema,
   deleteDatasetSamplesSchema,
   updateDatasetMetadataSchema,
 } from '@proofhound/shared';
@@ -43,18 +44,26 @@ export function createDatasetTools(datasetService: DatasetService): McpToolDefin
     },
     {
       name: 'dataset_list_samples',
-      description: '列出数据集样本',
+      description: '分页列出数据集样本（可选跨字段搜索）',
       inputSchema: {
         type: 'object',
         required: ['datasetId'],
         properties: {
           datasetId: { type: 'string', format: 'uuid' },
+          page: { type: 'integer', minimum: 1 },
+          pageSize: { type: 'integer', minimum: 1, maximum: 200 },
+          search: { type: 'string' },
         },
       },
       handler: async (input, ctx) => {
         const { projectId } = resolveMcpProjectContext(ctx);
         const datasetId = datasetIdParamSchema.parse(input.datasetId);
-        return datasetService.listDatasetSamples(projectId, datasetId, getMcpActor(ctx));
+        const query = datasetSamplesQuerySchema.parse({
+          page: input.page,
+          pageSize: input.pageSize,
+          search: input.search,
+        });
+        return datasetService.listDatasetSamples(projectId, datasetId, getMcpActor(ctx), query);
       },
     },
     {

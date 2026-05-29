@@ -23,11 +23,14 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { ListRowsSkeleton } from '@/components/ui/list-page-skeleton';
+import { PlatformLoaderOverlay } from '@/components/ui/platform-loader';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
 import { SlidingViewToggle } from '@/components/ui/sliding-view-toggle';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from '@/hooks/use-auto-refresh';
 import { useControlExperiment, useDeleteExperiment, useExperiments } from '@/hooks/experiment';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { type ExperimentStatus, type ExperimentSummary } from './experiment-view-model';
@@ -425,15 +428,7 @@ export function ExperimentsListPage({ projectId }: { projectId: string }) {
 
   const isBusy = bulkBusy || controlExperiment.isPending || deleteExperiment.isPending;
 
-  if (experimentsQuery.isLoading && !experimentsQuery.data) {
-    return (
-      <Main className="gap-0 bg-muted/35 p-0">
-        <div className="mx-auto flex min-h-[520px] w-full max-w-[1760px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8">
-          <PlatformLoader />
-        </div>
-      </Main>
-    );
-  }
+  const experimentsLoading = useDelayedLoading(experimentsQuery.isLoading && !experimentsQuery.data);
 
   return (
     <Main className="gap-0 bg-muted/35 p-0">
@@ -510,29 +505,41 @@ export function ExperimentsListPage({ projectId }: { projectId: string }) {
           </div>
         )}
 
-        <section className="mb-5 grid grid-cols-1 gap-4 rounded-lg border bg-card px-5 py-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
-          <HeaderStatCard
-            label={t('experiments.headerStat.newThisWeek')}
-            value={headerStats.newThisWeek}
-            footer={`${t('experiments.headerStat.weekDelta')} —`}
-          />
-          <HeaderStatCard
-            label={t('experiments.headerStat.avgDuration')}
-            value={headerStats.averageDuration}
-            unit={t('experiments.headerStat.avgDurationUnit')}
-            footer={formatTemplate(t('experiments.headerStat.durationStat'), {
-              median: headerStats.durationStat.median,
-              p90: headerStats.durationStat.p90,
-            })}
-          />
-          <HeaderStatCard
-            label={t('experiments.headerStat.tokens')}
-            value={headerStats.tokens}
-            unit="token"
-            footer={formatTemplate(t('experiments.headerStat.tokensSplit'), headerStats.tokenSplit)}
-          />
-          <HeaderStatCard label={t('experiments.headerStat.cost')} value={headerStats.cost} />
-        </section>
+        {experimentsLoading ? (
+          <section className="mb-5 grid grid-cols-1 gap-4 rounded-lg border bg-card px-5 py-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="space-y-2">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-7 w-20" />
+                <Skeleton className="h-3 w-28" />
+              </div>
+            ))}
+          </section>
+        ) : (
+          <section className="mb-5 grid grid-cols-1 gap-4 rounded-lg border bg-card px-5 py-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+            <HeaderStatCard
+              label={t('experiments.headerStat.newThisWeek')}
+              value={headerStats.newThisWeek}
+              footer={`${t('experiments.headerStat.weekDelta')} —`}
+            />
+            <HeaderStatCard
+              label={t('experiments.headerStat.avgDuration')}
+              value={headerStats.averageDuration}
+              unit={t('experiments.headerStat.avgDurationUnit')}
+              footer={formatTemplate(t('experiments.headerStat.durationStat'), {
+                median: headerStats.durationStat.median,
+                p90: headerStats.durationStat.p90,
+              })}
+            />
+            <HeaderStatCard
+              label={t('experiments.headerStat.tokens')}
+              value={headerStats.tokens}
+              unit="token"
+              footer={formatTemplate(t('experiments.headerStat.tokensSplit'), headerStats.tokenSplit)}
+            />
+            <HeaderStatCard label={t('experiments.headerStat.cost')} value={headerStats.cost} />
+          </section>
+        )}
 
         <section className="rounded-lg border bg-card" aria-label={t('experiments.listSurface')}>
           <div className="flex flex-col gap-3 border-b p-4 xl:flex-row xl:items-center xl:justify-between">
@@ -602,7 +609,12 @@ export function ExperimentsListPage({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          {viewMode === 'table' ? (
+          {experimentsLoading ? (
+            <div className="relative">
+              <ListRowsSkeleton rows={8} />
+              <PlatformLoaderOverlay />
+            </div>
+          ) : viewMode === 'table' ? (
             <>
               <ExperimentsTable
                 experiments={pagedExperiments}

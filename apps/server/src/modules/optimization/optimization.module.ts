@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { DrizzleRunResultWriter } from '../../infrastructure/llm/run-result-writer';
 import { OrchestrationModule } from '../../infrastructure/orchestration/orchestration.module';
@@ -24,7 +23,6 @@ import { OptimizationWorkflowRegistrar } from './optimization.workflow';
     OptimizationLauncher,
     OptimizationRecoveryService,
     DrizzleRunResultWriter,
-    LocalActorGuard,
   ],
   exports: [OptimizationService],
 })

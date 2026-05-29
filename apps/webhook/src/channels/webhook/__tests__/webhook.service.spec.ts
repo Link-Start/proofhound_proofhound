@@ -153,6 +153,7 @@ describe('WebhookService', () => {
       externalId: 'sample-1',
       inputVariables: { text: 'hello' },
       limits: { rpmLimit: 60, tpmLimit: 60_000, concurrency: 2 },
+      webhookTokenId: tokenId,
     });
     expect(payload.judgment).toBeUndefined();
     expect(response).toMatchObject({

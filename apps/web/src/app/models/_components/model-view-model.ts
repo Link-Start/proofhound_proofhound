@@ -39,7 +39,9 @@ export interface ProjectModel {
     limitInput?: string;
     usage: number;
     current: string;
+    effective?: string;
   };
+  autoConcurrency: boolean;
   pricing: {
     inputPerMillion: string;
     outputPerMillion: string;

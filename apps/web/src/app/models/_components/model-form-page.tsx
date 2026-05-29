@@ -37,7 +37,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { Progress, formatProgressLabel } from '@/components/ui/progress';
 import { ModelContextWindowInput } from '@/components/model-context-window-input';
 import { ModelProbeStatus, type ModelProbeFeedback } from '@/components/model-probe-status';
@@ -102,6 +102,7 @@ const PROJECT_MODEL_FALLBACK: ProjectModel = {
   rpm: { limit: '', limitInput: '', usage: 0, current: '' },
   tpm: { limit: '', limitInput: '', usage: 0, current: '' },
   concurrency: { limit: '', limitInput: '', usage: 0, current: '' },
+  autoConcurrency: true,
   pricing: { inputPerMillion: '', outputPerMillion: '' },
   imageCapability: 'none',
   references: 0,
@@ -705,6 +706,7 @@ function QuotaSection({
 }) {
   const { t } = useI18n();
   const isEdit = mode === 'edit';
+  const [autoConcurrency, setAutoConcurrency] = useState(useDefaults ? model.autoConcurrency : true);
   const usageSummary = `${t('models.form.realtimeUsage')}: ${model.rpm.usage}% / ${model.tpm.usage}% / ${model.concurrency.usage}%`;
 
   return (
@@ -741,7 +743,10 @@ function QuotaSection({
           />
           {isEdit && <QuotaLine usage={model.tpm.usage} current={model.tpm.current} limit={model.tpm.limit} />}
         </Field>
-        <Field label={t('models.form.concurrencyLimit')} help={t('models.form.concurrencyLimitHelp')}>
+        <Field
+          label={autoConcurrency ? t('models.form.concurrencyCeiling') : t('models.form.concurrencyLimit')}
+          help={autoConcurrency ? t('models.form.autoConcurrencyHelp') : t('models.form.concurrencyLimitHelp')}
+        >
           <FieldInput
             name="concurrencyLimit"
             defaultValue={
@@ -751,11 +756,26 @@ function QuotaSection({
             suffix="in-flight"
             readOnly={readOnly}
           />
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11.5px] text-muted-foreground">
+            <input
+              name="autoConcurrency"
+              type="checkbox"
+              checked={autoConcurrency}
+              disabled={readOnly}
+              onChange={(event) => setAutoConcurrency(event.target.checked)}
+              className="size-3.5 accent-primary"
+            />
+            <span>{t('models.form.autoConcurrency')}</span>
+          </label>
           {isEdit && (
             <QuotaLine
               usage={model.concurrency.usage}
               current={model.concurrency.current}
-              limit={model.concurrency.limit}
+              limit={
+                autoConcurrency && model.concurrency.effective
+                  ? `${model.concurrency.effective} / ${model.concurrency.limit}`
+                  : model.concurrency.limit
+              }
             />
           )}
         </Field>
@@ -914,6 +934,7 @@ function projectEditSignatureFromModel(model: ProjectModel) {
     concurrencyLimit: normalizedNumberSignature(
       model.concurrency.limitInput ?? toIntegerInputValue(model.concurrency.limit),
     ),
+    autoConcurrency: model.autoConcurrency,
     inputPrice: normalizedNumberSignature(model.pricing.inputPerMillion),
     outputPrice: normalizedNumberSignature(model.pricing.outputPerMillion),
     imageCapability: model.imageCapability,
@@ -932,6 +953,7 @@ function projectEditSignatureFromForm(form: HTMLFormElement, apiKeyEdited: boole
     rpmLimit: normalizedNumberSignature(String(data.get('rpmLimit') ?? '')),
     tpmLimit: normalizedNumberSignature(String(data.get('tpmLimit') ?? '')),
     concurrencyLimit: normalizedNumberSignature(String(data.get('concurrencyLimit') ?? '')),
+    autoConcurrency: data.has('autoConcurrency'),
     inputPrice: normalizedNumberSignature(String(data.get('inputPrice') ?? '')),
     outputPrice: normalizedNumberSignature(String(data.get('outputPrice') ?? '')),
     imageCapability: String(data.get('imageCapability') ?? 'none'),
@@ -987,6 +1009,7 @@ function readProjectModelCreatePayload(
       rpm: { limit: rpmLimit },
       tpm: { limit: tpmLimit },
       concurrency: { limit: concurrencyLimit },
+      autoConcurrency: data.has('autoConcurrency'),
       pricing: { inputPerMillion: inputPrice, outputPerMillion: outputPrice },
       capabilities: { image: imageCapability },
       extraBody,
@@ -1063,6 +1086,7 @@ function readProjectModelUpdatePayload(
     rpm: { limit: rpmLimit },
     tpm: { limit: tpmLimit },
     concurrency: { limit: concurrencyLimit },
+    autoConcurrency: data.has('autoConcurrency'),
     pricing: { inputPerMillion: inputPrice, outputPerMillion: outputPrice },
     capabilities: { image: imageCapability },
     extraBody,
@@ -1651,6 +1675,7 @@ export function ModelFormPage({
       rpm: { limit: rpmLimit },
       tpm: { limit: tpmLimit },
       concurrency: { limit: concurrencyLimit },
+      autoConcurrency: form.has('autoConcurrency'),
       pricing: { inputPerMillion: inputPrice, outputPerMillion: outputPrice },
       capabilities: { image: imageCapability },
       extraBody,
@@ -1742,7 +1767,7 @@ export function ModelFormPage({
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div className="mx-auto w-full max-w-[1440px] px-4 pb-24 pt-6 sm:px-6 lg:px-8" data-testid="model-new-page">
-          <PlatformLoader className="min-h-[560px]" />
+          <DetailPageSkeleton />
         </div>
       </Main>
     );
@@ -1778,7 +1803,7 @@ export function ModelFormPage({
           <div className="flex flex-col items-start gap-2 xl:items-end">
             <div className="flex flex-wrap items-center gap-2">
               <Button asChild variant="outline" size="sm" className="h-9">
-                <Link href={`/models`}>{t('common.cancel')}</Link>
+                <Link href={`/models`}>{isNew ? t('common.cancel') : t('common.back')}</Link>
               </Button>
               {!isNew && isEditable && model.id && (
                 <Button asChild variant="outline" size="sm" className="h-9" title={t('models.action.copyHelp')}>
@@ -1917,6 +1942,7 @@ export function ModelFormPage({
         ) : (
           <form
             key={`${model.id}-${editDraftVersion}`}
+            id="project-model-edit-form"
             ref={editModelFormRef}
             onSubmit={handleEditSubmit}
             onInput={scheduleEditDirtyRefresh}
@@ -1960,30 +1986,6 @@ export function ModelFormPage({
               />
               <QuotaSection mode={mode} useDefaults={useDefaults} model={liveModel} readOnly={readOnly} />
               <PricingSection useDefaults={useDefaults} model={model} readOnly={readOnly} />
-              {isEditable && (
-                <div className="flex items-center justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={!editDirty || updateMutation.isPending}
-                    onClick={resetEditDraft}
-                  >
-                    {t('models.form.cancelChanges')}
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={!editDirty || updateMutation.isPending || editNameTaken}
-                    aria-busy={updateMutation.isPending}
-                  >
-                    {updateMutation.isPending ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Save className="size-4" />
-                    )}
-                    {t('models.form.saveChanges')}
-                  </Button>
-                </div>
-              )}
             </div>
             <aside className="space-y-4">
               <UsagePanel model={liveModel} />
@@ -2040,6 +2042,38 @@ export function ModelFormPage({
                   <Check className="size-4" />
                 )}
                 {t('models.form.saveAndEnable')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!isNew && isEditable && (
+        <div className="fixed bottom-0 left-0 right-0 z-20 border-t bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/75 md:left-[var(--sidebar-width)]">
+          <div className="mx-auto flex max-w-[1440px] justify-end">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!editDirty || updateMutation.isPending}
+                onClick={resetEditDraft}
+              >
+                {t('models.form.cancelChanges')}
+              </Button>
+              <Button
+                type="submit"
+                form="project-model-edit-form"
+                size="sm"
+                disabled={!editDirty || updateMutation.isPending || editNameTaken}
+                aria-busy={updateMutation.isPending}
+              >
+                {updateMutation.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Save className="size-4" />
+                )}
+                {t('models.form.saveChanges')}
               </Button>
             </div>
           </div>

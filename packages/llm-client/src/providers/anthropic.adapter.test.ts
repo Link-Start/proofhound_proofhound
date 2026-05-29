@@ -13,6 +13,7 @@ function baseArgs(providerModelId: string, extraBody: Record<string, unknown> = 
       rpmLimit: 60,
       tpmLimit: 1000,
       concurrencyLimit: 2,
+      autoConcurrency: false,
       inputTokenPricePerMillion: 0,
       outputTokenPricePerMillion: 0,
       extraBody,

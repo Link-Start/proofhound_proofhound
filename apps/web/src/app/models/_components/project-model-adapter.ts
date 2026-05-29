@@ -60,7 +60,9 @@ export function dtoToProjectModel(dto: ProjectModelListItemDto): ProjectModel {
       limitInput: String(dto.concurrency.limit),
       usage: dto.concurrency.usage,
       current: String(dto.concurrency.current),
+      effective: dto.concurrency.effective != null ? String(dto.concurrency.effective) : undefined,
     },
+    autoConcurrency: dto.autoConcurrency,
     pricing: {
       inputPerMillion: dto.pricing.inputPerMillion.toFixed(2),
       outputPerMillion: dto.pricing.outputPerMillion.toFixed(2),

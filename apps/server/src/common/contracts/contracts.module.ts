@@ -25,6 +25,11 @@ import { ProjectContextResolver } from './project-context.resolver';
     { provide: ActorContextResolver, useClass: LocalActorContextResolver },
     { provide: McpAuthResolver, useClass: LocalMcpAuthResolver },
   ],
-  exports: [ProjectContextResolver, ActorContextResolver, McpAuthResolver, LocalUserTokenVerifier],
+  exports: [
+    ProjectContextResolver,
+    ActorContextResolver,
+    McpAuthResolver,
+    LocalUserTokenVerifier,
+  ],
 })
 export class ContractsModule {}

@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     rpmLimit: env.MODEL_PROBE_RPM_LIMIT,
     tpmLimit: env.MODEL_PROBE_TPM_LIMIT,
     concurrencyLimit: env.MODEL_PROBE_CONCURRENCY_LIMIT,
+    autoConcurrency: false,
     inputTokenPricePerMillion: env.MODEL_PROBE_INPUT_PRICE_PER_MILLION,
     outputTokenPricePerMillion: env.MODEL_PROBE_OUTPUT_PRICE_PER_MILLION,
   };

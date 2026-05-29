@@ -124,6 +124,14 @@ export const datasetSamplesListResponseSchema = z.object({
 });
 export type DatasetSamplesListResponseDto = z.infer<typeof datasetSamplesListResponseSchema>;
 
+// Detail page samples are server-paginated (datasets can be very large). `search` matches across the sample JSON.
+export const datasetSamplesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  search: z.string().trim().max(200).optional(),
+});
+export type DatasetSamplesQueryDto = z.infer<typeof datasetSamplesQuerySchema>;
+
 export const deleteDatasetSamplesSchema = z.object({
   sampleIds: z.array(z.string().uuid()).min(1).max(5000),
 });

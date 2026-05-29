@@ -48,6 +48,7 @@ import {
   useProbeQuickStartExistingModel,
   useQuickStartModelOptions,
 } from '@/hooks/quick-start';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { buildProviderTypeOptions } from '@/lib/model-provider-type';
@@ -607,6 +608,7 @@ function readDraftModelPayload(
       rpm: { limit: rpmLimit },
       tpm: { limit: tpmLimit },
       concurrency: { limit: concurrencyLimit },
+      autoConcurrency: true,
       pricing: { inputPerMillion: inputPrice, outputPerMillion: outputPrice },
       capabilities: { image: draft.imageCapability },
       extraBody: {},
@@ -695,7 +697,6 @@ function getDefaultOptimizationName(language: PromptLanguage, stem: string): str
 
 function getParseErrorKey(parseError: string | null): TranslationKey {
   if (parseError === 'unsupported_file_type') return 'datasets.upload.unsupportedFile';
-  if (parseError === 'too_many_samples') return 'datasets.upload.tooManySamples';
   return 'datasets.upload.parseFailed';
 }
 
@@ -767,7 +768,8 @@ export default function QuickStartPage() {
   const canSubmit = datasetReady && configReady && !createQuickStart.isPending;
   const parseErrorKey = getParseErrorKey(parseError);
 
-  if (modelOptionsQuery.isLoading && !modelOptionsQuery.data) {
+  const optionsLoading = useDelayedLoading(modelOptionsQuery.isLoading && !modelOptionsQuery.data);
+  if (optionsLoading) {
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div className="mx-auto w-full max-w-[1360px] px-4 py-6 pb-28 sm:px-6 lg:px-8" data-testid="quick-start-page">

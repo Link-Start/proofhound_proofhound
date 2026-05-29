@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { type RateLimiter, type UsageSnapshot } from '@proofhound/limiter';
+import { deriveEffectiveConcurrency, type RateLimiter, type UsageSnapshot } from '@proofhound/limiter';
 import { testModelConnectivity, type ModelInvocationConfig } from '@proofhound/llm-client';
 import { createLogger } from '@proofhound/logger';
 import type {
@@ -140,6 +140,7 @@ export class ModelService {
       rpmLimit: dto.rpm.limit,
       tpmLimit: dto.tpm.limit,
       concurrencyLimit: dto.concurrency.limit,
+      autoConcurrency: dto.autoConcurrency,
       inputTokenPricePerMillion: String(dto.pricing.inputPerMillion),
       outputTokenPricePerMillion: String(dto.pricing.outputPerMillion),
       extraBody: dto.extraBody ?? {},
@@ -176,6 +177,7 @@ export class ModelService {
       rpmLimit: dto.rpm.limit,
       tpmLimit: dto.tpm.limit,
       concurrencyLimit: dto.concurrency.limit,
+      autoConcurrency: dto.autoConcurrency,
       inputTokenPricePerMillion: String(dto.pricing.inputPerMillion),
       outputTokenPricePerMillion: String(dto.pricing.outputPerMillion),
       extraBody: dto.extraBody ?? {},
@@ -256,6 +258,7 @@ export class ModelService {
       rpmLimit: sourceRow.rpmLimit,
       tpmLimit: sourceRow.tpmLimit,
       concurrencyLimit: sourceRow.concurrencyLimit,
+      autoConcurrency: sourceRow.autoConcurrency,
       inputTokenPricePerMillion: sourceRow.inputTokenPricePerMillion,
       outputTokenPricePerMillion: sourceRow.outputTokenPricePerMillion,
       capabilities: sourceRow.capabilities,
@@ -397,6 +400,7 @@ export class ModelService {
       rpmLimit: dto.rpm.limit,
       tpmLimit: dto.tpm.limit,
       concurrencyLimit: dto.concurrency.limit,
+      autoConcurrency: dto.autoConcurrency,
       inputTokenPricePerMillion: String(dto.pricing.inputPerMillion),
       outputTokenPricePerMillion: String(dto.pricing.outputPerMillion),
       capabilities: dto.capabilities,
@@ -423,6 +427,7 @@ export class ModelService {
     if (dto.rpm?.limit !== undefined) patch.rpmLimit = dto.rpm.limit;
     if (dto.tpm?.limit !== undefined) patch.tpmLimit = dto.tpm.limit;
     if (dto.concurrency?.limit !== undefined) patch.concurrencyLimit = dto.concurrency.limit;
+    if (dto.autoConcurrency !== undefined) patch.autoConcurrency = dto.autoConcurrency;
     if (dto.pricing?.inputPerMillion !== undefined)
       patch.inputTokenPricePerMillion = String(dto.pricing.inputPerMillion);
     if (dto.pricing?.outputPerMillion !== undefined)
@@ -477,6 +482,7 @@ export class ModelService {
       rpmLimit: row.rpmLimit,
       tpmLimit: row.tpmLimit,
       concurrencyLimit: row.concurrencyLimit,
+      autoConcurrency: row.autoConcurrency,
       inputTokenPricePerMillion: row.inputTokenPricePerMillion,
       outputTokenPricePerMillion: row.outputTokenPricePerMillion,
       extraBody: this.toExtraBody(row.extraBody),
@@ -529,7 +535,8 @@ export class ModelService {
       lastProbeError: row.lastProbeError ?? null,
       rpm: this.toModelLimit(row.rpmLimit, 'rpm', usage),
       tpm: this.toModelLimit(row.tpmLimit, 'tpm', usage),
-      concurrency: this.toModelLimit(row.concurrencyLimit, 'concurrency', usage),
+      concurrency: this.toConcurrencyLimit(row, usage),
+      autoConcurrency: row.autoConcurrency,
       pricing: this.toModelPricing(row),
       capabilities: this.toModelCapabilities(row.capabilities),
       extraBody: this.toExtraBody(row.extraBody),
@@ -574,6 +581,25 @@ export class ModelService {
       : 0;
     const ratio = limit > 0 ? Math.min(100, Math.round((current / limit) * 100)) : 0;
     return { limit, usage: ratio, current };
+  }
+
+  // Concurrency display: surface the system-derived effective cap when autoConcurrency is on and the
+  // model has accumulated autostate (latency EWMA). See docs/specs/21-models.md §6.1
+  private toConcurrencyLimit(
+    row: ProjectVisibleModelRow,
+    usage: UsageSnapshot | null,
+  ): ModelLimitDto & { effective?: number } {
+    const base = this.toModelLimit(row.concurrencyLimit, 'concurrency', usage);
+    if (!row.autoConcurrency || !usage || usage.latencyEwmaMs === undefined) return base;
+    const effective = deriveEffectiveConcurrency({
+      rpmLimit: row.rpmLimit,
+      tpmLimit: row.tpmLimit,
+      ceiling: row.concurrencyLimit,
+      latencyEwmaMs: usage.latencyEwmaMs,
+      tokensEwma: usage.tokensEwma ?? 1,
+      backoffFactor: usage.backoffFactor ?? 1,
+    });
+    return { ...base, effective };
   }
 
   private toModelPricing(row: ModelRow): ModelPricingDto {
@@ -641,6 +667,7 @@ export class ModelService {
       'rpmLimit',
       'tpmLimit',
       'concurrencyLimit',
+      'autoConcurrency',
       'inputPerMillion',
       'outputPerMillion',
       'references',
@@ -658,6 +685,7 @@ export class ModelService {
         r.rpm.limit,
         r.tpm.limit,
         r.concurrency.limit,
+        r.autoConcurrency,
         r.pricing.inputPerMillion,
         r.pricing.outputPerMillion,
         r.references,

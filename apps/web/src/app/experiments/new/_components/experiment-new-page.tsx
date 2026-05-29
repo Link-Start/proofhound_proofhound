@@ -8,12 +8,12 @@ import { AlertTriangle, Calculator, Check, ChevronDown, Link2, Loader2, Play, Se
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
 import { PromptVersionPickerRow, PromptVersionPickerTag } from '@/components/prompt-version-picker-row';
 import { useDatasets } from '@/hooks/dataset';
 import { useCreateExperiment, useExperiments } from '@/hooks/experiment';
 import { useProjectModels } from '@/hooks/model';
 import { usePrompt, usePrompts } from '@/hooks/prompt';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { isProjectNameTaken } from '@/lib/project-name';
@@ -577,6 +577,10 @@ export function ExperimentNewPage(props: ExperimentNewPageProps) {
     [prompts, selectedPromptListId],
   );
   const promptDetailQuery = usePrompt(projectId, selectedPromptSummary?.id ?? '');
+  const promptsLoading = useDelayedLoading(promptsQuery.isLoading);
+  const promptDetailLoading = useDelayedLoading(promptDetailQuery.isLoading);
+  const datasetsLoading = useDelayedLoading(datasetsQuery.isLoading);
+  const modelsLoading = useDelayedLoading(modelsQuery.isLoading);
   const promptVersions = useMemo(
     () =>
       promptDetailQuery.data
@@ -823,24 +827,6 @@ export function ExperimentNewPage(props: ExperimentNewPageProps) {
     });
   };
 
-  const isInitialLoading =
-    (promptsQuery.isLoading && !promptsQuery.data) ||
-    (datasetsQuery.isLoading && !datasetsQuery.data) ||
-    (modelsQuery.isLoading && !modelsQuery.data);
-
-  if (isInitialLoading) {
-    return (
-      <Main className="gap-0 bg-muted/35 p-0">
-        <div
-          className="mx-auto flex min-h-[520px] w-full max-w-[1760px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8"
-          data-testid="experiment-new-page"
-        >
-          <PlatformLoader />
-        </div>
-      </Main>
-    );
-  }
-
   return (
     <Main className="gap-0 bg-muted/35 p-0">
       <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="experiment-new-page">
@@ -922,7 +908,7 @@ export function ExperimentNewPage(props: ExperimentNewPageProps) {
                   <div className="border-b px-3 py-2 font-mono text-[10.5px] uppercase tracking-wide text-muted-foreground">
                     {t('experiments.new.section.promptColumn')}
                   </div>
-                  {promptsQuery.isLoading ? (
+                  {promptsLoading ? (
                     <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">
                       {t('experiments.new.loading.prompts')}
                     </div>
@@ -954,7 +940,7 @@ export function ExperimentNewPage(props: ExperimentNewPageProps) {
                   <div className="border-b px-3 py-2 font-mono text-[10.5px] uppercase tracking-wide text-muted-foreground">
                     {t('experiments.new.section.versionColumn')}
                   </div>
-                  {promptDetailQuery.isLoading ? (
+                  {promptDetailLoading ? (
                     <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">
                       {t('experiments.new.loading.versions')}
                     </div>
@@ -1031,7 +1017,7 @@ export function ExperimentNewPage(props: ExperimentNewPageProps) {
                 </div>
               )}
               <div className="px-2 py-1">
-                {datasetsQuery.isLoading ? (
+                {datasetsLoading ? (
                   <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">
                     {t('experiments.new.loading.datasets')}
                   </div>
@@ -1079,7 +1065,7 @@ export function ExperimentNewPage(props: ExperimentNewPageProps) {
                 />
               </div>
               <div>
-                {modelsQuery.isLoading ? (
+                {modelsLoading ? (
                   <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">
                     {t('experiments.new.loading.models')}
                   </div>

@@ -42,8 +42,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useOptimization, useControlOptimization } from '@/hooks/optimization';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from '@/hooks/use-auto-refresh';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
@@ -2539,14 +2540,15 @@ export function OptimizationDetailPage({
     return items;
   }, [detail, timelineOrder]);
 
-  if (detailQuery.isLoading) {
+  const detailLoading = useDelayedLoading(detailQuery.isLoading);
+  if (detailLoading) {
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div
           className="mx-auto w-full max-w-[1280px] px-6 py-12"
           data-testid="optimization-detail-loading"
         >
-          <PlatformLoader className="min-h-[560px]" />
+          <DetailPageSkeleton />
         </div>
       </Main>
     );

@@ -55,6 +55,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
 import {
   Table,
@@ -67,6 +68,7 @@ import {
   type TableColumn,
 } from '@/components/ui/table';
 import { useAnnotationTaskList } from '@/hooks/annotation';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useProjectModels } from '@/hooks/model';
 import { useProductionReleaseHistory, useStopProductionRelease } from '@/hooks/production-release';
 import { useProjectMonitoringStats, useProjectMonitoringTimeseries } from '@/hooks/project-monitoring';
@@ -523,10 +525,13 @@ export function ReleaseLineDetailPage({ projectId, releaseLineId }: { projectId:
     [pathname, router, searchParams],
   );
 
-  if (listQuery.isLoading) {
+  const detailLoading = useDelayedLoading(listQuery.isLoading);
+  if (detailLoading) {
     return (
       <Main fixed className="bg-muted/35">
-        <PlatformLoader className="min-h-[560px]" />
+        <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8">
+          <DetailPageSkeleton />
+        </div>
       </Main>
     );
   }
@@ -1287,6 +1292,7 @@ function ResultsPane({
     sourceIds.length > 0,
   );
   const rows = resultsQuery.data?.data ?? [];
+  const resultsLoading = useDelayedLoading(resultsQuery.isLoading);
   const total = resultsQuery.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const from = total === 0 ? 0 : pageIndex * pageSize + 1;
@@ -1375,7 +1381,7 @@ function ResultsPane({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {resultsQuery.isLoading && rows.length === 0 ? (
+          {resultsLoading && rows.length === 0 ? (
             <TableEmpty>
               <PlatformLoader className="py-1" size="sm" />
             </TableEmpty>
@@ -1755,6 +1761,7 @@ function ReleaseRunResultVariant({ value }: { value: ReleaseRunResultListItemDto
 function QualityMetricsPane({ projectId, line }: { projectId: string; line: ReleaseLineView }) {
   const { t } = useI18n();
   const annotationTasksQuery = useAnnotationTaskList(projectId);
+  const annotationTasksLoading = useDelayedLoading(annotationTasksQuery.isLoading);
   const lineTasks = useMemo(
     () => (annotationTasksQuery.data?.data ?? []).filter((task) => task.releaseLineId === line.id),
     [annotationTasksQuery.data, line.id],
@@ -1780,7 +1787,7 @@ function QualityMetricsPane({ projectId, line }: { projectId: string; line: Rele
         </Button>
       </div>
 
-      {annotationTasksQuery.isLoading && lineTasks.length === 0 ? (
+      {annotationTasksLoading && lineTasks.length === 0 ? (
         <PlatformLoader className="rounded-lg border bg-card py-10" size="sm" />
       ) : null}
 

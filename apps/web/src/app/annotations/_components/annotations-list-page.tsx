@@ -9,7 +9,6 @@ import { AnnotationClaimDialog } from '@/components/annotations/annotation-claim
 import { Main } from '@/components/layout/main';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PlatformLoader } from '@/components/ui/platform-loader';
 import {
   Table,
   TableBody,
@@ -18,10 +17,12 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableSkeletonRows,
   type TableColumn,
 } from '@/components/ui/table';
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { useAnnotationTaskList, useClaimAnnotationSamples } from '@/hooks/annotation';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from '@/hooks/use-auto-refresh';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -64,6 +65,7 @@ export function AnnotationsListPage({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
   const tasksQuery = useAnnotationTaskList(projectId);
+  const tasksLoading = useDelayedLoading(tasksQuery.isLoading);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<AnnotationTaskFilter>('all');
   const [claimTarget, setClaimTarget] = useState<AnnotationTaskView | null>(null);
@@ -203,10 +205,8 @@ export function AnnotationsListPage({ projectId }: { projectId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tasksQuery.isLoading ? (
-                <TableEmpty>
-                  <PlatformLoader className="py-1" size="sm" />
-                </TableEmpty>
+              {tasksLoading ? (
+                <TableSkeletonRows />
               ) : filtered.length === 0 ? (
                 <TableEmpty>{t('annotations.empty')}</TableEmpty>
               ) : (

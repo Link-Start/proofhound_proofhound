@@ -44,6 +44,9 @@ deps.svg
 .eslintcache
 .prettiercache
 
+# Local full-size datasets
+datasets/yelp_polarity/yelp_polarity.jsonl
+
 # Claude Code local task state
 .claude/
 .calude/

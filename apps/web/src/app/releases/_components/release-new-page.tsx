@@ -24,7 +24,6 @@ import {
 import { AlertCircle, Check, Filter, ImageIcon, Loader2, Plus, Search, X } from 'lucide-react';
 import { Main } from '@/components/layout/main';
 import { ModalityIconGroup, type ModalityKind } from '@/components/ui/modality-icon';
-import { PlatformLoader } from '@/components/ui/platform-loader';
 import { PromptVersionPickerRow, PromptVersionPickerTag } from '@/components/prompt-version-picker-row';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,6 +33,7 @@ import { useCreateCanaryRelease, useStartCanaryRelease } from '@/hooks/canary-re
 import { useProjectModels } from '@/hooks/model';
 import { useCreateProductionRelease } from '@/hooks/production-release';
 import { usePrompt, usePrompts } from '@/hooks/prompt';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useReleaseLineList } from '@/hooks/release-line';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
@@ -1436,6 +1436,7 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
     [effectivePromptId, prompts],
   );
   const selectedPromptQuery = usePrompt(projectId, selectedPrompt?.id ?? '');
+  const selectedPromptLoading = useDelayedLoading(selectedPromptQuery.isLoading);
   const promptVersions = useMemo(
     () =>
       selectedPrompt && selectedPromptQuery.data
@@ -1766,26 +1767,6 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
     });
   };
 
-  const isInitialLoading =
-    (promptsQuery.isLoading && !promptsQuery.data) ||
-    (modelsQuery.isLoading && !modelsQuery.data) ||
-    (inputConnectorsQuery.isLoading && !inputConnectorsQuery.data) ||
-    (outputConnectorsQuery.isLoading && !outputConnectorsQuery.data) ||
-    (isCanaryLineMode && releaseLinesQuery.isLoading);
-
-  if (isInitialLoading) {
-    return (
-      <Main fixed className="gap-0 overflow-auto bg-muted/35">
-        <div
-          className="mx-auto flex min-h-[520px] w-full max-w-[1120px] items-center justify-center px-4 py-6"
-          data-testid="release-new-page"
-        >
-          <PlatformLoader />
-        </div>
-      </Main>
-    );
-  }
-
   return (
     <Main fixed className="gap-5 overflow-auto bg-muted/35 pb-24">
       <form
@@ -1895,7 +1876,7 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
                           {t('canaryReleases.new.versionColumn')}
                         </div>
                         <div className="max-h-[340px] overflow-y-auto overflow-x-hidden">
-                          {selectedPromptQuery.isLoading ? (
+                          {selectedPromptLoading ? (
                             <PickerEmpty>{t('canaryReleases.new.versionLoading')}</PickerEmpty>
                           ) : selectedPromptQuery.isError ? (
                             <PickerEmpty>{t('canaryReleases.new.versionEmpty')}</PickerEmpty>
@@ -1948,7 +1929,7 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
                             {t('canaryReleases.new.versionColumn')}
                           </div>
                           <div className="max-h-[340px] overflow-y-auto overflow-x-hidden">
-                            {selectedPromptQuery.isLoading ? (
+                            {selectedPromptLoading ? (
                               <PickerEmpty>{t('canaryReleases.new.versionLoading')}</PickerEmpty>
                             ) : selectedPromptQuery.isError ? (
                               <PickerEmpty>{t('canaryReleases.new.versionEmpty')}</PickerEmpty>

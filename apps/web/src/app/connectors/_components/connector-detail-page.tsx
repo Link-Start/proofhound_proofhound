@@ -16,7 +16,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { SlidingViewToggle } from '@/components/ui/sliding-view-toggle';
 import {
   Table,
@@ -39,6 +39,7 @@ import {
   useRevokeConnectorWebhookToken,
   useUpdateConnector,
 } from '@/hooks/connector';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { useI18n, type Language, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
@@ -263,14 +264,15 @@ export function ConnectorDetailPage({ projectId, connectorId }: { projectId: str
   }, [generatedTokenResult, visibleTokenIds, webhookApiPath]);
   const asyncQueryResponseExample = useMemo(() => buildWebhookAsyncQueryResponseExample(language), [language]);
 
-  if (canUseApi && query.isLoading) {
+  const detailLoading = useDelayedLoading(canUseApi && query.isLoading);
+  if (detailLoading) {
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div
           className="mx-auto w-full max-w-[1120px] px-4 py-6 sm:px-6 lg:px-8"
           data-testid="project-connector-detail-page"
         >
-          <PlatformLoader className="min-h-[560px]" />
+          <DetailPageSkeleton />
         </div>
       </Main>
     );

@@ -42,13 +42,17 @@ function buildSampleTableColumns(fields: DatasetField[]): TableColumn[] {
 }
 
 export interface DatasetSamplesTableProps {
+  // The current server page of rows (already paginated). The table no longer slices client-side.
   data: DatasetSample[];
   fields: DatasetField[];
   selectedSampleId: string;
   selectedIds: string[];
   headState: 'off' | 'some' | 'all';
+  total: number;
   pageIndex: number;
+  pageSize: number;
   onPageIndexChange: (index: number) => void;
+  onPageSizeChange: (size: number) => void;
   onSelectSample: (sampleId: string) => void;
   onToggleSelected: (sampleId: string) => void;
   onToggleAll: () => void;
@@ -62,8 +66,11 @@ export function DatasetSamplesTable({
   selectedSampleId,
   selectedIds,
   headState,
+  total,
   pageIndex,
+  pageSize,
   onPageIndexChange,
+  onPageSizeChange,
   onSelectSample,
   onToggleSelected,
   onToggleAll,
@@ -71,17 +78,13 @@ export function DatasetSamplesTable({
   renderFieldHeaderTrailing,
 }: DatasetSamplesTableProps) {
   const { t } = useI18n();
-  const [pageSize, setPageSize] = useState<number>(10);
   const [preview, setPreview] = useState<{ field: string; value: string } | null>(null);
 
   const columns = useMemo(() => buildSampleTableColumns(fields), [fields]);
 
-  const pageCount = Math.max(1, Math.ceil(data.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
-  const pagedSamples = useMemo(
-    () => data.slice(safePageIndex * pageSize, (safePageIndex + 1) * pageSize),
-    [data, safePageIndex, pageSize],
-  );
+  const pagedSamples = data;
 
   return (
     <div data-testid="dataset-samples-table">
@@ -206,7 +209,7 @@ export function DatasetSamplesTable({
         nextPageLabel={t('common.nextPage')}
         onPageChange={onPageIndexChange}
         onPageSizeChange={(size) => {
-          setPageSize(size);
+          onPageSizeChange(size);
           onPageIndexChange(0);
         }}
       />

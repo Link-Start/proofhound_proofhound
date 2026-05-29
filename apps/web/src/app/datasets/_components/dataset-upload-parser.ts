@@ -2,7 +2,8 @@ import type { DatasetFieldRole } from '@proofhound/shared';
 
 export const FORMAT_CHIPS = ['.csv', '.tsv', '.jsonl', '.json', '.zip'] as const;
 export const PREVIEW_LIMIT = 5;
-export const MAX_UPLOAD_SAMPLES = 5000;
+// Bytes read from the head of a large file to build a preview + field mapping without loading the whole file.
+export const PREVIEW_BYTES = 256 * 1024;
 
 type DatasetFileExtension = (typeof FORMAT_CHIPS)[number];
 type UploadFile = File & { proofhoundRelativePath?: string };
@@ -27,7 +28,9 @@ interface ZipEntry {
 
 export function getUploadFilePath(file: File) {
   const uploadFile = file as UploadFile;
-  return uploadFile.proofhoundRelativePath ?? file.webkitRelativePath ?? file.name;
+  // Use `||` not `??`: webkitRelativePath is an empty string (not nullish) for non-directory selections,
+  // so it must fall through to file.name rather than yielding "".
+  return uploadFile.proofhoundRelativePath || file.webkitRelativePath || file.name;
 }
 
 export function getDisplayValue(value: unknown) {
@@ -237,12 +240,57 @@ function isImageReferenceString(value: string): boolean {
   return /^https?:\/\//iu.test(trimmed) || /^data:image\//iu.test(trimmed);
 }
 
+function parseJsonlLine(line: string, samples: Array<Record<string, unknown>>) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+
+  samples.push(JSON.parse(trimmed) as Record<string, unknown>);
+}
+
 function parseJsonl(text: string): Array<Record<string, unknown>> {
-  return text
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const samples: Array<Record<string, unknown>> = [];
+  for (const line of text.split(/\r?\n/u)) {
+    parseJsonlLine(line, samples);
+  }
+  return samples;
+}
+
+async function parseJsonlFile(file: File): Promise<Array<Record<string, unknown>>> {
+  if (typeof file.stream !== 'function') {
+    return parseJsonl(await file.text());
+  }
+
+  const reader = file.stream().getReader();
+  const decoder = new TextDecoder('utf-8');
+  const samples: Array<Record<string, unknown>> = [];
+  let pendingText = '';
+
+  const consumeCompleteLines = () => {
+    const lines = pendingText.split(/\r?\n/u);
+    pendingText = lines.pop() ?? '';
+    for (const line of lines) {
+      parseJsonlLine(line, samples);
+    }
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      pendingText += decoder.decode(value, { stream: true });
+      consumeCompleteLines();
+    }
+
+    pendingText += decoder.decode();
+    parseJsonlLine(pendingText, samples);
+    return samples;
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function parseJsonArray(text: string): Array<Record<string, unknown>> {
@@ -447,6 +495,100 @@ async function parseZipDatasetFile(file: File): Promise<Array<Record<string, unk
   return inlineZipImages(samples, dataEntry, buffer, entries);
 }
 
+// Streams a JSONL file row-by-row, yielding fixed-size batches, so large files never fully enter memory.
+// Used by the large-file import runner (see dataset-import-runner.ts).
+export async function* streamJsonlBatches(
+  file: File,
+  batchSize: number,
+  onBytes?: (readBytes: number, totalBytes: number) => void,
+  signal?: AbortSignal,
+): AsyncGenerator<Array<Record<string, unknown>>> {
+  const total = file.size;
+  let readBytes = 0;
+  let batch: Array<Record<string, unknown>> = [];
+
+  const pushLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      batch.push(parsed as Record<string, unknown>);
+    }
+  };
+
+  if (typeof file.stream !== 'function') {
+    for (const line of (await file.text()).split(/\r?\n/u)) {
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      pushLine(line);
+      if (batch.length >= batchSize) {
+        yield batch;
+        batch = [];
+      }
+    }
+    if (batch.length > 0) yield batch;
+    return;
+  }
+
+  const reader = file.stream().getReader();
+  const decoder = new TextDecoder('utf-8');
+  let pending = '';
+  try {
+    for (;;) {
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      const { done, value } = await reader.read();
+      if (done) break;
+      readBytes += value.byteLength;
+      onBytes?.(readBytes, total);
+      pending += decoder.decode(value, { stream: true });
+      const lines = pending.split(/\r?\n/u);
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        pushLine(line);
+        if (batch.length >= batchSize) {
+          yield batch;
+          batch = [];
+        }
+      }
+    }
+    pending += decoder.decode();
+    pushLine(pending);
+    if (batch.length > 0) yield batch;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export function isJsonlFile(file: File): boolean {
+  return getExtension(file.name) === '.jsonl';
+}
+
+// Reads only the head of a (large) JSONL file to produce columns + a few preview rows, without loading the whole file.
+// The trailing partial line is dropped when the file exceeds the slice.
+export async function parseJsonlPrefix(file: File, maxBytes = PREVIEW_BYTES): Promise<ParsedDatasetFile> {
+  const text = await file.slice(0, maxBytes).text();
+  const lines = text.split(/\r?\n/u);
+  if (file.size > maxBytes && lines.length > 1) lines.pop();
+
+  const samples: Array<Record<string, unknown>> = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        samples.push(parsed as Record<string, unknown>);
+      }
+    } catch {
+      // Skip unparseable (possibly truncated) lines in the preview prefix.
+    }
+  }
+
+  if (samples.length === 0) {
+    throw new Error('empty_file');
+  }
+  return { columns: Object.keys(samples[0] ?? {}), samples };
+}
+
 export async function parseDatasetFile(file: File): Promise<ParsedDatasetFile> {
   const extension = getExtension(file.name);
   if (!FORMAT_CHIPS.includes(extension as DatasetFileExtension)) {
@@ -454,15 +596,15 @@ export async function parseDatasetFile(file: File): Promise<ParsedDatasetFile> {
   }
 
   const samples =
-    extension === '.zip' ? await parseZipDatasetFile(file) : parseSamplesByExtension(extension, await file.text());
+    extension === '.zip'
+      ? await parseZipDatasetFile(file)
+      : extension === '.jsonl'
+        ? await parseJsonlFile(file)
+        : parseSamplesByExtension(extension, await file.text());
 
   const normalizedSamples = samples.filter((sample) => sample && typeof sample === 'object' && !Array.isArray(sample));
   if (normalizedSamples.length === 0) {
     throw new Error('empty_file');
-  }
-
-  if (normalizedSamples.length > MAX_UPLOAD_SAMPLES) {
-    throw new Error('too_many_samples');
   }
 
   return {

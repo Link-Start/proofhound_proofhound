@@ -36,6 +36,7 @@ export function makeAnalysisModel(overrides: Partial<ModelInvocationConfig> = {}
     rpmLimit: 1000,
     tpmLimit: 1_000_000,
     concurrencyLimit: 10,
+    autoConcurrency: false,
     inputTokenPricePerMillion: 1,
     outputTokenPricePerMillion: 5,
     ...overrides,

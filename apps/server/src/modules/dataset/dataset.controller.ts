@@ -18,17 +18,18 @@ import {
   createDatasetSchema,
   datasetExportFormatSchema,
   datasetIdParamSchema,
+  datasetSamplesQuerySchema,
   deleteDatasetSamplesSchema,
   updateDatasetMetadataSchema,
 } from '@proofhound/shared';
 import type { Response } from 'express';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { DatasetService } from './dataset.service';
 
 @Controller('datasets')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class DatasetController {
   constructor(private readonly datasetService: DatasetService) {}
 
@@ -40,12 +41,19 @@ export class DatasetController {
   @Get(':datasetId/samples')
   async listDatasetSamples(
     @Param('datasetId') datasetId: string,
+    @Query() rawQuery: unknown,
     @CurrentUser() actor: CurrentUserPayload,
   ) {
+    const parse = datasetSamplesQuerySchema.safeParse(rawQuery);
+    if (!parse.success) {
+      throw new BadRequestException(parse.error.issues);
+    }
+
     return this.datasetService.listDatasetSamples(
       resolveProjectContext(actor).projectId,
       this.parseDatasetId(datasetId),
       actor,
+      parse.data,
     );
   }
 

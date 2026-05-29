@@ -18,7 +18,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { annotationTasks } from '../ph_releases/annotation-tasks';
 import { releaseVariants } from '../ph_releases/release-lines';
-import { projects } from '../ph_core/index';
+import { projects, tokens } from '../ph_core/index';
 import { phRuns } from './_schema';
 import { optimizations } from './experiments';
 
@@ -91,6 +91,10 @@ export const runResults = phRuns.table(
     attempt: integer('attempt').notNull().default(1),
     dbosWorkflowId: text('dbos_workflow_id'),
     bullmqJobId: text('bullmq_job_id'),
+    // Webhook-entry attribution: only filled when the call was triggered by a webhook token
+    // (HTTP / MCP entries leave it NULL). ON DELETE SET NULL keeps run_result audit rows after token revocation.
+    // See docs/specs/08-saas-adapter-boundary.md §3.4 / §5.
+    webhookTokenId: uuid('webhook_token_id').references((): AnyPgColumn => tokens.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -113,6 +117,9 @@ export const runResults = phRuns.table(
       .where(sql`${t.bullmqJobId} IS NOT NULL`),
     index('idx_run_results_prompt_version').on(t.promptVersionId, t.createdAt),
     index('idx_run_results_id_lookup').on(t.id),
+    index('idx_run_results_webhook_token')
+      .on(t.webhookTokenId, t.createdAt)
+      .where(sql`${t.webhookTokenId} IS NOT NULL`),
   ],
 );
 

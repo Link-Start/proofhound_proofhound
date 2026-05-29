@@ -6,6 +6,7 @@ export * from './dto/model.dto';
 export * from './dto/connector.dto';
 export * from './dto/token.dto';
 export * from './dto/dataset.dto';
+export * from './dto/dataset-import.dto';
 export * from './dto/dataset-modality';
 export * from './dto/prompt.dto';
 export * from './dto/experiment.dto';

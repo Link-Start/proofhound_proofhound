@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { OrchestrationModule } from '../../infrastructure/orchestration/orchestration.module';
 import { ModelModule } from '../model/model.module';
@@ -20,7 +19,6 @@ import { ExperimentWorkflowRegistrar } from './experiment.workflow';
     ExperimentWorkflowRegistrar,
     ExperimentLauncher,
     ExperimentRecoveryService,
-    LocalActorGuard,
   ],
   exports: [ExperimentService, ExperimentLauncher, ExperimentRepository, ExperimentWorkflowRegistrar],
 })

@@ -1,11 +1,11 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { createQuickStartSchema, modelIdParamSchema, probeQuickStartDraftModelSchema } from '@proofhound/shared';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { QuickStartService } from './quick-start.service';
 
 @Controller('quick-start')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class QuickStartController {
   constructor(private readonly quickStart: QuickStartService) {}
 

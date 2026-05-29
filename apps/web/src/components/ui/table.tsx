@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useMemo, type CSSProperties, type ReactNode } from 'react';
 
+import { Skeleton } from '@/components/ui/skeleton';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 
@@ -287,5 +288,27 @@ export function TableEmpty({ children, className }: TableEmptyProps) {
         {children ?? t('common.table.empty')}
       </td>
     </tr>
+  );
+}
+
+export function TableSkeletonRows({ rows = 6 }: { rows?: number }) {
+  const layout = useTableLayout('TableSkeletonRows');
+  const colSpan = layout.columns.length;
+
+  return (
+    <>
+      {Array.from({ length: rows }).map((_, index) => (
+        <tr key={index} className="border-b border-border/60 last:border-b-0" aria-hidden="true">
+          <td colSpan={colSpan} className="px-3 py-3">
+            <div className="flex items-center gap-4">
+              <Skeleton className="h-4 w-full max-w-[220px]" />
+              <Skeleton className="hidden h-4 w-24 sm:block" />
+              <Skeleton className="hidden h-4 w-20 lg:block" />
+              <Skeleton className="ml-auto h-6 w-12 shrink-0" />
+            </div>
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }

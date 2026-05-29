@@ -7,7 +7,6 @@ import { ChevronRight, Plus, Search } from 'lucide-react';
 import { Main } from '@/components/layout/main';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PlatformLoader } from '@/components/ui/platform-loader';
 import {
   Table,
   TableBody,
@@ -16,11 +15,13 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableSkeletonRows,
   type TableColumn,
 } from '@/components/ui/table';
 import { TableActionIconButton } from '@/components/ui/table-action';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from '@/hooks/use-auto-refresh';
 import { useReleaseLineList } from '@/hooks/release-line';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -62,6 +63,7 @@ export function ReleasesListPage({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
   const releaseLineQuery = useReleaseLineList(projectId);
+  const releaseLineLoading = useDelayedLoading(releaseLineQuery.isLoading);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<ReleaseLineFilter>('all');
 
@@ -177,10 +179,8 @@ export function ReleasesListPage({ projectId }: { projectId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {releaseLineQuery.isLoading ? (
-                <TableEmpty>
-                  <PlatformLoader className="py-1" size="sm" />
-                </TableEmpty>
+              {releaseLineLoading ? (
+                <TableSkeletonRows />
               ) : filtered.length === 0 ? (
                 <TableEmpty>{t('releases.empty')}</TableEmpty>
               ) : (

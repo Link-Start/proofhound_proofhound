@@ -2,14 +2,14 @@ import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } fr
 import { updateReleaseLineRunConfigInputSchema, updateReleaseLineTrafficRatioInputSchema } from '@proofhound/shared';
 import { z } from 'zod';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { ReleaseLineService } from './release-line.service';
 
 const uuidSchema = z.string().uuid();
 
 @Controller('release-lines')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class ReleaseLineController {
   constructor(private readonly service: ReleaseLineService) {}
 

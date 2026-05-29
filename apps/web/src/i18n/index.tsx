@@ -18,6 +18,7 @@ const dictionaries = {
   'zh-CN': {
     'app.description': '提示词生命周期管理工具',
     'common.cancel': '取消',
+    'common.back': '返回',
     'common.apply': '应用',
     'common.confirmDelete': '确认删除',
     'common.create': '创建',
@@ -405,7 +406,7 @@ const dictionaries = {
     'settings.error.copyFailed': '复制失败，请手动复制。',
     'settings.token.title': '令牌',
     'settings.token.description':
-      '同一令牌可用于 HTTP API 调用、MCP channel 与 Webhook 入站鉴权；可按调用方或用途分别创建。Connector 的专属 Webhook Token 在 Connector 详情页单独管理。',
+      '同一令牌可用于 HTTP API 调用与 MCP channel；可按调用方或用途分别创建。Webhook 入站使用各 Connector 详情页独立管理的专属令牌，两套凭证不互通。',
     'settings.token.create': '创建令牌',
     'settings.token.createDialogTitle': '创建令牌',
     'settings.token.createDialogDescription': '请按调用方或用途命名；创建后可立即复制明文。',
@@ -1012,6 +1013,10 @@ const dictionaries = {
     'models.form.rpmLimit': 'RPM 上限',
     'models.form.tpmLimit': 'TPM 上限',
     'models.form.concurrencyLimit': '并发上限',
+    'models.form.concurrencyCeiling': '并发上限',
+    'models.form.autoConcurrency': '自动并发',
+    'models.form.autoConcurrencyHelp':
+      '开启后系统按 RPM/TPM 与实时延迟自动在 1 到上限之间调整并发，并在上游限流时回退；此处填写的值作为并发上限。',
     'models.form.rpmTpmLimitHelp': '填 -1 表示不做限制；其它值必须为正整数。',
     'models.form.concurrencyLimitHelp': '可留空，默认 20；填写时必须为 1-999 的正整数。',
     'models.form.pricing': '单价与费用',
@@ -1757,7 +1762,15 @@ const dictionaries = {
     'datasets.upload.uploadReady': '已解析，等待提交',
     'datasets.upload.unknownType': '未知类型',
     'datasets.upload.unsupportedFile': '暂不支持该文件类型，请上传 CSV、TSV、JSONL、JSON 数组或 ZIP。',
-    'datasets.upload.tooManySamples': '当前单次上传最多 5000 条样本；请上传子集文件或拆分后再导入。',
+    'datasets.upload.streamingFile': '大文件 · 导入时统计样本数',
+    'datasets.upload.previewPrefixOnly': '仅预览文件开头若干行',
+    'datasets.upload.largeRequiresJsonl': '大文件目前仅支持 JSONL；请转换为 JSONL，或拆分到 10MB 以下再上传。',
+    'datasets.upload.importingNoticeTitle': '导入进行中，请勿离开本页',
+    'datasets.upload.importingNoticeBody': '离开、返回、刷新或关闭页面会中断导入并清除已上传到服务器的数据，需要重新上传。',
+    'datasets.upload.leaveConfirmTitle': '离开会导致导入失败',
+    'datasets.upload.leaveConfirmBody': '导入尚未完成。离开本页会中断导入并清除已上传到服务器的数据。确定要离开吗？',
+    'datasets.upload.leaveConfirmStay': '留在本页',
+    'datasets.upload.leaveConfirmLeave': '仍要离开',
     'datasets.upload.parseFailed': '文件解析失败，请检查格式、表头或 JSON 结构。',
     'datasets.upload.noPreview': '选择文件后，这里会显示真实样本预览和字段角色映射。',
     'datasets.upload.readyToImport': '待入库',
@@ -2873,6 +2886,7 @@ const dictionaries = {
   'en-US': {
     'app.description': 'Prompt lifecycle management tool',
     'common.cancel': 'Cancel',
+    'common.back': 'Back',
     'common.apply': 'Apply',
     'common.confirmDelete': 'Confirm delete',
     'common.create': 'Create',
@@ -3271,7 +3285,7 @@ const dictionaries = {
     'settings.error.copyFailed': 'Copy failed. Please copy manually.',
     'settings.token.title': 'Tokens',
     'settings.token.description':
-      'The same token can be used for HTTP API calls, the MCP channel, and inbound Webhook authentication. Create one per caller or use case. Per-connector webhook tokens are managed on each connector detail page.',
+      'The same token can be used for HTTP API calls and the MCP channel. Create one per caller or use case. Inbound webhook authentication uses separate per-connector tokens managed on each connector detail page — the two credential systems are not interchangeable.',
     'settings.token.create': 'Create token',
     'settings.token.createDialogTitle': 'Create token',
     'settings.token.createDialogDescription':
@@ -3905,6 +3919,10 @@ const dictionaries = {
     'models.form.rpmLimit': 'RPM limit',
     'models.form.tpmLimit': 'TPM limit',
     'models.form.concurrencyLimit': 'Concurrency limit',
+    'models.form.concurrencyCeiling': 'Concurrency ceiling',
+    'models.form.autoConcurrency': 'Auto concurrency',
+    'models.form.autoConcurrencyHelp':
+      'When enabled, the system auto-tunes concurrency between 1 and the ceiling from RPM/TPM and live latency, backing off on upstream throttling. The value here is the ceiling.',
     'models.form.rpmTpmLimitHelp': 'Enter -1 for unlimited; any other value must be a positive integer.',
     'models.form.concurrencyLimitHelp':
       'Optional. Blank defaults to 20; entered values must be positive integers from 1 to 999.',
@@ -4687,8 +4705,18 @@ const dictionaries = {
     'datasets.upload.uploadReady': 'Parsed, ready to submit',
     'datasets.upload.unknownType': 'Unknown type',
     'datasets.upload.unsupportedFile': 'Unsupported file type. Upload CSV, TSV, JSONL, a JSON array, or ZIP.',
-    'datasets.upload.tooManySamples':
-      'A single upload currently supports up to 5000 samples. Upload a subset file or split the dataset.',
+    'datasets.upload.streamingFile': 'Large file · sample count tallied while importing',
+    'datasets.upload.previewPrefixOnly': 'Preview of the first rows only',
+    'datasets.upload.largeRequiresJsonl':
+      'Large files currently support JSONL only. Convert to JSONL, or split below 10MB before uploading.',
+    'datasets.upload.importingNoticeTitle': 'Import in progress — do not leave this page',
+    'datasets.upload.importingNoticeBody':
+      'Leaving, going back, refreshing, or closing the page interrupts the import and clears the data already uploaded to the server — you would need to re-upload.',
+    'datasets.upload.leaveConfirmTitle': 'Leaving will fail the import',
+    'datasets.upload.leaveConfirmBody':
+      'The import is not finished. Leaving this page interrupts it and clears the data already uploaded to the server. Leave anyway?',
+    'datasets.upload.leaveConfirmStay': 'Stay on this page',
+    'datasets.upload.leaveConfirmLeave': 'Leave anyway',
     'datasets.upload.parseFailed': 'Failed to parse the file. Check its format, header row, or JSON shape.',
     'datasets.upload.noPreview': 'After choosing a file, real sample preview and field role mapping appear here.',
     'datasets.upload.readyToImport': 'pending import',

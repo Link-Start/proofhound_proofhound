@@ -21,6 +21,7 @@ const model = {
   rpmLimit: 60,
   tpmLimit: 1000,
   concurrencyLimit: 2,
+  autoConcurrency: false,
   inputTokenPricePerMillion: 2,
   outputTokenPricePerMillion: 4,
 };
@@ -197,6 +198,41 @@ describe('invokeLLM', () => {
         id: runResult.id,
         source: 'optimization_analysis',
         roundIndex: 3,
+      }),
+    );
+  });
+
+  it('passes webhookTokenId from RunResultContext through to writeRunResult (webhook entry attribution)', async () => {
+    // Webhook-triggered runs must persist webhook_token_id for per-consumer attribution (SPEC 08 §3.4 / §5);
+    // HTTP / MCP / internal entries leave runResult.webhookTokenId undefined so the column stays NULL.
+    const adapter: LLMAdapter = {
+      providerType: 'fake',
+      async invoke() {
+        return {
+          content: '{"ok":true}',
+          rawResponse: { id: 'resp-1' },
+          finishReason: 'stop',
+          usage: { inputTokens: 10, outputTokens: 5 },
+        };
+      },
+    };
+    const limiter = { acquire: vi.fn(async () => undefined), release: vi.fn(async () => undefined) };
+    const logger = { info: vi.fn(), error: vi.fn() };
+    const writeRunResult = vi.fn(async () => undefined);
+    const args = baseArgs();
+    args.runResult = { ...runResult, webhookTokenId: 'a1b2c3d4-e5f6-4789-a012-345678907777' };
+
+    await invokeLLM(args, {
+      limiter,
+      logger,
+      runResultWriter: { writeRunResult },
+      adapters: [adapter],
+    });
+
+    expect(writeRunResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: runResult.id,
+        webhookTokenId: 'a1b2c3d4-e5f6-4789-a012-345678907777',
       }),
     );
   });
@@ -865,5 +901,107 @@ describe('invokeLLM — maxRetries 内部重试', () => {
       'boom',
     );
     expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('invokeLLM — auto-concurrency feedback', () => {
+  const autoModel = { ...model, autoConcurrency: true };
+  function autoArgs(): InvokeLLMArgs {
+    return { ...baseArgs(), model: autoModel };
+  }
+  type ReportArgs = { modelId: string; kind: 'success' | 'upstream_throttle'; latencyMs?: number; tokens?: number };
+  function autoLimiter() {
+    return {
+      acquire: vi.fn(async () => ({ effectiveConcurrency: 5, backoffFactor: 1, latencyEwmaMs: 2000 })),
+      release: vi.fn(async () => undefined),
+      reportOutcome: vi.fn(async (_args: ReportArgs) => undefined),
+    };
+  }
+  const logger = () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() });
+
+  it('reports success with latency + tokens and passes autoConcurrency to acquire', async () => {
+    const adapter: LLMAdapter = {
+      providerType: 'fake',
+      async invoke() {
+        return { content: 'ok', rawResponse: {}, finishReason: 'stop', usage: { inputTokens: 7, outputTokens: 3 } };
+      },
+    };
+    const limiter = autoLimiter();
+
+    await invokeLLM(autoArgs(), { limiter, logger: logger(), adapters: [adapter] });
+
+    expect(limiter.acquire).toHaveBeenCalledWith(expect.objectContaining({ autoConcurrency: true }));
+    expect(limiter.reportOutcome).toHaveBeenCalledTimes(1);
+    expect(limiter.reportOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: autoModel.id, kind: 'success', tokens: 10 }),
+    );
+    expect(limiter.reportOutcome.mock.calls[0]![0].latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reports upstream_throttle on provider HTTP 429 and still rethrows the original error', async () => {
+    const adapter: LLMAdapter = {
+      providerType: 'fake',
+      async invoke() {
+        throw new LLMAdapterHttpError('rate limited', 429, '{"error":{"message":"slow down"}}');
+      },
+    };
+    const limiter = autoLimiter();
+
+    await expect(invokeLLM(autoArgs(), { limiter, logger: logger(), adapters: [adapter] })).rejects.toBeInstanceOf(
+      LLMAdapterHttpError,
+    );
+    expect(limiter.reportOutcome).toHaveBeenCalledTimes(1);
+    expect(limiter.reportOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: autoModel.id, kind: 'upstream_throttle' }),
+    );
+  });
+
+  it('does not report when autoConcurrency is off', async () => {
+    const adapter: LLMAdapter = {
+      providerType: 'fake',
+      async invoke() {
+        return { content: 'ok', rawResponse: {}, finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    const limiter = autoLimiter();
+
+    // baseArgs() uses the default model with autoConcurrency: false
+    await invokeLLM(baseArgs(), { limiter, logger: logger(), adapters: [adapter] });
+
+    expect(limiter.reportOutcome).not.toHaveBeenCalled();
+  });
+
+  it('does not report on a non-429 failure', async () => {
+    const adapter: LLMAdapter = {
+      providerType: 'fake',
+      async invoke() {
+        throw new LLMAdapterHttpError('server error', 500, '{}');
+      },
+    };
+    const limiter = autoLimiter();
+
+    await expect(invokeLLM(autoArgs(), { limiter, logger: logger(), adapters: [adapter] })).rejects.toBeInstanceOf(
+      LLMAdapterHttpError,
+    );
+    expect(limiter.reportOutcome).not.toHaveBeenCalled();
+  });
+
+  it('a throwing reportOutcome never fails the underlying call', async () => {
+    const adapter: LLMAdapter = {
+      providerType: 'fake',
+      async invoke() {
+        return { content: 'ok', rawResponse: {}, finishReason: 'stop', usage: { inputTokens: 2, outputTokens: 2 } };
+      },
+    };
+    const limiter = {
+      acquire: vi.fn(async () => ({ effectiveConcurrency: 5, backoffFactor: 1, latencyEwmaMs: 2000 })),
+      release: vi.fn(async () => undefined),
+      reportOutcome: vi.fn(async () => {
+        throw new Error('redis down');
+      }),
+    };
+
+    const result = await invokeLLM(autoArgs(), { limiter, logger: logger(), adapters: [adapter] });
+    expect(result.content).toBe('ok');
   });
 });

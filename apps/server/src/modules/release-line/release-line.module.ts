@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { OrchestrationModule } from '../../infrastructure/orchestration';
 import { RedisModule } from '../../infrastructure/redis/redis.module';
@@ -13,7 +12,7 @@ import { ReleaseRunnerService } from './release-runner.service';
 @Module({
   imports: [DatabaseModule, OrchestrationModule, RedisModule, ConnectorModule],
   controllers: [ReleaseLineController],
-  providers: [ReleaseLineRepository, ReleaseLineService, ReleaseRunnerRepository, ReleaseRunnerService, LocalActorGuard],
+  providers: [ReleaseLineRepository, ReleaseLineService, ReleaseRunnerRepository, ReleaseRunnerService],
   exports: [ReleaseLineService],
 })
 export class ReleaseLineModule {}

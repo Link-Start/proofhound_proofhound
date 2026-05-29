@@ -11,7 +11,7 @@ import {
   updateCanaryTrafficRatioInputSchema,
 } from '@proofhound/shared';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { CanaryReleaseService } from './canary-release.service';
 
@@ -27,7 +27,7 @@ const deleteQuerySchema = z.object({
 });
 
 @Controller('canary-releases')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class CanaryReleaseController {
   constructor(private readonly service: CanaryReleaseService) {}
 

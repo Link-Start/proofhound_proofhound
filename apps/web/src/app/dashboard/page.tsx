@@ -18,6 +18,7 @@ import {
   Rocket,
 } from 'lucide-react';
 import { Main } from '@/components/layout/main';
+import { PlatformLoaderOverlay } from '@/components/ui/platform-loader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useConnectors } from '@/hooks/connector';
 import { useDatasets } from '@/hooks/dataset';
@@ -25,6 +26,7 @@ import { useExperiments } from '@/hooks/experiment';
 import { useProjectModels } from '@/hooks/model';
 import { useOptimizations } from '@/hooks/optimization';
 import { usePrompts } from '@/hooks/prompt';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useReleaseLineList } from '@/hooks/release-line';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { formatDateTime } from '@/lib/format';
@@ -462,23 +464,6 @@ function buildFeedItems({
   return sortFeedItems([...experimentItems, ...optimizationItems, ...releaseItems]);
 }
 
-function OverviewSkeleton() {
-  return (
-    <Main className="gap-0 p-0">
-      <div className="mx-auto w-full max-w-[1320px] px-4 py-6 sm:px-6 lg:px-8">
-        <Skeleton className="mb-7 h-16 w-full max-w-[520px]" />
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <Skeleton className="h-[680px]" />
-          <div className="space-y-6">
-            <Skeleton className="h-[280px]" />
-            <Skeleton className="h-[240px]" />
-          </div>
-        </div>
-      </div>
-    </Main>
-  );
-}
-
 function FeedStatusBadge({ status }: { status: FeedStatus }) {
   const { t } = useI18n();
   const config = STATUS_CONFIG[status];
@@ -780,15 +765,16 @@ export default function DashboardPage() {
     Boolean(experimentsQuery.data) ||
     Boolean(optimizationsQuery.data) ||
     releaseLines.length > 0;
-  const isInitialLoading =
+  const isInitialLoading = useDelayedLoading(
     !hasAnyData &&
-    (promptsQuery.isLoading ||
-      datasetsQuery.isLoading ||
-      modelsQuery.isLoading ||
-      connectorsQuery.isLoading ||
-      experimentsQuery.isLoading ||
-      optimizationsQuery.isLoading ||
-      releaseLineQuery.isLoading);
+      (promptsQuery.isLoading ||
+        datasetsQuery.isLoading ||
+        modelsQuery.isLoading ||
+        connectorsQuery.isLoading ||
+        experimentsQuery.isLoading ||
+        optimizationsQuery.isLoading ||
+        releaseLineQuery.isLoading),
+  );
   const hasError =
     promptsQuery.isError ||
     datasetsQuery.isError ||
@@ -863,8 +849,6 @@ export default function DashboardPage() {
     [experiments, optimizations, releaseLines, t],
   );
 
-  if (isInitialLoading) return <OverviewSkeleton />;
-
   return (
     <Main className="gap-0 p-0">
       <div className="mx-auto w-full max-w-[1320px] px-4 py-6 sm:px-6 lg:px-8" data-testid="dashboard-page">
@@ -889,19 +873,30 @@ export default function DashboardPage() {
           </div>
         ) : null}
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="min-w-0">
-            <ActivityFeed
-              items={feedItems}
-              visibleLimit={visibleLimit}
-              onLoadMore={() => setVisibleLimit((currentLimit) => currentLimit + DEFAULT_VISIBLE_FEED_ITEMS)}
-            />
+        {isInitialLoading ? (
+          <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <Skeleton className="h-[680px]" />
+            <div className="space-y-6">
+              <Skeleton className="h-[280px]" />
+              <Skeleton className="h-[240px]" />
+            </div>
+            <PlatformLoaderOverlay />
           </div>
-          <aside className="space-y-6" data-testid="overview-side-rail">
-            <ResourceSummary items={summaryItems} />
-            <QuickActions />
-          </aside>
-        </div>
+        ) : (
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="min-w-0">
+              <ActivityFeed
+                items={feedItems}
+                visibleLimit={visibleLimit}
+                onLoadMore={() => setVisibleLimit((currentLimit) => currentLimit + DEFAULT_VISIBLE_FEED_ITEMS)}
+              />
+            </div>
+            <aside className="space-y-6" data-testid="overview-side-rail">
+              <ResourceSummary items={summaryItems} />
+              <QuickActions />
+            </aside>
+          </div>
+        )}
       </div>
     </Main>
   );

@@ -2,14 +2,14 @@ import { BadRequestException, Controller, Get, Param, Query, UseGuards } from '@
 import { experimentIdParamSchema, runResultListQuerySchema, runResultReleaseListQuerySchema } from '@proofhound/shared';
 import { z } from 'zod';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { RunResultService } from './run-result.service';
 
 const runResultIdParamSchema = z.string().uuid();
 
 @Controller('experiments/:experimentId/run-results')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class RunResultController {
   constructor(private readonly runResultService: RunResultService) {}
 
@@ -61,7 +61,7 @@ export class RunResultController {
 }
 
 @Controller('run-results')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class ReleaseRunResultController {
   constructor(private readonly runResultService: RunResultService) {}
 

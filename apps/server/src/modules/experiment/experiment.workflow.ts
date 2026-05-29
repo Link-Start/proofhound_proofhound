@@ -11,7 +11,7 @@ import type {
   PromptOutputSchemaDto,
   PromptVariableDto,
 } from '@proofhound/shared';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
 import { BullmqService } from '../../infrastructure/orchestration/bullmq.service';
@@ -21,9 +21,19 @@ import { renderPromptForSample } from './experiment.renderer';
 
 const { experiments, datasetSamples, promptVersions, models, datasets } = schema;
 
-const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_BATCH_SIZE = 500;
+const MAX_BATCH_SIZE = 500;
 const POLL_SLEEP_SCHEDULE_SEC = [2, 2, 3, 5, 8, 10];
-const POLL_TIMEOUT_SEC = 30 * 60;
+// Per-batch poll budget scales with batch size (~36s/sample, matching the historical 30min/50-sample budget),
+// floored at 30min and capped at 6h. Larger batches need a proportionally larger wall-clock window so the
+// poll loop does not give up while jobs are still draining the queue.
+const POLL_PER_SAMPLE_BUDGET_SEC = 36;
+const MIN_POLL_TIMEOUT_SEC = 30 * 60;
+const MAX_POLL_TIMEOUT_SEC = 6 * 60 * 60;
+
+function batchPollTimeoutSec(batchSize: number): number {
+  return Math.min(MAX_POLL_TIMEOUT_SEC, Math.max(MIN_POLL_TIMEOUT_SEC, batchSize * POLL_PER_SAMPLE_BUDGET_SEC));
+}
 // runResultId namespace UUID (chosen randomly and pinned, to stay stable across restarts)
 const RUN_RESULT_NS = '6f1c2c0a-2c4e-4f5a-9d8a-3b1e2a000001';
 
@@ -60,7 +70,11 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
   private readonly markStartedStep: (experimentId: string) => Promise<void>;
   private readonly readControlStateStep: (experimentId: string) => Promise<string | null>;
   private readonly clearResumeStep: (experimentId: string) => Promise<void>;
-  private readonly loadSampleIdBatchStep: (datasetId: string, cursor: number, batchSize: number) => Promise<string[]>;
+  private readonly loadSampleIdBatchStep: (
+    datasetId: string,
+    cursorId: string | null,
+    batchSize: number,
+  ) => Promise<string[]>;
   private readonly enqueueBatchStep: (experimentId: string, sampleIds: string[]) => Promise<string[]>;
   private readonly pollUntilBatchDoneStep: (
     experimentId: string,
@@ -124,10 +138,13 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
 
       let totalFailed = 0;
       let totalTerminal = 0;
+      let processed = 0;
+      // Keyset cursor: last sample id of the previous batch (see loadSampleIdBatchImpl).
+      let cursorId: string | null = null;
 
-      for (let cursor = 0; cursor < plan.totalSamples; cursor += plan.batchSize) {
+      while (processed < plan.totalSamples) {
         this.logger.debug(
-          { experimentId, cursor, batchSize: plan.batchSize, totalSamples: plan.totalSamples },
+          { experimentId, processed, batchSize: plan.batchSize, totalSamples: plan.totalSamples },
           'workflow_batch_start',
         );
         const control = await this.readControlStateStep(experimentId);
@@ -143,7 +160,7 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
           await this.clearResumeStep(experimentId);
         }
 
-        const sampleIds = await this.loadSampleIdBatchStep(plan.datasetId, cursor, plan.batchSize);
+        const sampleIds = await this.loadSampleIdBatchStep(plan.datasetId, cursorId, plan.batchSize);
         if (sampleIds.length === 0) break;
 
         const runResultIds = await this.enqueueBatchStep(experimentId, sampleIds);
@@ -151,10 +168,12 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
         totalTerminal += counts.terminalCount;
         totalFailed += counts.failedCount;
         await this.aggregateMetricsStep(experimentId);
+        processed += sampleIds.length;
+        cursorId = sampleIds[sampleIds.length - 1] ?? cursorId;
         this.logger.debug(
           {
             experimentId,
-            cursor,
+            processed,
             batchTerminal: counts.terminalCount,
             batchFailed: counts.failedCount,
             control: counts.control,
@@ -215,7 +234,7 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     const config = (row.runConfig as Record<string, unknown> | null) ?? {};
     const batchSize =
       typeof config['batchSize'] === 'number' && (config['batchSize'] as number) > 0
-        ? Math.min(config['batchSize'] as number, 200)
+        ? Math.min(config['batchSize'] as number, MAX_BATCH_SIZE)
         : DEFAULT_BATCH_SIZE;
 
     const plan: ExperimentPlan = {
@@ -269,15 +288,20 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     this.logger.debug({ experimentId }, 'step_clear_resume_done');
   }
 
-  private async loadSampleIdBatchImpl(datasetId: string, cursor: number, batchSize: number): Promise<string[]> {
+  private async loadSampleIdBatchImpl(datasetId: string, cursorId: string | null, batchSize: number): Promise<string[]> {
+    // Keyset pagination by id: a dataset's samples share created_at (NOW() at insert/promote time), so id alone is a
+    // complete, stable total order. Avoids OFFSET's O(n^2) rescans on large datasets.
+    const condition =
+      cursorId === null
+        ? eq(datasetSamples.datasetId, datasetId)
+        : and(eq(datasetSamples.datasetId, datasetId), gt(datasetSamples.id, cursorId));
     const rows = await this.db
       .select({ id: datasetSamples.id })
       .from(datasetSamples)
-      .where(eq(datasetSamples.datasetId, datasetId))
-      .orderBy(asc(datasetSamples.createdAt), asc(datasetSamples.id))
-      .limit(batchSize)
-      .offset(cursor);
-    this.logger.debug({ datasetId, cursor, batchSize, sampleCount: rows.length }, 'step_load_sample_batch_done');
+      .where(condition)
+      .orderBy(asc(datasetSamples.id))
+      .limit(batchSize);
+    this.logger.debug({ datasetId, cursorId, batchSize, sampleCount: rows.length }, 'step_load_sample_batch_done');
     return rows.map((r) => r.id);
   }
 
@@ -338,9 +362,10 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
   ): Promise<{ terminalCount: number; failedCount: number; control: 'stop' | 'cancel' | null }> {
     if (runResultIds.length === 0) return { terminalCount: 0, failedCount: 0, control: null };
 
+    const timeoutSec = batchPollTimeoutSec(runResultIds.length);
     let pollIndex = 0;
     const start = Date.now();
-    while (Date.now() - start < POLL_TIMEOUT_SEC * 1000) {
+    while (Date.now() - start < timeoutSec * 1000) {
       const counts = await this.runResults.countBatchTerminal(experimentId, runResultIds);
       this.logger.debug({ experimentId, pollIndex, expected: runResultIds.length, ...counts }, 'step_poll_batch_tick');
       if (counts.terminalCount >= runResultIds.length) return { ...counts, control: null };
@@ -356,7 +381,10 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
       pollIndex += 1;
       await DBOS.sleepSeconds(sleepSec);
     }
-    this.logger.debug({ experimentId, pollIndex }, 'step_poll_batch_timeout');
+    this.logger.debug(
+      { experimentId, pollIndex, batchSize: runResultIds.length, timeoutSec },
+      'step_poll_batch_timeout',
+    );
     const finalCounts = await this.runResults.countBatchTerminal(experimentId, runResultIds);
     return { ...finalCounts, control: null };
   }

@@ -32,7 +32,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { ListRowsSkeleton } from '@/components/ui/list-page-skeleton';
+import { PlatformLoaderOverlay } from '@/components/ui/platform-loader';
 import { ModalityIconGroup, type ModalityKind } from '@/components/ui/modality-icon';
 import { Progress, formatProgressLabel } from '@/components/ui/progress';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
@@ -47,6 +48,7 @@ import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { useDeleteProjectModel, useProbeProjectModel, useProjectModels, useUpdateProjectModel } from '@/hooks/model';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { dtoToProjectModel, formatProjectModelDateTime } from './project-model-adapter';
 import {
   MODEL_SOURCE_LABEL_KEYS,
@@ -752,15 +754,7 @@ export function ModelsListPage({ projectId }: { projectId: string }) {
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
   const pagedModels = filteredModels.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize);
 
-  if (projectQuery.isLoading && !projectQuery.data) {
-    return (
-      <Main className="gap-0 bg-muted/35 p-0">
-        <div className="mx-auto w-full max-w-[1880px] px-4 py-6 sm:px-6 lg:px-8">
-          <PlatformLoader className="min-h-[560px]" />
-        </div>
-      </Main>
-    );
-  }
+  const modelsLoading = useDelayedLoading(projectQuery.isLoading && !projectQuery.data);
 
   const toggleSelected = (modelId: string) => {
     setSelectedIds((current) =>
@@ -973,7 +967,12 @@ export function ModelsListPage({ projectId }: { projectId: string }) {
             )}
           </div>
 
-          {viewMode === 'table' ? (
+          {modelsLoading ? (
+            <div className="relative">
+              <ListRowsSkeleton rows={8} />
+              <PlatformLoaderOverlay />
+            </div>
+          ) : viewMode === 'table' ? (
             <ModelTable
               models={pagedModels}
               projectId={projectId}
@@ -999,27 +998,29 @@ export function ModelsListPage({ projectId }: { projectId: string }) {
             />
           )}
 
-          <ResourcePaginationFooter
-            summary={
-              <>
-                {t('models.totalPrefix')}{' '}
-                <span className="font-mono font-medium text-foreground">{filteredModels.length}</span>{' '}
-                {t('models.totalSuffix')} · {t('models.selected')}{' '}
-                <span className="font-mono font-medium text-foreground">{selectedIds.length}</span>
-              </>
-            }
-            pageIndex={safePageIndex}
-            pageCount={pageCount}
-            pageSize={pageSize}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
-            previousPageLabel={t('models.previousPage')}
-            nextPageLabel={t('models.nextPage')}
-            onPageChange={setPageIndex}
-            onPageSizeChange={(nextPageSize) => {
-              setPageSize(nextPageSize);
-              setPageIndex(0);
-            }}
-          />
+          {!modelsLoading && (
+            <ResourcePaginationFooter
+              summary={
+                <>
+                  {t('models.totalPrefix')}{' '}
+                  <span className="font-mono font-medium text-foreground">{filteredModels.length}</span>{' '}
+                  {t('models.totalSuffix')} · {t('models.selected')}{' '}
+                  <span className="font-mono font-medium text-foreground">{selectedIds.length}</span>
+                </>
+              }
+              pageIndex={safePageIndex}
+              pageCount={pageCount}
+              pageSize={pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              previousPageLabel={t('models.previousPage')}
+              nextPageLabel={t('models.nextPage')}
+              onPageChange={setPageIndex}
+              onPageSizeChange={(nextPageSize) => {
+                setPageSize(nextPageSize);
+                setPageIndex(0);
+              }}
+            />
+          )}
         </section>
       </div>
       <ConnectivityDialog

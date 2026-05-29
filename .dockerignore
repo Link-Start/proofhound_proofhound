@@ -29,3 +29,6 @@ docs
 __pycache__
 .venv
 venv
+
+# Local full-size datasets
+datasets/yelp_polarity/yelp_polarity.jsonl

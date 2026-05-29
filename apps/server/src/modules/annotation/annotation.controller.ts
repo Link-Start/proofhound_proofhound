@@ -7,7 +7,7 @@ import {
 } from '@proofhound/shared';
 import { z } from 'zod';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { AnnotationService } from './annotation.service';
 
@@ -19,7 +19,7 @@ const sampleListQuerySchema = z.object({
 });
 
 @Controller('annotation-tasks')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class AnnotationController {
   constructor(private readonly service: AnnotationService) {}
 

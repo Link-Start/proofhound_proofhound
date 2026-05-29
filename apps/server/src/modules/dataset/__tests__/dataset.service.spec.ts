@@ -43,7 +43,8 @@ function makeRepo(): Mocked<DatasetRepository> {
     findDatasetById: vi.fn(),
     listDatasets: vi.fn(),
     listDatasetSamples: vi.fn(),
-    listDatasetSampleDataByDatasetIds: vi.fn().mockResolvedValue([]),
+    listDatasetSamplesPage: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+    aggregateCategoryDistribution: vi.fn().mockResolvedValue([]),
     countDatasetReferences: vi.fn().mockResolvedValue(new Map()),
     hardDeleteSamples: vi.fn().mockResolvedValue(0),
     decrementDatasetSampleCount: vi.fn().mockResolvedValue(undefined),
@@ -216,28 +217,15 @@ describe('DatasetService', () => {
   it('returns category distribution for the dataset list page', async () => {
     repo.findProjectAccess.mockResolvedValue(projectAccess());
     repo.listDatasets.mockResolvedValue([datasetRow({ sampleCount: 4 })]);
-    repo.listDatasetSampleDataByDatasetIds.mockResolvedValue([
-      {
-        datasetId: '22222222-2222-4222-8222-222222222222',
-        data: { sample_id: 'case-1', question: '是否拦截?', label: 'block' },
-      },
-      {
-        datasetId: '22222222-2222-4222-8222-222222222222',
-        data: { sample_id: 'case-2', question: '是否放行?', label: 'allow' },
-      },
-      {
-        datasetId: '22222222-2222-4222-8222-222222222222',
-        data: { sample_id: 'case-3', question: '是否拦截?', label: 'block' },
-      },
-      {
-        datasetId: '22222222-2222-4222-8222-222222222222',
-        data: { sample_id: 'case-4', question: '开放输出', label: { decision: 'block' } },
-      },
+    // SQL GROUP BY already filters out non-scalar labels (e.g. object-valued) server-side.
+    repo.aggregateCategoryDistribution.mockResolvedValue([
+      { label: 'block', count: 2 },
+      { label: 'allow', count: 1 },
     ]);
 
     const result = await service.listDatasets('77777777-7777-4777-8777-777777777777', actor);
 
-    expect(repo.listDatasetSampleDataByDatasetIds).toHaveBeenCalledWith(['22222222-2222-4222-8222-222222222222']);
+    expect(repo.aggregateCategoryDistribution).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222', 'label');
     expect(result.data[0]?.categoryDistribution).toEqual({
       field: 'label',
       total: 3,
@@ -251,16 +239,19 @@ describe('DatasetService', () => {
   it('returns a dataset and its persisted samples for the detail page', async () => {
     repo.findProjectAccess.mockResolvedValue(projectAccess());
     repo.findDatasetById.mockResolvedValue(datasetRow());
-    repo.listDatasetSamples.mockResolvedValue([
-      {
-        id: '33333333-3333-4333-8333-333333333333',
-        datasetId: '22222222-2222-4222-8222-222222222222',
-        data: { sample_id: 'case-1', question: '是否拦截?', label: 'block' },
-        externalId: 'case-1',
-        createdAt: new Date('2026-05-16T00:00:00Z'),
-        updatedAt: new Date('2026-05-16T00:00:00Z'),
-      },
-    ]);
+    repo.listDatasetSamplesPage.mockResolvedValue({
+      rows: [
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          datasetId: '22222222-2222-4222-8222-222222222222',
+          data: { sample_id: 'case-1', question: '是否拦截?', label: 'block' },
+          externalId: 'case-1',
+          createdAt: new Date('2026-05-16T00:00:00Z'),
+          updatedAt: new Date('2026-05-16T00:00:00Z'),
+        },
+      ],
+      total: 1,
+    });
 
     const dataset = await service.getDataset(
       '77777777-7777-4777-8777-777777777777',
@@ -271,6 +262,7 @@ describe('DatasetService', () => {
       '77777777-7777-4777-8777-777777777777',
       '22222222-2222-4222-8222-222222222222',
       actor,
+      { page: 1, pageSize: 50 },
     );
 
     expect(dataset.name).toBe('risk-eval-v4');

@@ -40,7 +40,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { PlatformLoaderOverlay } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
+import { Skeleton } from '@/components/ui/skeleton';
 import { TableActionRow, type TableActionDescriptor } from '@/components/ui/table-action';
 import { PromptDiffSplitView } from '@/components/prompt-diff/prompt-diff-split-view';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -56,6 +58,7 @@ import {
   useUpdatePromptDraftVersion,
   useUpdatePromptVersionLabel,
 } from '@/hooks/prompt';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { ModalityIcon, ModalityIconGroup, type ModalityKind } from '@/components/ui/modality-icon';
 import { UnusedImagesBadge } from '@/components/ui/unused-images-badge';
 import { PromptLanguageSelect, type PromptLanguage } from '@/components/prompt-language-select';
@@ -1391,8 +1394,21 @@ function PromptMetricsTab({ projectId, promptId }: { projectId: string; promptId
   const metricsQuery = usePromptMetrics(projectId, promptId);
   const metrics = metricsQuery.data;
 
-  if (metricsQuery.isLoading) {
-    return <PlatformLoader className="min-h-[420px]" />;
+  const metricsLoading = useDelayedLoading(metricsQuery.isLoading);
+  if (metricsLoading) {
+    return (
+      <div className="relative min-h-[420px]" data-testid="prompt-metrics-tab" aria-busy="true">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-24 rounded-lg" />
+            ))}
+          </div>
+          <Skeleton className="h-64 rounded-lg" />
+        </div>
+        <PlatformLoaderOverlay />
+      </div>
+    );
   }
 
   if (!metrics) {
@@ -2193,11 +2209,12 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
     [deleteTargetVersionId, prompt],
   );
 
-  if (promptQuery.isLoading) {
+  const promptLoading = useDelayedLoading(promptQuery.isLoading);
+  if (promptLoading) {
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div className="mx-auto w-full max-w-[1680px] px-4 pb-10 pt-6 sm:px-6 lg:px-8" data-testid="prompt-detail-page">
-          <PlatformLoader className="min-h-[560px]" />
+          <DetailPageSkeleton />
         </div>
       </Main>
     );

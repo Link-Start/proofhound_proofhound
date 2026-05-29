@@ -42,7 +42,10 @@ export interface ModelInvocationConfig {
   capabilities?: ModelInvocationCapabilities;
   rpmLimit: number;
   tpmLimit: number;
+  // Concurrency ceiling. When autoConcurrency is true, the limiter auto-derives the effective
+  // concurrency within [1, concurrencyLimit]. See docs/specs/21-models.md §6.1
   concurrencyLimit: number;
+  autoConcurrency: boolean;
   inputTokenPricePerMillion: number | string;
   outputTokenPricePerMillion: number | string;
   extraBody?: Record<string, unknown>;
@@ -87,6 +90,8 @@ export interface RunResultContext {
   // Used by optimization LLM calls: round index (0-based) for optimization_analysis / optimization_generate.
   // The detail page's listOptimizationLlmRunResults filters by isNotNull(round_index); missing values cause the whole row to be dropped.
   roundIndex?: number | null;
+  // Webhook-entry attribution: set only for webhook-triggered runs; other entries leave it undefined → NULL.
+  webhookTokenId?: string | null;
 }
 
 export interface LLMJudgmentOutcome {
@@ -176,10 +181,18 @@ export interface LLMRunResultRecord {
   bullmqJobId?: string | null;
   // Used by optimization LLM calls; see the comment on RunResultContext.roundIndex.
   roundIndex?: number | null;
+  // Webhook-entry attribution; see the comment on RunResultContext.webhookTokenId.
+  webhookTokenId?: string | null;
 }
 
 export interface LLMRunResultWriter {
   writeRunResult(record: LLMRunResultRecord): Promise<void>;
+}
+
+export interface RateLimiterAcquireResult {
+  effectiveConcurrency: number;
+  backoffFactor: number;
+  latencyEwmaMs: number;
 }
 
 export interface RateLimiterLike {
@@ -191,8 +204,15 @@ export interface RateLimiterLike {
       tpmLimit: number;
       concurrencyLimit: number;
     };
-  }): Promise<void>;
+    autoConcurrency?: boolean;
+  }): Promise<RateLimiterAcquireResult | void>;
   release(args: { modelId: string }): Promise<void>;
+  reportOutcome?(args: {
+    modelId: string;
+    kind: 'success' | 'upstream_throttle';
+    latencyMs?: number;
+    tokens?: number;
+  }): Promise<void>;
 }
 
 export interface LLMCallLogger {

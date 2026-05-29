@@ -56,9 +56,15 @@ export const datasetClient = {
       .then((r) => r.data),
   getDataset: (projectId: string, datasetId: string) =>
     httpClient.get<DatasetListItemDto>(`/datasets/${datasetId}`).then((r) => r.data),
-  listDatasetSamples: (projectId: string, datasetId: string) =>
+  listDatasetSamples: (
+    projectId: string,
+    datasetId: string,
+    query?: { page?: number; pageSize?: number; search?: string },
+  ) =>
     httpClient
-      .get<DatasetSamplesListResponseDto>(`/datasets/${datasetId}/samples`)
+      .get<DatasetSamplesListResponseDto>(`/datasets/${datasetId}/samples`, {
+        params: { page: query?.page, pageSize: query?.pageSize, search: query?.search || undefined },
+      })
       .then((r) => r.data),
   createDataset: (projectId: string, body: CreateDatasetDto, options?: DatasetTransferOptions) =>
     httpClient

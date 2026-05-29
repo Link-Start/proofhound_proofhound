@@ -66,6 +66,10 @@ export const llmJobPayloadSchema = z.object({
   // Injected by the enqueue side (experiment / optimization workflow obtains it via DBOS.workflowID inside a step),
   // passed through by the worker into the LLM call log and ph_runs.run_results.dbos_workflow_id; the release runner source is undefined
   dbosWorkflowId: z.string().optional(),
+  // Webhook-entry attribution: set only when the run was triggered by a webhook token; the worker materializes it
+  // into ph_runs.run_results.webhook_token_id. HTTP / MCP / internal release-runner sources leave it undefined → NULL.
+  // See docs/specs/08-saas-adapter-boundary.md §3.4 / §5.
+  webhookTokenId: z.string().uuid().nullable().optional(),
   renderedPrompt: renderedPromptSchema,
   inputVariables: z.unknown().optional(),
   inference: inferenceSchema.optional(),

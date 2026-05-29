@@ -25,7 +25,7 @@ import { createLogger } from '@proofhound/logger';
 import { inArray, like, sql } from 'drizzle-orm';
 import { DATABASE_CLIENT } from '../../src/infrastructure/database/database.constants';
 import { BullmqService } from '../../src/infrastructure/orchestration/bullmq.service';
-import { LOCAL_ACTOR_ID } from '../../src/common/guards/local-actor.guard';
+import { LOCAL_ACTOR_ID } from '../../src/common/actor-context';
 import { ExperimentWorkflowRegistrar } from '../../src/modules/experiment/experiment.workflow';
 import { RunResultRepository } from '../../src/modules/run-result/run-result.repository';
 import { RunResultService } from '../../src/modules/run-result/run-result.service';

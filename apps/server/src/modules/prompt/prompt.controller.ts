@@ -21,13 +21,13 @@ import {
   updatePromptSchema,
 } from '@proofhound/shared';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { PromptTryRunService } from './prompt-try-run.service';
 import { PromptService } from './prompt.service';
 
 @Controller('prompts')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class PromptController {
   constructor(
     private readonly promptService: PromptService,

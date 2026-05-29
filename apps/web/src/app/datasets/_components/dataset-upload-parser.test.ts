@@ -1,13 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  MAX_UPLOAD_SAMPLES,
-  inferRole,
-  parseDatasetFile,
-  projectSamplesToColumns,
-  selectDatasetFile,
-} from './dataset-upload-parser';
+import { inferRole, parseDatasetFile, projectSamplesToColumns, selectDatasetFile } from './dataset-upload-parser';
 
 function makeFile(name: string, content: string, relativePath?: string) {
   const file = new File([content], name, { type: 'application/json' });
@@ -18,6 +12,27 @@ function makeFile(name: string, content: string, relativePath?: string) {
     });
   }
   return file;
+}
+
+function makeStreamingFile(name: string, content: string, chunkSize = 31) {
+  const encoded = bytes(content);
+  return {
+    name,
+    size: encoded.byteLength,
+    type: 'application/x-ndjson',
+    text: async () => {
+      throw new Error('text_should_not_be_read');
+    },
+    stream: () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let offset = 0; offset < encoded.byteLength; offset += chunkSize) {
+            controller.enqueue(encoded.subarray(offset, offset + chunkSize));
+          }
+          controller.close();
+        },
+      }),
+  } as unknown as File;
 }
 
 function bytes(value: string) {
@@ -201,11 +216,30 @@ describe('dataset upload parser', () => {
     ]);
   });
 
-  it('rejects oversized files instead of silently truncating to 5000 samples', async () => {
-    const content = Array.from({ length: MAX_UPLOAD_SAMPLES + 1 }, (_, index) =>
+  it('parses well beyond 5000 samples without truncating', async () => {
+    const rowCount = 6000;
+    const content = Array.from({ length: rowCount }, (_, index) =>
       JSON.stringify({ sample_id: `case-${index}`, text: `sample ${index}` }),
     ).join('\n');
 
-    await expect(parseDatasetFile(makeFile('too-large.jsonl', content))).rejects.toThrow('too_many_samples');
+    const parsed = await parseDatasetFile(makeFile('large.jsonl', content));
+    expect(parsed.samples.length).toBe(rowCount);
+  });
+
+  it('fails on a malformed JSONL line instead of silently skipping it', async () => {
+    const content = [JSON.stringify({ sample_id: 'case-1', text: 'ok' }), '{'].join('\n');
+
+    await expect(parseDatasetFile(makeFile('malformed.jsonl', content))).rejects.toThrow();
+  });
+
+  it('streams JSONL files instead of reading the full text payload up front', async () => {
+    const rowCount = 12;
+    const content = Array.from({ length: rowCount }, (_, index) =>
+      JSON.stringify({ sample_id: `case-${index}`, text: `sample ${index}` }),
+    ).join('\n');
+
+    const parsed = await parseDatasetFile(makeStreamingFile('streamed.jsonl', content));
+    expect(parsed.samples.length).toBe(rowCount);
+    expect(parsed.samples[0]).toEqual({ sample_id: 'case-0', text: 'sample 0' });
   });
 });

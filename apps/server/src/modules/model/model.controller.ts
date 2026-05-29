@@ -15,11 +15,11 @@ import {
   upsertModelContextWindowSchema,
 } from '@proofhound/shared';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { ModelService } from './model.service';
 
 @Controller('models')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class ModelController {
   constructor(private readonly modelService: ModelService) {}
 

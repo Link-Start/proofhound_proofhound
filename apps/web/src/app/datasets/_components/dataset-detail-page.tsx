@@ -1,14 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { DatasetExportFormatDto, DatasetSampleDto } from '@proofhound/shared';
 import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
   Edit3,
-  Filter,
   FlaskConical,
   Search,
   Sparkles,
@@ -25,7 +24,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Main } from '@/components/layout/main';
-import { useDeleteDatasetSamples, useDownloadDataset } from '@/hooks/dataset';
+import { useDatasetSamples, useDeleteDatasetSamples, useDownloadDataset } from '@/hooks/dataset';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -68,7 +67,6 @@ const FIELD_ROLE_ORDER: Record<DatasetFieldRole, number> = {
   metadata: 4,
 };
 const DEFAULT_HIDDEN_FIELDS = new Set(['created_at', 'createdAt', 'updated_at', 'updatedAt']);
-type SampleFieldFilter = 'all' | string;
 
 interface OutputSchemaField {
   name: string;
@@ -607,19 +605,47 @@ function CurrentSamplePanel({
 export function DatasetDetailPage({
   projectId,
   dataset,
-  samplesData,
 }: {
   projectId: string;
   dataset: ProjectDataset;
-  samplesData?: DatasetSampleDto[];
 }) {
   const { t } = useI18n();
   const downloadDatasetMutation = useDownloadDataset(projectId);
   const deleteSamplesMutation = useDeleteDatasetSamples(projectId, dataset.id);
   const downloadProgress = useDatasetTransferProgress();
   const [fields, setFields] = useState<DatasetField[]>(() => cloneFields(dataset.fields));
-  const initialSamples = useMemo(() => toDatasetSamples(samplesData), [samplesData]);
-  const [samples, setSamples] = useState<DatasetSample[]>(initialSamples);
+
+  // Server-side pagination + search: only the current page of samples is ever loaded into the browser.
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const samplesQuery = useDatasetSamples(projectId, dataset.id, { page: pageIndex + 1, pageSize, search });
+  const total = samplesQuery.data?.total ?? 0;
+  const pageSamples = useMemo(() => toDatasetSamples(samplesQuery.data?.data), [samplesQuery.data]);
+
+  const [samples, setSamples] = useState<DatasetSample[]>(pageSamples);
+  const [selectedSampleId, setSelectedSampleId] = useState('');
+  const [selectedSampleIds, setSelectedSampleIds] = useState<string[]>([]);
+  const [pendingDeleteSampleIds, setPendingDeleteSampleIds] = useState<string[] | null>(null);
+  const [deleteBlocked, setDeleteBlocked] = useState(false);
+
+  // Debounce the search box; reset to the first page when the term changes.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPageIndex(0);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [searchInput]);
+
+  // Re-sync the editable working copy + selection whenever the server page changes (page / search / refetch).
+  useEffect(() => {
+    setSamples(pageSamples);
+    setSelectedSampleIds([]);
+    setSelectedSampleId(pageSamples[0]?.id ?? '');
+  }, [pageSamples]);
+
   const displayFields = useMemo(() => {
     const merged = mergeFieldsWithSampleData(fields, samples);
     const preferred = fields.find((field) => field.role === 'expected')?.name ?? null;
@@ -635,49 +661,20 @@ export function DatasetDetailPage({
     }),
     [dataset, displayFields],
   );
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sampleFieldFilter, setSampleFieldFilter] = useState<SampleFieldFilter>('all');
-  const [selectedSampleId, setSelectedSampleId] = useState(initialSamples[0]?.id ?? '');
-  const [selectedSampleIds, setSelectedSampleIds] = useState<string[]>([]);
-  const [pageIndex, setPageIndex] = useState(0);
-  const [pendingDeleteSampleIds, setPendingDeleteSampleIds] = useState<string[] | null>(null);
-  const [deleteBlocked, setDeleteBlocked] = useState(false);
   const handleFieldRoleChange = (fieldName: string, nextRole: DatasetFieldRole) => {
     setFields(applyFieldRoleChange(displayFields, fieldName, nextRole));
   };
-  const sampleFieldFilters = useMemo<SampleFieldFilter[]>(
-    () => ['all', ...orderedFields.map((field) => field.name)],
-    [orderedFields],
-  );
 
-  const filteredSamples = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const visibleSamples = samples.filter((sample) => !sample.deletedAt);
-
-    if (!query) return visibleSamples;
-    return visibleSamples.filter((sample) => {
-      const searchable =
-        sampleFieldFilter === 'all'
-          ? [
-              getSampleDisplayId(sample, orderedFields),
-              ...orderedFields.map((field) => getSampleFieldDisplayValue(sample, field)),
-            ].join(' ')
-          : getDisplayValue(sample.data[sampleFieldFilter]);
-
-      return searchable.toLowerCase().includes(query);
-    });
-  }, [orderedFields, sampleFieldFilter, samples, searchQuery]);
+  // The server already applied search + pagination; show the page rows minus any locally-deleted ones.
+  const visibleSamples = useMemo(() => samples.filter((sample) => !sample.deletedAt), [samples]);
 
   const selectedSample =
-    filteredSamples.find((sample) => sample.id === selectedSampleId) ??
-    filteredSamples[0] ??
-    samples.find((sample) => !sample.deletedAt) ??
-    null;
+    visibleSamples.find((sample) => sample.id === selectedSampleId) ?? visibleSamples[0] ?? null;
 
   const selectRelativeSample = (direction: -1 | 1) => {
     if (!selectedSample) return;
-    const index = filteredSamples.findIndex((sample) => sample.id === selectedSample.id);
-    const next = filteredSamples[Math.min(filteredSamples.length - 1, Math.max(0, index + direction))];
+    const index = visibleSamples.findIndex((sample) => sample.id === selectedSample.id);
+    const next = visibleSamples[Math.min(visibleSamples.length - 1, Math.max(0, index + direction))];
     if (next) setSelectedSampleId(next.id);
   };
 
@@ -687,7 +684,7 @@ export function DatasetDetailPage({
     );
   };
 
-  const filteredSampleIds = useMemo(() => filteredSamples.map((sample) => sample.id), [filteredSamples]);
+  const filteredSampleIds = useMemo(() => visibleSamples.map((sample) => sample.id), [visibleSamples]);
   const sampleHeadState: 'off' | 'some' | 'all' = useMemo(() => {
     if (selectedSampleIds.length === 0 || filteredSampleIds.length === 0) return 'off';
     if (filteredSampleIds.every((id) => selectedSampleIds.includes(id))) return 'all';
@@ -815,40 +812,16 @@ export function DatasetDetailPage({
           <section className="min-w-0 rounded-lg border bg-card">
             <div className="flex flex-col gap-3 border-b p-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-1 flex-wrap items-center gap-2">
-                <div className="relative w-full sm:w-[320px]">
+                <div className="relative w-full sm:w-[360px]">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     type="search"
-                    value={searchQuery}
-                    onChange={(event) => {
-                      setSearchQuery(event.target.value);
-                      setPageIndex(0);
-                    }}
+                    value={searchInput}
+                    onChange={(event) => setSearchInput(event.target.value)}
                     placeholder={t('datasets.detail.sampleSearchPlaceholder')}
                     className="h-9 pl-8 text-sm"
                   />
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="outline" size="sm" className="h-9">
-                      <Filter className="size-4" />
-                      {sampleFieldFilter === 'all' ? t('datasets.detail.fieldFilter') : sampleFieldFilter}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    {sampleFieldFilters.map((fieldFilter) => (
-                      <DropdownMenuItem
-                        key={fieldFilter}
-                        onSelect={() => {
-                          setSampleFieldFilter(fieldFilter);
-                          setPageIndex(0);
-                        }}
-                      >
-                        {fieldFilter === 'all' ? t('datasets.filter.all') : fieldFilter}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {selectedSampleIds.length > 0 ? (
@@ -868,13 +841,16 @@ export function DatasetDetailPage({
             </div>
 
             <DatasetSamplesTable
-              data={filteredSamples}
+              data={visibleSamples}
               fields={orderedFields}
               selectedSampleId={selectedSample?.id ?? ''}
               selectedIds={selectedSampleIds}
               headState={sampleHeadState}
+              total={total}
               pageIndex={pageIndex}
+              pageSize={pageSize}
               onPageIndexChange={setPageIndex}
+              onPageSizeChange={setPageSize}
               onSelectSample={setSelectedSampleId}
               onToggleSelected={toggleSampleSelected}
               onToggleAll={toggleAllFilteredSamples}

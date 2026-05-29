@@ -2,14 +2,14 @@ import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } fr
 import { z } from 'zod';
 import { createProductionReleaseInputSchema, stopProductionReleaseInputSchema } from '@proofhound/shared';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { ProductionReleaseService } from './production-release.service';
 
 const uuidSchema = z.string().uuid();
 
 @Controller('production-releases')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class ProductionReleaseController {
   constructor(private readonly service: ProductionReleaseService) {}
 

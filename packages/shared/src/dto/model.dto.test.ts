@@ -104,6 +104,7 @@ describe('model DTO quota limits', () => {
       rpm: { limit: -1, usage: 0, current: 120 },
       tpm: { limit: -1, usage: 0, current: 10000 },
       concurrency: { limit: 999, usage: 0, current: 0 },
+      autoConcurrency: true,
       pricing: { inputPerMillion: 0, outputPerMillion: 0 },
       capabilities: { image: 'none' },
       createdAt: '2026-05-18T00:00:00.000Z',

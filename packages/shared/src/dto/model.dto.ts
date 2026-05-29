@@ -43,8 +43,10 @@ export const modelLimitSchema = z.object({
 });
 export type ModelLimitDto = z.infer<typeof modelLimitSchema>;
 
+// limit = concurrency ceiling; effective = system-derived in-flight cap when autoConcurrency is on (see 21 §6.1)
 const modelConcurrencyLimitSchema = modelLimitSchema.extend({
   limit: modelConcurrencyLimitValueSchema,
+  effective: z.number().int().positive().optional(),
 });
 
 export const modelPricingSchema = z.object({
@@ -88,6 +90,7 @@ const modelBaseListItemSchema = z.object({
   rpm: modelLimitSchema,
   tpm: modelLimitSchema,
   concurrency: modelConcurrencyLimitSchema,
+  autoConcurrency: z.boolean(),
   pricing: modelPricingSchema,
   capabilities: modelCapabilitiesSchema,
   extraBody: modelExtraBodySchema,
@@ -147,6 +150,8 @@ const modelMutableFieldsSchema = z.object({
   rpm: modelRateLimitInputSchema,
   tpm: modelRateLimitInputSchema,
   concurrency: modelConcurrencyLimitInputSchema.default({ limit: MODEL_DEFAULT_CONCURRENCY_LIMIT }),
+  // When true (default), concurrency.limit is the ceiling and effective concurrency is auto-tuned. See 21 §6.1
+  autoConcurrency: z.coerce.boolean().default(true),
   pricing: modelPricingSchema.default({ inputPerMillion: 0, outputPerMillion: 0 }),
   capabilities: modelCapabilitiesSchema.default({ image: 'none' }),
   extraBody: modelExtraBodySchema,

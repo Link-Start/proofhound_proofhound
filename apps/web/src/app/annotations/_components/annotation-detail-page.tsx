@@ -19,7 +19,7 @@ import { AnnotationClaimDialog } from '@/components/annotations/annotation-claim
 import { Main } from '@/components/layout/main';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { Progress, formatProgressLabel } from '@/components/ui/progress';
 import { Segmented } from '@/components/ui/segmented';
 import {
@@ -30,6 +30,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableSkeletonRows,
   type TableColumn,
 } from '@/components/ui/table';
 import {
@@ -39,6 +40,7 @@ import {
   useReleaseAnnotationSample,
   useSubmitAnnotationSample,
 } from '@/hooks/annotation';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
@@ -142,6 +144,7 @@ export function AnnotationDetailPage({ projectId, annotationTaskId }: { projectI
     [sampleFilter],
   );
   const annotationsQuery = useAnnotationSamples(projectId, annotationTaskId, query);
+  const annotationsLoading = useDelayedLoading(annotationsQuery.isLoading);
   const claimMutation = useClaimAnnotationSamples(projectId, annotationTaskId);
   const submitMutation = useSubmitAnnotationSample(projectId, annotationTaskId);
   const releaseMutation = useReleaseAnnotationSample(projectId, annotationTaskId);
@@ -176,11 +179,12 @@ export function AnnotationDetailPage({ projectId, annotationTaskId }: { projectI
     );
   }
 
-  if (taskQuery.isLoading && !taskQuery.data) {
+  const detailLoading = useDelayedLoading(taskQuery.isLoading && !taskQuery.data);
+  if (detailLoading) {
     return (
       <Main fixed className="bg-muted/35">
-        <div className="mx-auto flex min-h-[520px] w-full max-w-[1760px] items-center justify-center">
-          <PlatformLoader />
+        <div className="mx-auto w-full max-w-[1760px]" data-testid="annotation-detail-page">
+          <DetailPageSkeleton />
         </div>
       </Main>
     );
@@ -346,10 +350,8 @@ export function AnnotationDetailPage({ projectId, annotationTaskId }: { projectI
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {annotationsQuery.isLoading ? (
-                      <TableEmpty>
-                        <PlatformLoader className="py-1" size="sm" />
-                      </TableEmpty>
+                    {annotationsLoading ? (
+                      <TableSkeletonRows />
                     ) : annotations.length === 0 ? (
                       <TableEmpty>{t('annotations.detail.empty')}</TableEmpty>
                     ) : (

@@ -67,6 +67,7 @@ function makeModel(overrides: Partial<ProjectModelListItemDto> = {}): ProjectMod
     rpm: { limit: 600, usage: 0, current: 0 },
     tpm: { limit: 250_000, usage: 0, current: 0 },
     concurrency: { limit: 20, usage: 0, current: 0 },
+    autoConcurrency: true,
     pricing: { inputPerMillion: 0.15, outputPerMillion: 0.6 },
     capabilities: { image: 'none' },
     extraBody: {},

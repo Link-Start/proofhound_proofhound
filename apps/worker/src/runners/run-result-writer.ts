@@ -30,6 +30,7 @@ export class DrizzleRunResultWriter implements LLMRunResultWriter {
     const bullmqJobId = record.bullmqJobId ?? null;
     const roundIndex = record.roundIndex ?? null;
     const releaseVariantId = record.releaseVariantId ?? null;
+    const webhookTokenId = record.webhookTokenId ?? null;
 
     await this.db.execute(sql`
       INSERT INTO ph_runs.run_results (
@@ -38,7 +39,7 @@ export class DrizzleRunResultWriter implements LLMRunResultWriter {
         raw_response, parsed_output, decision_output, expected_output, is_correct, judgment_status,
         status, error_class, error_message,
         latency_ms, input_tokens, output_tokens, cost_estimate, attempt,
-        dbos_workflow_id, bullmq_job_id, round_index
+        dbos_workflow_id, bullmq_job_id, round_index, webhook_token_id
       )
       SELECT
         ${record.id}::uuid, ${record.projectId}::uuid, ${record.source},
@@ -52,7 +53,7 @@ export class DrizzleRunResultWriter implements LLMRunResultWriter {
         ${record.status}, ${errorClass}, ${errorMessage},
         ${latencyMs}, ${inputTokens}, ${outputTokens},
         ${costEstimate}, ${attempt},
-        ${dbosWorkflowId}, ${bullmqJobId}, ${roundIndex}
+        ${dbosWorkflowId}, ${bullmqJobId}, ${roundIndex}, ${webhookTokenId}::uuid
       WHERE NOT EXISTS (
         SELECT 1 FROM ph_runs.run_results WHERE id = ${record.id}::uuid
       )

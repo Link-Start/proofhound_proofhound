@@ -4,6 +4,7 @@
 export * from './http';
 export * from './public-env';
 export * from './dataset';
+export * from './dataset-import';
 export * from './prompt';
 export * from './experiment';
 export * from './optimization';

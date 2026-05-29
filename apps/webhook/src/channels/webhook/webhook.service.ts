@@ -69,7 +69,7 @@ export class WebhookService {
   ) {}
 
   async receive(input: ReceiveWebhookInput) {
-    const connector = await this.authorizeConnector(input);
+    const { connector, tokenId } = await this.authorizeConnector(input);
     const releaseLine = await this.repo.findActiveReleaseForConnector(connector.id);
     if (!releaseLine) {
       throw new ConflictException('webhook_no_active_release');
@@ -121,6 +121,7 @@ export class WebhookService {
         payload,
         mapped.externalId,
         runResultId,
+        tokenId,
         asyncCall,
       );
       try {
@@ -172,7 +173,7 @@ export class WebhookService {
   }
 
   async getCallResult(input: GetWebhookCallInput) {
-    const connector = await this.authorizeConnector(input);
+    const { connector } = await this.authorizeConnector(input);
     const receipt = await this.readAsyncCall(input.callId);
     if (!receipt || receipt.projectId !== connector.projectId || receipt.connectorId !== connector.id) {
       return { status: 'expired', call_id: input.callId, expires_in_seconds: 0 };
@@ -193,7 +194,7 @@ export class WebhookService {
     webhookSlug: string;
     pathName: string;
     authorization: string | null;
-  }): Promise<WebhookConnectorRow> {
+  }): Promise<{ connector: WebhookConnectorRow; tokenId: string }> {
     const token = parseBearerToken(input.authorization);
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const result = await this.repo.findConnectorWithValidToken(
@@ -207,7 +208,7 @@ export class WebhookService {
       throw new UnauthorizedException('expired_webhook_token');
     }
     await this.repo.touchTokenLastUsed(result.tokenId);
-    return result.connector;
+    return { connector: result.connector, tokenId: result.tokenId };
   }
 
   private async waitForRunResult(runResultId: string, timeoutMs: number): Promise<WebhookRunResultRow> {
@@ -426,6 +427,7 @@ function buildLlmPayload(
   rawPayload: Record<string, unknown>,
   externalId: string,
   runResultId: string,
+  webhookTokenId: string,
   webhookAsyncCall?: WebhookAsyncCallContext,
 ): LlmJobPayload {
   const { renderedPrompt } = renderPromptForSample(
@@ -447,6 +449,7 @@ function buildLlmPayload(
     promptId: release.promptId,
     modelId: release.modelId,
     runResultId,
+    webhookTokenId,
     sampleId: null,
     externalId,
     renderedPrompt,

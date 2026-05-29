@@ -112,6 +112,7 @@ export function createLlmRunner(deps: LlmRunnerDependencies) {
           dbosWorkflowId: jobContext.dbosWorkflowId,
           bullmqJobId: jobContext.bullmqJobId,
           attempt: jobContext.attempt,
+          webhookTokenId: input.webhookTokenId ?? null,
         },
         // The judgment strategy expects a parsed[expected_field]-style structure; when parseResponse is not provided, parsed=undefined,
         // and the whole metrics is unreliable. Parse strict JSON first; on failure, fall back to parsing a Markdown JSON fence.
@@ -159,6 +160,7 @@ export async function loadModelInvocationConfig(
     rpmLimit: model.rpmLimit,
     tpmLimit: model.tpmLimit,
     concurrencyLimit: model.concurrencyLimit,
+    autoConcurrency: model.autoConcurrency,
     inputTokenPricePerMillion: model.inputTokenPricePerMillion,
     outputTokenPricePerMillion: model.outputTokenPricePerMillion,
     extraBody: toExtraBody(model.extraBody),

@@ -39,7 +39,7 @@ import { ImagePreviewDialog, ImageZoomHoverOverlay } from '@/components/ui/image
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
 import { ModalityIcon, ModalityIconGroup, type ModalityKind } from '@/components/ui/modality-icon';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { DetailPageSkeleton } from '@/components/ui/detail-page-skeleton';
 import { Progress, formatProgressLabel } from '@/components/ui/progress';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
 import {
@@ -50,6 +50,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableSkeletonRows,
   type TableColumn,
 } from '@/components/ui/table';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -58,6 +59,7 @@ import { cn } from '@/lib/utils';
 import { formatDateTime, formatLatencySeconds } from '@/lib/format';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from '@/hooks/use-auto-refresh';
 import { useControlExperiment, useDownloadExperiment, useExperiment } from '@/hooks/experiment';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useExperimentRunResults } from '@/hooks/run-result';
 import { experimentTone } from '../../_components/experiment-theme';
 import { buildRepeatExperimentHref } from '../../_components/experiment-repeat-href';
@@ -647,6 +649,7 @@ function SampleResultsSection({
 
   const total = data?.total ?? 0;
   const samples = data?.data ?? [];
+  const samplesLoading = useDelayedLoading(isLoading);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const from = total === 0 ? 0 : pageIndex * pageSize + 1;
   const to = Math.min((pageIndex + 1) * pageSize, total);
@@ -766,11 +769,7 @@ function SampleResultsSection({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading && samples.length === 0 && (
-            <TableEmpty>
-              <PlatformLoader className="py-1" size="sm" />
-            </TableEmpty>
-          )}
+          {samplesLoading && samples.length === 0 && <TableSkeletonRows />}
           {!isLoading && samples.length === 0 && <TableEmpty>{t('experiments.detail.samples.none')}</TableEmpty>}
           {samples.map((sample) => {
             const fieldMap = buildSampleFieldValueMap(sample.datasetTextFields, sample.datasetImageFields);
@@ -919,14 +918,15 @@ export function ExperimentDetailPage({ projectId, experimentId }: { projectId: s
     onTick,
   });
 
-  if (isLoading) {
+  const detailLoading = useDelayedLoading(isLoading);
+  if (detailLoading) {
     return (
       <Main className="gap-0 bg-muted/35 p-0">
         <div
-          className="mx-auto flex min-h-[520px] w-full max-w-[1760px] items-center justify-center px-4 py-6 sm:px-6 lg:px-8"
+          className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8"
           data-testid="experiment-detail-page"
         >
-          <PlatformLoader />
+          <DetailPageSkeleton />
         </div>
       </Main>
     );

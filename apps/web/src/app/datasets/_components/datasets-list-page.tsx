@@ -34,7 +34,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
+import { ListRowsSkeleton } from '@/components/ui/list-page-skeleton';
+import { PlatformLoaderOverlay } from '@/components/ui/platform-loader';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ResourcePaginationFooter } from '@/components/ui/resource-pagination-footer';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, type TableColumn } from '@/components/ui/table';
 import {
@@ -43,6 +45,7 @@ import {
   TableActionTooltip,
 } from '@/components/ui/table-action';
 import { useDatasets, useDeleteDataset, useDownloadDataset, useUpdateDataset } from '@/hooks/dataset';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { useI18n, type TranslationKey } from '@/i18n';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
@@ -382,6 +385,7 @@ function DatasetTable({
 export function DatasetsListPage({ projectId }: { projectId: string }) {
   const { t } = useI18n();
   const datasetsQuery = useDatasets(projectId);
+  const datasetsLoading = useDelayedLoading(datasetsQuery.isLoading);
   const deleteDatasetMutation = useDeleteDataset(projectId);
   const downloadDatasetMutation = useDownloadDataset(projectId);
   const updateDatasetMutation = useUpdateDataset(projectId);
@@ -513,28 +517,24 @@ export function DatasetsListPage({ projectId }: { projectId: string }) {
     }
   };
 
-  if (datasetsQuery.isLoading) {
-    return (
-      <Main className="gap-0 bg-muted/35 p-0">
-        <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="datasets-page">
-          <PlatformLoader className="min-h-[560px]" />
-        </div>
-      </Main>
-    );
-  }
-
   return (
     <Main className="gap-0 bg-muted/35 p-0">
       <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="datasets-page">
         <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <h1 className="text-[26px] font-semibold">{t('datasets.title')}</h1>
-            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[12.5px] text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted-foreground">
               <span>{t('datasets.subtitle')}</span>
               <span>·</span>
-              <HeaderStat label={t('datasets.header.items')} value={formatCount(datasets.length)} />
-              <span>·</span>
-              <HeaderStat label={t('datasets.header.totalSamples')} value={formatCount(totalSamples)} />
+              {datasetsLoading ? (
+                <Skeleton className="h-3.5 w-44" />
+              ) : (
+                <>
+                  <HeaderStat label={t('datasets.header.items')} value={formatCount(datasets.length)} />
+                  <span>·</span>
+                  <HeaderStat label={t('datasets.header.totalSamples')} value={formatCount(totalSamples)} />
+                </>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -639,39 +639,48 @@ export function DatasetsListPage({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          <DatasetTable
-            datasets={pagedDatasets}
-            projectId={projectId}
-            selectedIds={selectedIds}
-            downloadingDatasetId={downloadingDatasetId}
-            deletingDatasetId={deleteDatasetMutation.isPending ? (deleteDatasetMutation.variables ?? null) : null}
-            onDelete={deleteDataset}
-            onDownload={(dataset) => void downloadDataset(dataset)}
-            onEdit={editDataset}
-            onToggleSelected={toggleSelected}
-          />
+          {datasetsLoading ? (
+            <div className="relative">
+              <ListRowsSkeleton rows={8} />
+              <PlatformLoaderOverlay />
+            </div>
+          ) : (
+            <>
+              <DatasetTable
+                datasets={pagedDatasets}
+                projectId={projectId}
+                selectedIds={selectedIds}
+                downloadingDatasetId={downloadingDatasetId}
+                deletingDatasetId={deleteDatasetMutation.isPending ? (deleteDatasetMutation.variables ?? null) : null}
+                onDelete={deleteDataset}
+                onDownload={(dataset) => void downloadDataset(dataset)}
+                onEdit={editDataset}
+                onToggleSelected={toggleSelected}
+              />
 
-          <ResourcePaginationFooter
-            summary={
-              <>
-                {t('datasets.totalPrefix')}{' '}
-                <span className="font-mono font-medium text-foreground">{filteredDatasets.length}</span>{' '}
-                {t('datasets.totalSuffix')} · {t('datasets.selected')}{' '}
-                <span className="font-mono font-medium text-foreground">{selectedIds.length}</span>
-              </>
-            }
-            pageIndex={safePageIndex}
-            pageCount={pageCount}
-            pageSize={pageSize}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
-            previousPageLabel={t('common.previousPage')}
-            nextPageLabel={t('common.nextPage')}
-            onPageChange={setPageIndex}
-            onPageSizeChange={(nextPageSize) => {
-              setPageSize(nextPageSize);
-              setPageIndex(0);
-            }}
-          />
+              <ResourcePaginationFooter
+                summary={
+                  <>
+                    {t('datasets.totalPrefix')}{' '}
+                    <span className="font-mono font-medium text-foreground">{filteredDatasets.length}</span>{' '}
+                    {t('datasets.totalSuffix')} · {t('datasets.selected')}{' '}
+                    <span className="font-mono font-medium text-foreground">{selectedIds.length}</span>
+                  </>
+                }
+                pageIndex={safePageIndex}
+                pageCount={pageCount}
+                pageSize={pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                previousPageLabel={t('common.previousPage')}
+                nextPageLabel={t('common.nextPage')}
+                onPageChange={setPageIndex}
+                onPageSizeChange={(nextPageSize) => {
+                  setPageSize(nextPageSize);
+                  setPageIndex(0);
+                }}
+              />
+            </>
+          )}
         </section>
       </div>
 

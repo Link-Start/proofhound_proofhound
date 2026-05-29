@@ -22,12 +22,12 @@ import {
 } from '@proofhound/shared';
 import type { Response } from 'express';
 import { CurrentUser, type CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { LocalActorGuard } from '../../common/guards/local-actor.guard';
+import { HttpActorGuard } from '../../common/contracts/http-actor.guard';
 import { resolveProjectContext } from '../../common/project-context';
 import { ExperimentService } from './experiment.service';
 
 @Controller('experiments')
-@UseGuards(LocalActorGuard)
+@UseGuards(HttpActorGuard)
 export class ExperimentController {
   constructor(private readonly experimentService: ExperimentService) {}
 

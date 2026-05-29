@@ -22,7 +22,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Main } from '@/components/layout/main';
-import { PlatformLoader } from '@/components/ui/platform-loader';
 import { PromptVersionPickerRow, PromptVersionPickerTag } from '@/components/prompt-version-picker-row';
 import { PromptLanguageSelect } from '@/components/prompt-language-select';
 import { useI18n, type TranslationKey } from '@/i18n';
@@ -33,6 +32,7 @@ import { useDatasets } from '@/hooks/dataset';
 import { useExperiments } from '@/hooks/experiment';
 import { useProjectModels } from '@/hooks/model';
 import { usePrompt, usePrompts } from '@/hooks/prompt';
+import { useDelayedLoading } from '@/hooks/use-delayed-loading';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { isProjectNameTaken } from '@/lib/project-name';
 import { composePromptPreview } from '../../../prompts/_components/prompt-preview';
@@ -1087,6 +1087,11 @@ export function OptimizationNewPage({
     [prompts, effectivePromptId],
   );
   const promptDetailQuery = usePrompt(projectId, selectedPrompt?.id ?? '');
+  const experimentsLoading = useDelayedLoading(experimentsQuery.isLoading);
+  const promptsLoading = useDelayedLoading(promptsQuery.isLoading);
+  const promptDetailLoading = useDelayedLoading(promptDetailQuery.isLoading);
+  const datasetsLoading = useDelayedLoading(datasetsQuery.isLoading);
+  const modelsLoading = useDelayedLoading(modelsQuery.isLoading);
   const promptVersions = useMemo(
     () =>
       selectedPrompt && promptDetailQuery.data
@@ -1443,23 +1448,6 @@ export function OptimizationNewPage({
   };
 
   const isSubmitting = createMutation.isPending;
-  const isInitialLoading =
-    (experimentsQuery.isLoading && !experimentsQuery.data) ||
-    (promptsQuery.isLoading && !promptsQuery.data) ||
-    (datasetsQuery.isLoading && !datasetsQuery.data) ||
-    (modelsQuery.isLoading && !modelsQuery.data) ||
-    (Boolean(selectedPrompt) && promptDetailQuery.isLoading && !promptDetailQuery.data);
-
-  if (isInitialLoading) {
-    return (
-      <Main className="gap-0 bg-muted/35 p-0">
-        <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="optimization-new-page">
-          <PlatformLoader className="min-h-[560px]" />
-        </div>
-      </Main>
-    );
-  }
-
   return (
     <Main className="gap-0 bg-muted/35 p-0">
       <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8" data-testid="optimization-new-page">
@@ -1628,7 +1616,7 @@ export function OptimizationNewPage({
                             onChange={setExperimentSearch}
                             placeholder={t('optimizations.new.origin.searchExperiment')}
                           />
-                          {experimentsQuery.isLoading ? (
+                          {experimentsLoading ? (
                             <PickerEmpty>{t('optimizations.new.origin.experimentLoading')}</PickerEmpty>
                           ) : experimentsQuery.isError ? (
                             <PickerEmpty>{t('optimizations.new.origin.experimentError')}</PickerEmpty>
@@ -1667,7 +1655,7 @@ export function OptimizationNewPage({
                               {t('optimizations.new.origin.promptColumn')}
                             </div>
                             <div className="max-h-[360px] overflow-y-auto overflow-x-hidden">
-                              {promptsQuery.isLoading ? (
+                              {promptsLoading ? (
                                 <PickerEmpty>{t('optimizations.new.origin.promptLoading')}</PickerEmpty>
                               ) : promptsQuery.isError ? (
                                 <PickerEmpty>{t('optimizations.new.origin.promptError')}</PickerEmpty>
@@ -1690,7 +1678,7 @@ export function OptimizationNewPage({
                               {t('optimizations.new.origin.versionColumn')}
                             </div>
                             <div className="max-h-[360px] overflow-y-auto overflow-x-hidden">
-                              {promptDetailQuery.isLoading ? (
+                              {promptDetailLoading ? (
                                 <PickerEmpty>{t('optimizations.new.origin.promptVersionLoading')}</PickerEmpty>
                               ) : promptDetailQuery.isError ? (
                                 <PickerEmpty>{t('optimizations.new.origin.promptVersionError')}</PickerEmpty>
@@ -1718,7 +1706,7 @@ export function OptimizationNewPage({
                           onChange={setDatasetSearch}
                           placeholder={t('optimizations.new.origin.searchDataset')}
                         />
-                        {datasetsQuery.isLoading ? (
+                        {datasetsLoading ? (
                           <PickerEmpty>{t('optimizations.new.origin.datasetLoading')}</PickerEmpty>
                         ) : datasetsQuery.isError ? (
                           <PickerEmpty>{t('optimizations.new.origin.datasetError')}</PickerEmpty>
@@ -1793,7 +1781,7 @@ export function OptimizationNewPage({
                           onChange={setDatasetSearch}
                           placeholder={t('optimizations.new.origin.searchDataset')}
                         />
-                        {datasetsQuery.isLoading ? (
+                        {datasetsLoading ? (
                           <PickerEmpty>{t('optimizations.new.origin.datasetLoading')}</PickerEmpty>
                         ) : datasetsQuery.isError ? (
                           <PickerEmpty>{t('optimizations.new.origin.datasetError')}</PickerEmpty>
@@ -1836,7 +1824,7 @@ export function OptimizationNewPage({
                       onChange={setModelSearch}
                       placeholder={t('optimizations.new.experiment.searchModel')}
                     />
-                    {modelsQuery.isLoading ? (
+                    {modelsLoading ? (
                       <PickerEmpty>{t('optimizations.new.experiment.modelLoading')}</PickerEmpty>
                     ) : modelsQuery.isError ? (
                       <PickerEmpty>{t('optimizations.new.experiment.modelError')}</PickerEmpty>
@@ -2155,7 +2143,7 @@ export function OptimizationNewPage({
                     <div className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-[12px] text-muted-foreground">
                       {originMode === 'prompt'
                         ? t('optimizations.new.optimization.fieldsHint')
-                        : datasetsQuery.isLoading
+                        : datasetsLoading
                           ? t('optimizations.new.optimization.fieldsLoading')
                           : t('optimizations.new.optimization.fieldsHint')}
                     </div>
@@ -2241,7 +2229,7 @@ export function OptimizationNewPage({
                         onChange={setAnalysisModelSearch}
                         placeholder={t('optimizations.new.optimization.searchAnalysisModel')}
                       />
-                      {modelsQuery.isLoading ? (
+                      {modelsLoading ? (
                         <PickerEmpty>{t('optimizations.new.experiment.modelLoading')}</PickerEmpty>
                       ) : modelsQuery.isError ? (
                         <PickerEmpty>{t('optimizations.new.experiment.modelError')}</PickerEmpty>

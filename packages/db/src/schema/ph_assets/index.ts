@@ -3,6 +3,7 @@
 
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -10,6 +11,7 @@ import {
   jsonb,
   numeric,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -37,7 +39,9 @@ export const models = phAssets.table(
     contextWindowTokens: integer('context_window_tokens'),
     rpmLimit: integer('rpm_limit').notNull().default(60),
     tpmLimit: integer('tpm_limit').notNull().default(100000),
+    // concurrency_limit acts as the ceiling when auto_concurrency is on; otherwise it is the hard limit. See docs/specs/21-models.md §6.1
     concurrencyLimit: integer('concurrency_limit').notNull().default(20),
+    autoConcurrency: boolean('auto_concurrency').notNull().default(true),
     inputTokenPricePerMillion: numeric('input_token_price_per_million', { precision: 12, scale: 6 })
       .notNull()
       .default('0'),
@@ -141,6 +145,59 @@ export const datasetSamples = phAssets.table(
       .on(t.datasetId, t.externalId)
       .where(sql`${t.externalId} IS NOT NULL`),
   ],
+);
+
+// Large-file streaming import session + staging samples. See docs/specs/06-database-schema.md §4.3.1 / 22-datasets.md §3.1.2
+export const datasetImports = phAssets.table(
+  'dataset_imports',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    // NULL during import; backfilled to the new dataset on successful complete promote
+    datasetId: uuid('dataset_id').references(() => datasets.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    fieldMappings: jsonb('field_mappings')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    fileName: text('file_name').notNull(),
+    fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }).notNull(),
+    contentType: text('content_type'),
+    sourceFormat: text('source_format').notNull(),
+    declaredTotalRows: integer('declared_total_rows'),
+    receivedRows: integer('received_rows').notNull().default(0),
+    status: text('status').notNull().default('importing'),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // Heartbeat advanced on each batch; sweep reaps importing sessions stale past the timeout
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('dataset_imports_source_format_check', sql`${t.sourceFormat} IN ('jsonl', 'csv', 'tsv')`),
+    check('dataset_imports_status_check', sql`${t.status} IN ('importing', 'ready')`),
+    index('idx_dataset_imports_project_status').on(t.projectId, t.status),
+    index('idx_dataset_imports_stale')
+      .on(t.status, t.updatedAt)
+      .where(sql`${t.status} = 'importing'`),
+  ],
+);
+
+export const datasetImportSamples = phAssets.table(
+  'dataset_import_samples',
+  {
+    importId: uuid('import_id')
+      .notNull()
+      .references(() => datasetImports.id, { onDelete: 'cascade' }),
+    rowIndex: integer('row_index').notNull(),
+    data: jsonb('data').notNull(),
+    externalId: text('external_id'),
+  },
+  // (import_id, row_index) gives single-batch resend idempotency; ON DELETE CASCADE makes cleanup = delete the session row
+  (t) => [primaryKey({ columns: [t.importId, t.rowIndex] })],
 );
 
 export const prompts = phAssets.table(

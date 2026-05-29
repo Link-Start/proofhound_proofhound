@@ -5,6 +5,7 @@ import { Copy, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ImagePreviewDialog, ImageZoomHoverOverlay, isRenderableImage } from '@/components/ui/image-preview-dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useI18n } from '@/i18n';
 import { useRunResult } from '@/hooks/run-result';
 import { formatDateTime } from '@/lib/format';
@@ -77,9 +78,19 @@ export function RunResultDetailSheet({ projectId, experimentId, runResultId, onC
         </SheetHeader>
 
         {isLoading && (
-          <p className="px-1 py-6 text-[12.5px] text-muted-foreground">
-            {t('experiments.detail.runResultSheet.loading')}
-          </p>
+          <div className="flex flex-col gap-4 pb-6" aria-busy="true">
+            <section className="rounded-md border bg-muted/35 p-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <div key={index} className="space-y-1.5">
+                    <Skeleton className="h-3 w-20" />
+                    <Skeleton className="h-4 w-32" />
+                  </div>
+                ))}
+              </div>
+            </section>
+            <Skeleton className="h-40 rounded-md" />
+          </div>
         )}
         {error && (
           <p className={cn('px-1 py-6 text-[12.5px]', experimentTone.danger.text)}>

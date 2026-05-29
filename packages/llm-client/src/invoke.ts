@@ -86,7 +86,7 @@ export async function invokeLLM(args: InvokeLLMArgs, deps: InvokeLLMDependencies
     });
     const provider = resolveLLMAdapter(invocationArgs.model.providerType, deps.adapters);
 
-    await deps.limiter.acquire({
+    const acquireResult = await deps.limiter.acquire({
       modelId: invocationArgs.model.id,
       estimatedTokens: estimated.totalTokens,
       limits: {
@@ -94,8 +94,21 @@ export async function invokeLLM(args: InvokeLLMArgs, deps: InvokeLLMDependencies
         tpmLimit: invocationArgs.model.tpmLimit,
         concurrencyLimit: invocationArgs.model.concurrencyLimit,
       },
+      autoConcurrency: invocationArgs.model.autoConcurrency,
     });
     acquired = true;
+    if (invocationArgs.model.autoConcurrency && acquireResult) {
+      deps.logger.debug?.(
+        {
+          modelId: invocationArgs.model.id,
+          effectiveConcurrency: acquireResult.effectiveConcurrency,
+          ceiling: invocationArgs.model.concurrencyLimit,
+          backoffFactor: acquireResult.backoffFactor,
+          latencyEwmaMs: acquireResult.latencyEwmaMs,
+        },
+        'limiter_auto_concurrency',
+      );
+    }
 
     const providerInvokeArgs: AdapterInvokeArgs = {
       model: invocationArgs.model,
@@ -134,6 +147,19 @@ export async function invokeLLM(args: InvokeLLMArgs, deps: InvokeLLMDependencies
     const costEstimate = estimateCostFromTokenUsage(usage, invocationArgs.model);
 
     logLLMSuccess(deps.logger, invocationArgs, providerResult, parsed, usage, costEstimate, durationMs);
+
+    if (invocationArgs.model.autoConcurrency) {
+      try {
+        await deps.limiter.reportOutcome?.({
+          modelId: invocationArgs.model.id,
+          kind: 'success',
+          latencyMs: durationMs,
+          tokens: usage.inputTokens + usage.outputTokens,
+        });
+      } catch {
+        // auto-concurrency feedback is best-effort; never fail the call because of it
+      }
+    }
 
     const judgmentOutcome = args.evaluateJudgment
       ? safeEvaluateJudgment(args.evaluateJudgment, parsed, providerResult.content)
@@ -177,6 +203,17 @@ export async function invokeLLM(args: InvokeLLMArgs, deps: InvokeLLMDependencies
       throw error;
     }
 
+    // Upstream provider throttle (HTTP 429) feeds the auto-concurrency backoff so effective concurrency
+    // converges to what the provider actually sustains. Best-effort; the original error is still rethrown.
+    if (invocationArgs.model.autoConcurrency && error instanceof LLMAdapterHttpError && error.httpStatus === 429) {
+      try {
+        await deps.limiter.reportOutcome?.({ modelId: invocationArgs.model.id, kind: 'upstream_throttle' });
+        deps.logger.debug?.({ modelId: invocationArgs.model.id }, 'limiter_backoff_applied');
+      } catch {
+        // best-effort
+      }
+    }
+
     const durationMs = (deps.now?.() ?? Date.now()) - startedAt;
     const normalized = normalizeError(error);
 
@@ -213,6 +250,8 @@ export async function testModelConnectivity(
   let probeRequestLogged = false;
 
   try {
+    // Connectivity probe goes through the limiter but never reports outcomes — a single health check
+    // must not pollute the model's auto-concurrency EWMA / backoff state.
     await deps.limiter.acquire({
       modelId: args.model.id,
       estimatedTokens: estimated.totalTokens,
@@ -221,6 +260,7 @@ export async function testModelConnectivity(
         tpmLimit: args.model.tpmLimit,
         concurrencyLimit: args.model.concurrencyLimit,
       },
+      autoConcurrency: args.model.autoConcurrency,
     });
     acquired = true;
 
