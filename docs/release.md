@@ -1,9 +1,9 @@
-# 发布流程
+# Release Process
 
-ProofHound 使用 release-please 管理根 `proofhound` 包的 SemVer、`CHANGELOG.md` 与 GitHub Release。
+ProofHound uses release-please to manage the SemVer, `CHANGELOG.md`, and GitHub Release of the root `proofhound` package.
 
-需要发布新版本时，在 GitHub Actions 中手动触发 `.github/workflows/release-please.yml`，它会创建或更新 release PR。提交信息遵循 Conventional Commits：`fix:` 产生 patch，`feat:` 在 `0.x` 阶段产生 patch，`!` 或 `BREAKING CHANGE` 在 `0.x` 阶段产生 minor。
+When you need to release a new version, manually trigger `.github/workflows/release-please.yml` in GitHub Actions; it creates or updates the release PR. Commit messages follow Conventional Commits: `fix:` produces a patch, `feat:` produces a patch during the `0.x` phase, and `!` or `BREAKING CHANGE` produces a minor during the `0.x` phase.
 
-合并 release PR 后，release-please 会更新 `package.json`、`CHANGELOG.md`、`.release-please-manifest.json`，并创建对应的 git tag 与 GitHub Release。
+After the release PR is merged, release-please updates `package.json`, `CHANGELOG.md`, and `.release-please-manifest.json`, and creates the corresponding git tag and GitHub Release.
 
-当前工作流使用默认 `GITHUB_TOKEN`。如果后续需要 release-please 创建的 PR 或 Release 触发其它 GitHub Actions workflow，再为 action 配置单独的 PAT secret。
+The current workflow uses the default `GITHUB_TOKEN`. If you later need PRs or Releases created by release-please to trigger other GitHub Actions workflows, configure a dedicated PAT secret for the action.
