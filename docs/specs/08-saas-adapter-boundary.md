@@ -23,9 +23,12 @@ The OSS trunk does not yet undergo an npm packaging overhaul; `apps/*` and `pack
 
 - Public exports of `packages/*` are stable; any breaking export change is treated as a breaking change
 - All extension points are injected via DI tokens (abstract class); internal OSS code never hard-imports the concrete classes of the default implementations
-- Top-level Nest modules must be importable externally and any extension point replaceable via `overrideProvider`
+- The top-level Nest root module is importable externally and is assembled as a dynamic module via `forRoot({ contracts })`. The `contracts` argument is a `@Global` module that binds every extension-point token to a concrete implementation: the OSS shell passes `LocalContractsModule` (the `Local*` defaults), a SaaS shell passes its own `SaasContractsModule` (the `Remote*` implementations). Assembly-time injection through `forRoot` is the **production** mechanism for replacing extension points; OSS business code never learns which `contracts` module was supplied, and no edition flag is introduced (cf. §8)
+- `overrideProvider` (`Test.createTestingModule(...).overrideProvider(X)`) is reserved strictly as a **test-time** replacement primitive—`@nestjs/testing` must never enter the production bundle. Production form differences are carried solely by the `contracts` module handed to `forRoot`, not by `overrideProvider`
 
-DI tokens uniformly use abstract class form (e.g. `ProjectContextResolver`), not Symbol—cross-package shared Symbol token behavior is unstable.
+DI tokens uniformly use abstract class form (e.g. `ProjectContextResolver`), not Symbol—cross-package shared Symbol token behavior is unstable. The `contracts` module passed to `forRoot` is the only edition-variable input, keeping OSS↔SaaS to a single assembly-time seam rather than a runtime branch.
+
+> Current state (2026-05): the root module (`apps/server/src/app.module.ts`) still hard-imports the OSS contracts bindings directly. Converting it to `forRoot({ contracts })` and renaming `ContractsModule` → `LocalContractsModule` is the concrete change that realizes this contract. The three landed extension points (§3.1–§3.3) are already abstract-class tokens, so a SaaS shell can override them as soon as the root module accepts `contracts` as a parameter; the remaining six (§3.4–§3.8, see §7 PR6–10) join the same `contracts` module as they land.
 
 ## 3. Extension point list
 
@@ -567,11 +570,11 @@ The OSS schema change principles remain unchanged ([06](06-database-schema.md)):
 
 The OSS trunk provides `TokenService` (§3.5) as the extension point for user token CRUD and validation. In the SaaS form:
 
-- The SaaS repository `overrideProvider(TokenService)` replaces it with `RemoteTokenService`
+- The SaaS repository binds `TokenService` to `RemoteTokenService` inside its `SaasContractsModule` (the `contracts` argument handed to the root `forRoot({ contracts })`, see §2)
 - `RemoteTokenService` reads and writes the SaaS schema's token table and does not write `scope='user'` rows in the OSS `ph_core.tokens`
 - The OSS `ph_core.tokens` table structure is retained; under a SaaS deployment the `user` scope does not write data, but `scope='webhook'` rows are still written normally (managed by the connector resource, unrelated to the SaaS switch)
 - Likewise, `ActorContextResolver` (§3.2) and `McpAuthResolver` (§3.3) are also replaced by SaaS with their respective Remote implementations; the three are overridden independently without affecting each other
-- There is no need to write env branches such as `process.env.DEPLOYMENT_MODE` in OSS code—the form difference is entirely borne by provider override
+- There is no need to write env branches such as `process.env.DEPLOYMENT_MODE` in OSS code—the form difference is entirely borne by the `contracts` module passed to `forRoot` (§2)
 
 The per-connector token of the webhook entry is not managed by `TokenService`; it is stored in `ph_core.tokens with scope='webhook' AND connector_id=?` and validated by `ConnectorContextResolver` (§3.4). If SaaS wants to replace the webhook integration (e.g. switch to HMAC, add multi-tenant isolation), it only needs to override `ConnectorContextResolver`, without affecting `TokenService` / `ActorContextResolver` / `McpAuthResolver`.
 
