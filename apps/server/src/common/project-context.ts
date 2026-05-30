@@ -6,7 +6,7 @@
 // In the SaaS form this must go through `ProjectContextProvider.resolveAsync(actor, hint)` (async version) —
 // switched once PR §7 PR11 lands the X-Project-Id transport. This PR does not force a migration.
 //
-// `ProjectContextProvider` now internally delegates to `ProjectContextResolver` (registered as DI in ContractsModule).
+// `ProjectContextProvider` now internally delegates to `ProjectContextResolver` (registered as DI in LocalContractsModule).
 // Synchronous direct calls still use the constant; the async path goes through the resolver, making it easy for SaaS to override.
 
 import { Injectable, Optional } from '@nestjs/common';

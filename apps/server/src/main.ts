@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { createHttpLogger, createLogger } from '@proofhound/logger';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { LocalContractsModule } from './common/contracts/local-contracts.module';
 import { PinoExceptionFilter } from './common/filters/pino-exception.filter';
 import { resolveListenPort } from './config/listen-port';
 
@@ -10,7 +11,10 @@ async function bootstrap() {
   const logger = createLogger('server.bootstrap', { service: 'server' });
   const bodyLimit = process.env.SERVER_BODY_LIMIT ?? '10mb';
   logger.info({}, 'server_bootstrap_start');
-  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  const app = await NestFactory.create(
+    AppModule.forRoot({ contracts: LocalContractsModule }),
+    { bodyParser: false },
+  );
   logger.info({}, 'server_nest_app_created');
   app.use(json({ limit: bodyLimit }));
   app.use(urlencoded({ extended: true, limit: bodyLimit }));

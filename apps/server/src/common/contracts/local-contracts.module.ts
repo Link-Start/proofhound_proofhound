@@ -1,10 +1,12 @@
-// ContractsModule — registers default implementations for OSS adapter extension points
-// See docs/specs/08-saas-adapter-boundary.md §3 + §7 PR1
+// LocalContractsModule — the OSS default `contracts` module: binds each adapter extension-point
+// token to its Local* implementation.
+// See docs/specs/08-saas-adapter-boundary.md §2 + §3.
 //
-// The SaaS repo switches forms via DI overrides such as
-// `overrideProvider(ActorContextResolver).useClass(RemoteActorContextResolver)`; OSS mainline is unaware of the form difference.
+// Supplied to the root `AppModule.forRoot({ contracts })` at assembly time. A SaaS shell passes its
+// own `SaasContractsModule` (binding Remote* implementations) the same way; OSS mainline is unaware
+// of which contracts module was supplied. `overrideProvider` stays a test-only primitive (§2).
 //
-// @Global() ensures every module can inject these resolvers directly without per-module import.
+// @Global() ensures every feature module can inject these resolvers without a per-module import.
 
 import { Global, Module } from '@nestjs/common';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
@@ -32,4 +34,4 @@ import { ProjectContextResolver } from './project-context.resolver';
     LocalUserTokenVerifier,
   ],
 })
-export class ContractsModule {}
+export class LocalContractsModule {}

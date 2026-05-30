@@ -1,5 +1,4 @@
-import { Module } from '@nestjs/common';
-import { ContractsModule } from './common/contracts/contracts.module';
+import { Module, type DynamicModule, type Type } from '@nestjs/common';
 import { HealthController } from './common/health.controller';
 import { HealthService } from './common/health.service';
 import { ProjectContextModule } from './common/project-context.module';
@@ -23,31 +22,47 @@ import { ReleaseLineModule } from './modules/release-line/release-line.module';
 import { RunResultModule } from './modules/run-result/run-result.module';
 import { TokenModule } from './modules/token/token.module';
 
-@Module({
-  imports: [
-    ConfigModule,
-    ContractsModule,
-    ProjectContextModule,
-    CryptoModule,
-    DatabaseModule,
-    OrchestrationModule,
-    RedisModule,
-    ModelModule,
-    MonitoringModule,
-    AnnotationModule,
-    DatasetModule,
-    PromptModule,
-    RunResultModule,
-    TokenModule,
-    ExperimentModule,
-    OptimizationModule,
-    QuickStartModule,
-    ReleaseLineModule,
-    ConnectorModule,
-    CanaryReleaseModule,
-    ProductionReleaseModule,
-  ],
-  controllers: [HealthController],
-  providers: [HealthService],
-})
-export class AppModule {}
+// AppModule — the shared server root module, assembled as a dynamic module via forRoot so the
+// `contracts` adapter bindings are supplied at boot instead of hard-coded. OSS passes
+// LocalContractsModule (Local* defaults); a SaaS shell passes its own SaasContractsModule
+// (Remote* implementations). See docs/specs/08-saas-adapter-boundary.md §2.
+export interface AppModuleOptions {
+  // A @Global module binding every adapter extension-point token to an implementation.
+  // OSS: LocalContractsModule. SaaS: SaasContractsModule. The root module never imports a
+  // concrete Local* / Remote* class directly — only this supplied module does the binding.
+  contracts: Type<unknown> | DynamicModule;
+}
+
+@Module({})
+export class AppModule {
+  static forRoot(options: AppModuleOptions): DynamicModule {
+    return {
+      module: AppModule,
+      imports: [
+        ConfigModule,
+        options.contracts,
+        ProjectContextModule,
+        CryptoModule,
+        DatabaseModule,
+        OrchestrationModule,
+        RedisModule,
+        ModelModule,
+        MonitoringModule,
+        AnnotationModule,
+        DatasetModule,
+        PromptModule,
+        RunResultModule,
+        TokenModule,
+        ExperimentModule,
+        OptimizationModule,
+        QuickStartModule,
+        ReleaseLineModule,
+        ConnectorModule,
+        CanaryReleaseModule,
+        ProductionReleaseModule,
+      ],
+      controllers: [HealthController],
+      providers: [HealthService],
+    };
+  }
+}
