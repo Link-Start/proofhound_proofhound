@@ -61,24 +61,34 @@ proofhound/
 
 `apps/*` must not be used as library entry points. Do not add app-level barrels to make `apps/server` importable by SaaS; when code needs to be reused, move it into `packages/core` and export it through stable package exports.
 
-Target layout after the extraction:
+Layout:
 
 ```text
 packages/core/src/
+├── index.ts                          # root barrel re-exporting the three runtime modules
+├── shared/                           # cross-runtime infra, de-duplicated across the runtimes
+│   ├── database/                     # database.module.ts + database.constants.ts (single copy)
+│   ├── redis/                        # redis.module.ts (incl. RedisMutexService) + redis.constants.ts
+│   ├── crypto/                       # crypto.module.ts + crypto.service.ts
+│   ├── config/                       # config.module.ts (Nest ConfigModule wrapper)
+│   ├── health/                       # health.controller.ts + health.service.ts
+│   └── filters/                      # pino-exception.filter.ts (constructor takes serviceName)
 ├── server/
-│   ├── proofhound-server.module.ts       # ProofHoundServerModule.forRoot({ contracts })
+│   ├── index.ts                      # @proofhound/core/server barrel
+│   ├── proofhound-server.module.ts   # ProofHoundServerModule.forRoot({ contracts })
 │   ├── channels/
 │   │   └── mcp/
 │   ├── common/
-│   │   ├── contracts/
+│   │   ├── contracts/                # adapter tokens + Local* defaults + LocalContractsModule
 │   │   ├── decorators/
-│   │   ├── filters/
-│   │   └── pipes/
+│   │   ├── pipes/
+│   │   ├── actor-context.ts
+│   │   ├── access-control.ts
+│   │   ├── project-context.ts        # server-coupled (uses actor-context/contracts) — stays here, NOT in shared/
+│   │   └── project-context.module.ts
 │   ├── infrastructure/
-│   │   ├── crypto/
-│   │   ├── database/
-│   │   ├── orchestration/
-│   │   ├── redis/
+│   │   ├── llm/
+│   │   ├── orchestration/            # DBOS + BullMQ producer / self-consumer
 │   │   └── storage/
 │   └── modules/
 │       ├── token/
@@ -93,11 +103,21 @@ packages/core/src/
 │       ├── run-result/
 │       └── quick-start/
 ├── webhook/
-│   └── proofhound-webhook.module.ts
-├── worker/
-│   └── proofhound-worker.module.ts
-└── index.ts
+│   ├── index.ts                      # @proofhound/core/webhook barrel
+│   ├── proofhound-webhook.module.ts
+│   ├── channels/webhook/
+│   └── infrastructure/orchestration/ # webhook BullMQ producer (topology differs from server)
+└── worker/
+    ├── index.ts                      # @proofhound/core/worker barrel
+    ├── proofhound-worker.module.ts
+    ├── consumers/                    # llm / probe
+    ├── runners/
+    ├── infrastructure/llm/           # model-secret provider
+    ├── config/                       # worker-concurrency.ts (consumer needs it at module load)
+    └── scripts/
 ```
+
+`shared/` holds only infra proven identical or cleanly supersettable across runtimes (database, redis incl. mutex, crypto, the Nest config wrapper, health, the parameterized exception filter); `webhook` and `worker` import from `../shared`, never from `server`. Concerns that are per-runtime by nature stay in their own subtree (or in the app shell): BullMQ topology, `listen-port`, and `env.schema`.
 
 Stable package exports:
 
@@ -108,7 +128,7 @@ Stable package exports:
 @proofhound/core/contracts   # adapter extension-point abstract classes + local defaults
 ```
 
-During the migration window, files may still physically live under `apps/server`, `apps/webhook`, or `apps/worker`; this section describes the target boundary. New reusable backend code should be placed in `packages/core` once the extraction PR lands.
+The extraction has landed: reusable backend code lives in `packages/core` and `apps/*` are thin shells. New reusable backend code goes in `packages/core` (under the matching runtime subtree, or `shared/` if used by more than one runtime), never behind an `apps/*` barrel.
 
 Standard layout for a business module:
 
@@ -129,10 +149,11 @@ DTOs do not go into `packages/core/src/server/modules/*`. All request / response
 
 ```text
 apps/server/src/
-└── main.ts
+├── main.ts
+└── config/            # per-runtime process config: env.schema.ts, listen-port.ts
 ```
 
-Responsibilities:
+A shell is `main.ts` plus a small `config/` of per-runtime process concerns (environment validation, listen-port resolution) — not a library. Responsibilities:
 
 - load process env
 - create the Nest app
@@ -155,7 +176,7 @@ It wires process-level concerns and mounts the core webhook runtime from `@proof
 
 ## 6. apps/worker — OSS Worker Shell
 
-`apps/worker` is the OSS worker process entry point. It starts the core worker runtime from `@proofhound/core/worker`, consumes the `llm` queue, executes LLM calls, and writes run results. It is unaware of the Web UI and does not directly implement business Controllers.
+`apps/worker` is the OSS worker process entry point (`src/main.ts` + `src/config/env.schema.ts`). It starts the core worker runtime from `@proofhound/core/worker`, consumes the `llm` queue, executes LLM calls, and writes run results. The runtime concurrency helper (`worker-concurrency.ts`) lives in the core worker runtime (the consumer reads it at module load); the shell's `env.schema.ts` imports `DEFAULT_WORKER_CONCURRENCY` from `@proofhound/core/worker`. It is unaware of the Web UI and does not directly implement business Controllers.
 
 Core constraints:
 
