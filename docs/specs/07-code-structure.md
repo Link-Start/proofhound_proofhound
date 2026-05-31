@@ -6,13 +6,14 @@ This document explains how the open-source self-hosted repository is organized: 
 
 - [§1 Repository Principles](#1-repository-principles)
 - [§2 Top-Level Layout](#2-top-level-layout)
-- [§3 apps/server — NestJS Backend](#3-appsserver--nestjs-backend)
-- [§4 apps/webhook — Webhook ingress](#4-appswebhook--webhook-ingress)
-- [§5 apps/worker — LLM Worker](#5-appsworker--llm-worker)
-- [§6 apps/web — Next.js Frontend](#6-appsweb--nextjs-frontend)
-- [§7 packages — Shared Packages](#7-packages--shared-packages)
-- [§8 Dependency Rules](#8-dependency-rules)
-- [§9 Where New Code Goes](#9-where-new-code-goes)
+- [§3 packages/core — Core Runtime](#3-packagescore--core-runtime)
+- [§4 apps/server — OSS Server Shell](#4-appsserver--oss-server-shell)
+- [§5 apps/webhook — OSS Webhook Shell](#5-appswebhook--oss-webhook-shell)
+- [§6 apps/worker — OSS Worker Shell](#6-appsworker--oss-worker-shell)
+- [§7 apps/web — Next.js Frontend](#7-appsweb--nextjs-frontend)
+- [§8 packages — Shared Packages](#8-packages--shared-packages)
+- [§9 Dependency Rules](#9-dependency-rules)
+- [§10 Where New Code Goes](#10-where-new-code-goes)
 
 ## 1. Repository Principles
 
@@ -20,7 +21,8 @@ This document explains how the open-source self-hosted repository is organized: 
 2. **Local single-project boundary**: Public routes and the frontend are built around core business resources and provide no project management UI; business tables, DTOs, Services, and Repositories retain the `project_id` / `projectId` boundary. The current project is uniformly resolved through `ProjectContextProvider` / `resolveProjectContext`, and the OSS implementation returns the local project.
 3. **Shared DTOs are the source of truth for contracts**: `packages/shared/src/dto/` defines the Zod schemas shared by the backend, the frontend, and the API client.
 4. **Thin Controllers, business logic in Services**: REST / MCP / Webhook only handle authentication, validation, and adaptation; business semantics live in the same set of Services.
-5. **Cross-cutting foundational capabilities go in packages**: Logging, rate limiting, the LLM client, connector drivers, and strategy packages are tested independently and do not depend back on apps.
+5. **Application entry points stay thin**: `apps/*` are process shells (env, bootstrap, logging, listen / worker start). Reusable backend runtime lives in `packages/core`, not behind an `apps/*` barrel.
+6. **Cross-cutting foundational capabilities go in packages**: Logging, rate limiting, the LLM client, connector drivers, and strategy packages are tested independently and do not depend back on apps.
 
 ## 2. Top-Level Layout
 
@@ -32,6 +34,7 @@ proofhound/
 │   ├── worker/       # BullMQ LLM worker
 │   └── web/          # Next.js + Refine + shadcn/ui frontend
 ├── packages/
+│   ├── core/         # @proofhound/core backend runtime: server / webhook / worker modules + contracts
 │   ├── shared/       # Zod DTO / shared types
 │   ├── db/           # Drizzle schema / migrations / seed
 │   ├── api-client/   # HTTP client
@@ -52,58 +55,65 @@ proofhound/
 └── CLAUDE.md
 ```
 
-## 3. apps/server — NestJS Backend
+## 3. packages/core — Core Runtime
 
-`apps/server` hosts the admin API, MCP, DBOS workflows, the BullMQ producer, and the long-running runner.
+`packages/core` publishes `@proofhound/core`, the reusable backend runtime consumed by the OSS process shells and by the separate SaaS repository. It owns the Nest modules, Controllers, Services, Repositories, contracts, local default implementations, DBOS workflows, runner services, webhook runtime, and worker handlers that form the ProofHound business loop.
+
+`apps/*` must not be used as library entry points. Do not add app-level barrels to make `apps/server` importable by SaaS; when code needs to be reused, move it into `packages/core` and export it through stable package exports.
+
+Target layout after the extraction:
 
 ```text
-apps/server/src/
-├── app.module.ts
-├── main.ts
-├── channels/
-│   └── mcp/
-│       ├── token.tools.ts
-│       ├── model.tools.ts
-│       ├── dataset.tools.ts
-│       ├── prompt.tools.ts
-│       ├── connector.tools.ts
-│       ├── experiment.tools.ts
-│       ├── optimization.tools.ts
-│       ├── canary-release.tools.ts
-│       ├── production-release.tools.ts
-│       ├── run-result.tools.ts
-│       └── quick-start.tools.ts
-├── common/
-│   ├── actor-context.ts
-│   ├── access-control.ts
-│   ├── project-context.ts
-│   ├── project-context.module.ts
-│   ├── guards/local-http-actor.guard.ts
-│   ├── decorators/current-user.decorator.ts
-│   └── pipes/zod-validation.pipe.ts
-├── infrastructure/
-│   ├── llm/
-│   ├── orchestration/
-│   ├── redis/
-│   └── storage/
-└── modules/
-    ├── token/
-    ├── model/
-    ├── dataset/
-    ├── prompt/
-    ├── connector/
-    ├── experiment/
-    ├── optimization/
-    ├── canary-release/
-    ├── production-release/
-    ├── run-result/
-    └── quick-start/
+packages/core/src/
+├── server/
+│   ├── proofhound-server.module.ts       # ProofHoundServerModule.forRoot({ contracts })
+│   ├── channels/
+│   │   └── mcp/
+│   ├── common/
+│   │   ├── contracts/
+│   │   ├── decorators/
+│   │   ├── filters/
+│   │   └── pipes/
+│   ├── infrastructure/
+│   │   ├── crypto/
+│   │   ├── database/
+│   │   ├── orchestration/
+│   │   ├── redis/
+│   │   └── storage/
+│   └── modules/
+│       ├── token/
+│       ├── model/
+│       ├── dataset/
+│       ├── prompt/
+│       ├── connector/
+│       ├── experiment/
+│       ├── optimization/
+│       ├── canary-release/
+│       ├── production-release/
+│       ├── run-result/
+│       └── quick-start/
+├── webhook/
+│   └── proofhound-webhook.module.ts
+├── worker/
+│   └── proofhound-worker.module.ts
+└── index.ts
 ```
+
+Stable package exports:
+
+```text
+@proofhound/core/server      # ProofHoundServerModule + server-facing contracts
+@proofhound/core/webhook     # ProofHoundWebhookModule + webhook entry contracts
+@proofhound/core/worker      # ProofHoundWorkerModule + worker handlers
+@proofhound/core/contracts   # adapter extension-point abstract classes + local defaults
+```
+
+During the migration window, files may still physically live under `apps/server`, `apps/webhook`, or `apps/worker`; this section describes the target boundary. New reusable backend code should be placed in `packages/core` once the extraction PR lands.
 
 Standard layout for a business module:
 
 ```text
-modules/prompt/
+server/modules/prompt/
 ├── prompt.module.ts
 ├── prompt.controller.ts
 ├── prompt.service.ts
@@ -111,21 +121,41 @@ modules/prompt/
 └── __tests__/
 ```
 
-DTOs do not go into `apps/server/src/modules/*`. All request / response schemas live in `packages/shared/src/dto/`.
+DTOs do not go into `packages/core/src/server/modules/*`. All request / response schemas live in `packages/shared/src/dto/`.
 
-## 4. apps/webhook — Webhook ingress
+## 4. apps/server — OSS Server Shell
 
-`apps/webhook` only hosts public-facing webhooks:
+`apps/server` is the OSS server process entry point. It wires deployment concerns and starts the reusable core server module.
+
+```text
+apps/server/src/
+└── main.ts
+```
+
+Responsibilities:
+
+- load process env
+- create the Nest app
+- pass `LocalContractsModule` to `ProofHoundServerModule.forRoot({ contracts })`
+- mount body parser, HTTP logger, CORS, and global filters
+- resolve the listen port and call `listen()`
+- handle bootstrap failure
+
+`apps/server` must not export a reusable library surface. SaaS imports `@proofhound/core/server`, never `apps/server/src/*`.
+
+## 5. apps/webhook — OSS Webhook Shell
+
+`apps/webhook` is the OSS webhook process entry point. It only hosts public-facing webhooks:
 
 - `/webhooks/*`
 - `/healthz`
 - `/readyz`
 
-It is responsible for per-connector webhook token authentication (see [08](08-saas-adapter-boundary.md) §3.4 `ConnectorContextResolver`), payload size guards, basic validation, and enqueueing or acknowledging. Do not implement admin APIs in the webhook app, and do not import `apps/server` in reverse.
+It wires process-level concerns and mounts the core webhook runtime from `@proofhound/core/webhook`. Per-connector webhook token authentication (see [08](08-saas-adapter-boundary.md) §3.4 `ConnectorContextResolver`), payload validation, and enqueueing live in the core runtime. Do not implement admin APIs in the webhook app, and do not import `apps/server` or any other app shell in reverse.
 
-## 5. apps/worker — LLM Worker
+## 6. apps/worker — OSS Worker Shell
 
-`apps/worker` consumes the `llm` queue, executes LLM calls, and writes run results. It is unaware of the Web UI and does not directly implement business Controllers.
+`apps/worker` is the OSS worker process entry point. It starts the core worker runtime from `@proofhound/core/worker`, consumes the `llm` queue, executes LLM calls, and writes run results. It is unaware of the Web UI and does not directly implement business Controllers.
 
 Core constraints:
 
@@ -134,7 +164,7 @@ Core constraints:
 - Handlers must be idempotent; BullMQ retries must not duplicate factual results.
 - Once a run result is written to `ph_runs.run_results`, it is immutable.
 
-## 6. apps/web — Next.js Frontend
+## 7. apps/web — Next.js Frontend
 
 The frontend is the open-source local admin app, and the root path leads into core resources. The frontend does not show an explicit project selector and provides no project management UI; pages obtain the current project through `ProjectContextProvider` / `resolveProjectContext`. The OSS implementation always returns the local project, but the API client / DTOs may carry the `projectId` returned by the server.
 
@@ -167,10 +197,11 @@ The three frontend layers:
 
 When adding or renaming pages, update the Playwright smoke tests accordingly. User-facing strings go through `apps/web/src/i18n` and must provide both `zh-CN` / `en-US`.
 
-## 7. packages — Shared Packages
+## 8. packages — Shared Packages
 
 | Package | Responsibility |
 | -- | ---- |
+| `@proofhound/core` | Reusable backend runtime: server / webhook / worker modules, contracts, local defaults, Services, Repositories |
 | `@proofhound/shared` | DTOs, Zod schemas, shared constants |
 | `@proofhound/db` | Drizzle schema, migration, seed, reset |
 | `@proofhound/api-client` | HTTP client shared by the frontend and scripts |
@@ -185,10 +216,11 @@ When adding or renaming pages, update the Playwright smoke tests accordingly. Us
 | `@proofhound/optimization-strategy` | Optimization strategies |
 | `@proofhound/ui` | Reusable React UI |
 
-## 8. Dependency Rules
+## 9. Dependency Rules
 
 ```text
-apps/*  -> packages/*
+apps/*  -> packages/core + packages/*
+packages/core -> packages/shared / db / logger / limiter / llm-client / connector-client / metrics / judgment / optimization-strategy / orchestration-shared / providers
 packages/api-client -> packages/shared
 packages/db -> packages/shared (share types only when necessary)
 packages/llm-client -> packages/logger
@@ -199,17 +231,21 @@ packages/metrics / judgment / optimization-strategy -> packages/shared
 Forbidden:
 
 - `packages/*` importing `apps/*`
+- The SaaS repository importing `apps/*` paths or an app-level barrel
+- Adding a barrel under `apps/server` / `apps/webhook` / `apps/worker` for reuse instead of moving code into `packages/core`
 - The frontend writing business data directly to the database
 - The webhook app reusing the server's internal Services
 - Expanding the `project_id` / `accessControl` abstractions into control-plane business modules
 - Removing the `project_id` boundary on business resources or letting a Repository omit `project_id` filtering
 
-## 9. Where New Code Goes
+## 10. Where New Code Goes
 
 | Need | Location |
 | ---- | ---- |
-| New REST resource | `apps/server/src/modules/<resource>/` + `packages/shared/src/dto/` |
-| New MCP tool | `apps/server/src/channels/mcp/<resource>.tools.ts` |
+| New REST resource | `packages/core/src/server/modules/<resource>/` + `packages/shared/src/dto/` |
+| New MCP tool | `packages/core/src/server/channels/mcp/<resource>.tools.ts` |
+| New webhook runtime behavior | `packages/core/src/webhook/` |
+| New worker handler | `packages/core/src/worker/` |
 | New frontend page | `apps/web/src/app/<resource>/` |
 | New API client | `packages/api-client/src/<resource>.ts` |
 | New DB table / column | `packages/db/src/schema/` + migration |
