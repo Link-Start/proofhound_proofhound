@@ -21,6 +21,7 @@
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.1.21",
     "@nestjs/core": "^11.1.21",
+    "@proofhound/core": "workspace:*",
     "@proofhound/optimization-strategy": "workspace:*",
     "@proofhound/connector-client": "workspace:*",
     "@proofhound/crypto": "workspace:*",

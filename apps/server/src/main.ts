@@ -2,9 +2,8 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { createHttpLogger, createLogger } from '@proofhound/logger';
 import { json, urlencoded } from 'express';
-import { AppModule } from './app.module';
-import { LocalContractsModule } from './common/contracts/local-contracts.module';
-import { PinoExceptionFilter } from './common/filters/pino-exception.filter';
+import { ProofHoundServerModule, PinoExceptionFilter } from '@proofhound/core/server';
+import { LocalContractsModule } from '@proofhound/core/contracts';
 import { resolveListenPort } from './config/listen-port';
 
 async function bootstrap() {
@@ -12,7 +11,7 @@ async function bootstrap() {
   const bodyLimit = process.env.SERVER_BODY_LIMIT ?? '10mb';
   logger.info({}, 'server_bootstrap_start');
   const app = await NestFactory.create(
-    AppModule.forRoot({ contracts: LocalContractsModule }),
+    ProofHoundServerModule.forRoot({ contracts: LocalContractsModule }),
     { bodyParser: false },
   );
   logger.info({}, 'server_nest_app_created');
@@ -23,7 +22,7 @@ async function bootstrap() {
     origin: process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000',
     credentials: true,
   });
-  app.useGlobalFilters(new PinoExceptionFilter());
+  app.useGlobalFilters(new PinoExceptionFilter('api'));
 
   const listenPort = resolveListenPort(process.env);
   await app.listen(listenPort.port);

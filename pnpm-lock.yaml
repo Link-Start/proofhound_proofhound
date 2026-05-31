@@ -77,6 +77,9 @@ importers:
       '@proofhound/connector-client':
         specifier: workspace:*
         version: link:../../packages/connector-client
+      '@proofhound/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@proofhound/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -373,6 +376,9 @@ importers:
       '@nestjs/platform-express':
         specifier: ^11.1.21
         version: 11.1.21(@nestjs/common@11.1.21(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.21)
+      '@proofhound/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@proofhound/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -482,6 +488,9 @@ importers:
       '@proofhound/connector-client':
         specifier: workspace:*
         version: link:../../packages/connector-client
+      '@proofhound/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@proofhound/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
