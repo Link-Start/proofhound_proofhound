@@ -640,7 +640,11 @@ export function DatasetDetailPage({
   }, [searchInput]);
 
   // Re-sync the editable working copy + selection whenever the server page changes (page / search / refetch).
+  // Intentional effect-driven resync: the equivalent render-phase "adjust on prop change" pattern would
+  // change the first-paint behavior when the page is served from cache (it would skip auto-selecting the
+  // first sample on mount). Keeping the effect preserves the existing behavior exactly.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSamples(pageSamples);
     setSelectedSampleIds([]);
     setSelectedSampleId(pageSamples[0]?.id ?? '');
