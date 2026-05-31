@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { DatabaseModule } from '../../infrastructure/database/database.module';
+import { DatabaseModule } from '../../../shared/database/database.module';
 import { OrchestrationModule } from '../../infrastructure/orchestration';
-import { RedisModule } from '../../infrastructure/redis/redis.module';
+import { RedisModule } from '../../../shared/redis/redis.module';
 import { ConnectorModule } from '../connector/connector.module';
 import { ReleaseLineController } from './release-line.controller';
 import { ReleaseLineRepository } from './release-line.repository';

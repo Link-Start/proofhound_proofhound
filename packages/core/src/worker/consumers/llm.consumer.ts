@@ -16,12 +16,12 @@ import {
 } from '@proofhound/orchestration-shared';
 import { DelayedError, type Job } from 'bullmq';
 import type Redis from 'ioredis';
-import { DATABASE_CLIENT } from '../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../shared/database/database.constants';
 import {
   MODEL_SECRET_RESOLVER,
   modelSecretResolverFactory,
 } from '../infrastructure/llm/model-secret.provider';
-import { REDIS_CLIENT, REDIS_LIMITER } from '../infrastructure/redis/redis.constants';
+import { REDIS_CLIENT, REDIS_LIMITER } from '../../shared/redis/redis.constants';
 import { resolveWorkerConcurrency } from '../config/worker-concurrency';
 import { createLlmRunner, type LlmRunnerResult } from '../runners/llm-runner';
 import type { ModelSecretResolver } from '../runners/model-secret';

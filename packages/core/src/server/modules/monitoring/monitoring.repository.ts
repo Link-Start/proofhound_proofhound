@@ -12,7 +12,7 @@ import {
   type PromptMonitoringRankingResponseDto,
 } from '@proofhound/shared';
 import { sql, type SQL } from 'drizzle-orm';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 type ResolvedGranularity = Exclude<MonitoringGranularity, 'auto'>;
 

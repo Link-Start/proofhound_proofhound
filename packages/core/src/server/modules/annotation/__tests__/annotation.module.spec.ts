@@ -1,6 +1,6 @@
 import { MODULE_METADATA } from '@nestjs/common/constants';
 import { describe, expect, it } from 'vitest';
-import { DatabaseModule } from '../../../infrastructure/database/database.module';
+import { DatabaseModule } from '../../../../shared/database/database.module';
 import { AnnotationModule } from '../annotation.module';
 
 describe('AnnotationModule', () => {

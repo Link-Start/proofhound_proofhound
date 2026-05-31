@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
 import type { CreateDatasetImportDto, DatasetFieldSchemaDto } from '@proofhound/shared';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 const { datasetImports, datasetImportSamples, datasets, projects } = schema;
 

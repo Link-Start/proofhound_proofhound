@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { DatabaseModule } from '../../infrastructure/database/database.module';
+import { DatabaseModule } from '../../../shared/database/database.module';
 import { DatasetImportController } from './dataset-import.controller';
 import { DatasetImportRepository } from './dataset-import.repository';
 import { DatasetImportService } from './dataset-import.service';

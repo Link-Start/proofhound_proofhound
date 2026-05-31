@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type { DbClient } from '@proofhound/db';
 import type { LLMRunResultRecord, LLMRunResultWriter } from '@proofhound/llm-client';
-import { DATABASE_CLIENT } from '../database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 // ph_runs.run_results is monthly-partitioned by created_at, so a UNIQUE constraint cannot be applied to a single id column;
 // use INSERT ... SELECT ... WHERE NOT EXISTS for idempotency (SPEC 25 §11.2):

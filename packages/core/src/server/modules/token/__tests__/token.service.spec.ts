@@ -1,7 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { vi, type Mocked } from 'vitest';
-import { CryptoService } from '../../../infrastructure/crypto/crypto.service';
+import { CryptoService } from '../../../../shared/crypto/crypto.service';
 import { TokenRepository, type UserTokenRow } from '../token.repository';
 import { TokenService } from '../token.service';
 

@@ -1,8 +1,8 @@
 import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { RateLimiter, UsageSnapshot } from '@proofhound/limiter';
-import { CryptoService } from '../../../infrastructure/crypto/crypto.service';
-import { REDIS_LIMITER } from '../../../infrastructure/redis/redis.constants';
+import { CryptoService } from '../../../../shared/crypto/crypto.service';
+import { REDIS_LIMITER } from '../../../../shared/redis/redis.constants';
 import type { CurrentUserPayload } from '../../../common/decorators/current-user.decorator';
 import {
   ModelRepository,

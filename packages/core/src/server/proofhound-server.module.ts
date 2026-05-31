@@ -1,6 +1,6 @@
 import { Module, type DynamicModule, type Type } from '@nestjs/common';
 import { ConfigModule } from '../shared/config/config.module';
-import { ProjectContextModule } from '../shared/project-context/project-context.module';
+import { ProjectContextModule } from './common/project-context.module';
 import { CryptoModule } from '../shared/crypto/crypto.module';
 import { DatabaseModule } from '../shared/database/database.module';
 import { RedisModule } from '../shared/redis/redis.module';

@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { vi, type Mocked } from 'vitest';
-import { CryptoService } from '../../../infrastructure/crypto/crypto.service';
+import { CryptoService } from '../../../../shared/crypto/crypto.service';
 import { ConnectorDriverFactory } from '../connector.driver-factory';
 import {
   ConnectorRepository,

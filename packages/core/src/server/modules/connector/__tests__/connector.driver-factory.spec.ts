@@ -1,6 +1,6 @@
 import { getOutputDriver, probeRedisKey } from '@proofhound/connector-client';
 import { vi, type Mocked } from 'vitest';
-import type { CryptoService } from '../../../infrastructure/crypto/crypto.service';
+import type { CryptoService } from '../../../../shared/crypto/crypto.service';
 import { ConnectorDriverFactory } from '../connector.driver-factory';
 
 vi.mock('@proofhound/connector-client', () => ({

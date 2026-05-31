@@ -12,7 +12,7 @@ import type {
 } from '@proofhound/shared';
 import { accessControl } from '../../common/access-control';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { CryptoService } from '../../infrastructure/crypto/crypto.service';
+import { CryptoService } from '../../../shared/crypto/crypto.service';
 import { TokenRepository, type UserTokenRow, type UserTokenRowWithCreator } from './token.repository';
 
 type ActionSource = 'api' | 'mcp';

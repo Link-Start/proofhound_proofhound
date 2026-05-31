@@ -13,7 +13,7 @@ import type {
 } from '@proofhound/shared';
 import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 import { BullmqService } from '../../infrastructure/orchestration/bullmq.service';
 import { RunResultService } from '../run-result/run-result.service';
 import { aggregateExperimentMetrics } from './experiment.aggregator';

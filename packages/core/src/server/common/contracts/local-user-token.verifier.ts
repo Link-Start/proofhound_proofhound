@@ -21,7 +21,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { createLogger } from '@proofhound/logger';
 import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 import type { ActorContext, ActorKind } from '../actor-context';
 
 const { tokens } = schema;

@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 const {
   datasets,

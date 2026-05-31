@@ -9,7 +9,7 @@
 // @Global() ensures every feature module can inject these resolvers without a per-module import.
 
 import { Global, Module } from '@nestjs/common';
-import { DatabaseModule } from '../../infrastructure/database/database.module';
+import { DatabaseModule } from '../../../shared/database/database.module';
 import { ActorContextResolver } from './actor-context.resolver';
 import { LocalActorContextResolver } from './local-actor-context.resolver';
 import { LocalMcpAuthResolver } from './local-mcp-auth.resolver';

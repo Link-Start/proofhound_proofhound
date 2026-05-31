@@ -28,7 +28,7 @@ import { schema } from '@proofhound/db';
 import { accessControl } from '../../common/access-control';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { isUniqueViolation } from '../../common/errors/db-error';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 import { ModelService } from '../model/model.service';
 import { RunResultService } from '../run-result/run-result.service';
 import { aggregateExperimentMetrics } from './experiment.aggregator';

@@ -6,7 +6,7 @@ import type {
   ListModelContextWindowsQueryDto,
   UpsertModelContextWindowDto,
 } from '@proofhound/shared';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 const { modelContextWindows, models, projects } = schema;
 

@@ -16,7 +16,7 @@ import type {
   ReleaseRunResultListResponseDto,
 } from '@proofhound/shared';
 import { sql, type SQL } from 'drizzle-orm';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 export interface BatchTerminalCounts {
   terminalCount: number;

@@ -23,12 +23,12 @@ import { DBOS } from '@dbos-inc/dbos-sdk';
 import { createDbClient, schema, type DbClient } from '@proofhound/db';
 import { createLogger } from '@proofhound/logger';
 import { inArray, like, sql } from 'drizzle-orm';
-import { DATABASE_CLIENT } from '../../src/infrastructure/database/database.constants';
-import { BullmqService } from '../../src/infrastructure/orchestration/bullmq.service';
-import { LOCAL_ACTOR_ID } from '../../src/common/actor-context';
-import { ExperimentWorkflowRegistrar } from '../../src/modules/experiment/experiment.workflow';
-import { RunResultRepository } from '../../src/modules/run-result/run-result.repository';
-import { RunResultService } from '../../src/modules/run-result/run-result.service';
+import { DATABASE_CLIENT } from '../../src/shared/database/database.constants';
+import { BullmqService } from '../../src/server/infrastructure/orchestration/bullmq.service';
+import { LOCAL_ACTOR_ID } from '../../src/server/common/actor-context';
+import { ExperimentWorkflowRegistrar } from '../../src/server/modules/experiment/experiment.workflow';
+import { RunResultRepository } from '../../src/server/modules/run-result/run-result.repository';
+import { RunResultService } from '../../src/server/modules/run-result/run-result.service';
 import { MockBullmqService } from './bullmq.mock';
 import type { SeededExperiment } from './fixtures/experiment-fixture';
 

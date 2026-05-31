@@ -2,8 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { DbClient } from '@proofhound/db';
 import { sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
-import { DATABASE_CLIENT } from '../infrastructure/database/database.constants';
-import { REDIS_CLIENT } from '../infrastructure/redis/redis.constants';
+import { DATABASE_CLIENT } from '../database/database.constants';
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 const CHECK_TIMEOUT_MS = 1_000;
 

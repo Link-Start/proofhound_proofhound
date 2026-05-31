@@ -26,9 +26,9 @@ import {
 } from '@proofhound/shared';
 import { accessControl } from '../../common/access-control';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
-import { CryptoService } from '../../infrastructure/crypto/crypto.service';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
-import { REDIS_LIMITER } from '../../infrastructure/redis/redis.constants';
+import { CryptoService } from '../../../shared/crypto/crypto.service';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
+import { REDIS_LIMITER } from '../../../shared/redis/redis.constants';
 import { renderPromptForSample } from '../experiment/experiment.renderer';
 import { PromptRepository } from './prompt.repository';
 

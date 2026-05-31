@@ -28,7 +28,7 @@ import type {
 } from '@proofhound/shared';
 import type Redis from 'ioredis';
 import { BullmqService } from '../../infrastructure/orchestration/bullmq.service';
-import { REDIS_CLIENT } from '../../infrastructure/redis/redis.constants';
+import { REDIS_CLIENT } from '../../../shared/redis/redis.constants';
 import {
   WebhookRepository,
   type WebhookConnectorRow,

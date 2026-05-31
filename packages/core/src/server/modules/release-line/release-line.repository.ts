@@ -12,7 +12,7 @@ import type {
   ReleaseLineStatusDto,
   UpdateReleaseLineRunConfigInputDto,
 } from '@proofhound/shared';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 const { annotationTasks, connectors, models, projects, releaseLineEvents, releaseLines, releaseVariants } = schema;
 

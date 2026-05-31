@@ -1,6 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import { DATABASE_CLIENT } from '../../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../../shared/database/database.constants';
 import { ModelService } from '../../model/model.service';
 import { RunResultService } from '../../run-result/run-result.service';
 import { ExperimentLauncher } from '../experiment.launcher';

@@ -6,9 +6,9 @@ import type { ModelConnectivityProbeResult } from '@proofhound/llm-client';
 import { createLogger } from '@proofhound/logger';
 import { probeJobPayloadSchema, type ProbeJobPayload } from '@proofhound/orchestration-shared';
 import { DelayedError, type Job } from 'bullmq';
-import { DATABASE_CLIENT } from '../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../shared/database/database.constants';
 import { MODEL_SECRET_RESOLVER } from '../infrastructure/llm/model-secret.provider';
-import { REDIS_LIMITER } from '../infrastructure/redis/redis.constants';
+import { REDIS_LIMITER } from '../../shared/redis/redis.constants';
 import { createProbeRunner } from '../runners/probe-runner';
 import type { ModelSecretResolver } from '../runners/model-secret';
 

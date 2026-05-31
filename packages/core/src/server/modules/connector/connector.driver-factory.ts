@@ -27,7 +27,7 @@ import type {
   RedisInputConfig,
   RedisOutputConfig,
 } from '@proofhound/shared';
-import { CryptoService } from '../../infrastructure/crypto/crypto.service';
+import { CryptoService } from '../../../shared/crypto/crypto.service';
 
 interface EncryptedBrokerConfig {
   password?: string;

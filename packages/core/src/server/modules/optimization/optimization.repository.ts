@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm
 import { alias } from 'drizzle-orm/pg-core';
 import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 const {
   optimizationRoundSteps,

@@ -3,7 +3,7 @@ import { RateLimitExceededError } from '@proofhound/limiter';
 import * as llmClientModule from '@proofhound/llm-client';
 import { vi, type Mock } from 'vitest';
 import type { CurrentUserPayload } from '../../../common/decorators/current-user.decorator';
-import type { CryptoService } from '../../../infrastructure/crypto/crypto.service';
+import type { CryptoService } from '../../../../shared/crypto/crypto.service';
 import type { PromptRepository } from '../prompt.repository';
 import { PromptTryRunService } from '../prompt-try-run.service';
 

@@ -30,8 +30,8 @@ import type {
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { accessControl } from '../../common/access-control';
 import { isUniqueViolation } from '../../common/errors/db-error';
-import { CryptoService } from '../../infrastructure/crypto/crypto.service';
-import { REDIS_LIMITER } from '../../infrastructure/redis/redis.constants';
+import { CryptoService } from '../../../shared/crypto/crypto.service';
+import { REDIS_LIMITER } from '../../../shared/redis/redis.constants';
 import {
   ModelRepository,
   type ModelContextWindowRow,

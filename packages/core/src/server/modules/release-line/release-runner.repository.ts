@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { DbClient } from '@proofhound/db';
 import { sql } from 'drizzle-orm';
-import { DATABASE_CLIENT } from '../../infrastructure/database/database.constants';
+import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 export interface ReleaseRunnerLineRow {
   id: string;

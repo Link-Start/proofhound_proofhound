@@ -3,7 +3,7 @@ import type { ConsumeMessage } from '@proofhound/connector-client';
 import { createLogger } from '@proofhound/logger';
 import type { ConnectorConfigShape, ConnectorDirection, ConnectorType } from '@proofhound/shared';
 import { BullmqService } from '../../infrastructure/orchestration/bullmq.service';
-import { RedisMutexService, type RedisMutexLease } from '../../infrastructure/redis/redis-mutex.service';
+import { RedisMutexService, type RedisMutexLease } from '../../../shared/redis/redis-mutex.service';
 import { ConnectorDriverFactory } from '../connector/connector.driver-factory';
 import {
   buildReleaseLlmPayload,

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { DatabaseModule } from '../../infrastructure/database/database.module';
+import { DatabaseModule } from '../../../shared/database/database.module';
 import { OrchestrationModule } from '../../infrastructure/orchestration/orchestration.module';
 import { ModelModule } from '../model/model.module';
 import { RunResultModule } from '../run-result/run-result.module';

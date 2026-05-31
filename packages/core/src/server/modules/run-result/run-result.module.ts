@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { DatabaseModule } from '../../infrastructure/database/database.module';
+import { DatabaseModule } from '../../../shared/database/database.module';
 import { ReleaseRunResultController, RunResultController } from './run-result.controller';
 import { RunResultRepository } from './run-result.repository';
 import { RunResultService } from './run-result.service';

@@ -10,11 +10,18 @@
 
 ---
 
+## Execution Corrections (discovered during implementation)
+
+Two plan gaps surfaced when fixing imports (Task 6); both corrected:
+
+- **`project-context` is NOT shared — it stays in `server/common/`.** `project-context.ts` imports server-only siblings (`actor-context`, `contracts/*`, `decorators/current-user.decorator`) and is never used by webhook/worker. Moving it to `src/shared` created a `shared → server` inversion. Correction: `project-context.ts` + `project-context.module.ts` live in `packages/core/src/server/common/` (their original home). Strike them from the Task 3 shared extraction and the Task 6 rewrite table.
+- **`worker-concurrency.ts` moves INTO core, not the shell.** `worker/consumers/llm.consumer.ts` imports it at module-load (for the `@Processor` concurrency), so it must be `packages/core/src/worker/config/worker-concurrency.ts`. The worker barrel `@proofhound/core/worker` re-exports `DEFAULT_WORKER_CONCURRENCY` + `resolveWorkerConcurrency`; the worker shell's `env.schema.ts` imports them from `@proofhound/core/worker` (handled in Task 8). This overrides Judgment Call #4 for `worker-concurrency` only (`env.schema`/`listen-port` still stay in the shell).
+
 ## Judgment Calls For ZiqiXiao To Confirm At Plan Review
 
 These are decisions this plan locked in; flag any you want changed before execution starts.
 
-1. **New `src/shared/` area (beyond SPEC 07 §3 sketch).** SPEC §3 drew `infrastructure/*` only under `server/`. De-dup across runtimes requires a cross-runtime home, so this plan introduces `packages/core/src/shared/` for the truly-shared infra (`database`, `redis` + `redis-mutex`, `crypto`, `config`, `project-context`, `health`, `filters`). **Task 11 updates SPEC 07 §3 to show it.** Alternative rejected: keep shared infra under `server/` and have webhook/worker reach into `../../server/...` (creates webhook→server / worker→server coupling inside the package).
+1. **New `src/shared/` area (beyond SPEC 07 §3 sketch).** SPEC §3 drew `infrastructure/*` only under `server/`. De-dup across runtimes requires a cross-runtime home, so this plan introduces `packages/core/src/shared/` for the truly-shared infra (`database`, `redis` + `redis-mutex`, `crypto`, `config`, `health`, `filters` — NOT `project-context`, see Execution Corrections). **Task 11 updates SPEC 07 §3 to show it.** Alternative rejected: keep shared infra under `server/` and have webhook/worker reach into `../../server/...` (creates webhook→server / worker→server coupling inside the package).
 
 2. **Selective de-dup, not blanket.** Only the files proven identical or cleanly supersettable are merged. Per-runtime-by-nature files stay in their runtime subdir: `listen-port.ts` (server `SERVER_PORT`/4000 vs webhook `PORT`/4001), `bullmq` topology (server producer+self-consumer+DBOS vs webhook producer-only vs worker consumer), and `env.schema.ts` (different env subsets).
 

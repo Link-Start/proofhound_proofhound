@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BullmqService } from '../../../infrastructure/orchestration/bullmq.service';
-import type { RedisMutexService } from '../../../infrastructure/redis/redis-mutex.service';
+import type { RedisMutexService } from '../../../../shared/redis/redis-mutex.service';
 import type { ConnectorDriverFactory } from '../../connector/connector.driver-factory';
 import { computeReleaseRunResultId, passesTrafficRatio } from '../../canary-release/canary-runtime';
 import {
