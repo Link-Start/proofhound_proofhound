@@ -10,3 +10,4 @@ export * from './local-project-context.resolver';
 export * from './local-actor-context.resolver';
 export * from './local-mcp-auth.resolver';
 export * from './local-user-token.verifier';
+export { LocalContractsModule } from './local-contracts.module';

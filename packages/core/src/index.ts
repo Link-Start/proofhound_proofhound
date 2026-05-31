@@ -1,2 +1,4 @@
-// Temporary placeholder; real re-exports added in Task 7.
-export {};
+export { ProofHoundServerModule } from './server';
+export type { ProofHoundServerModuleOptions } from './server';
+export { ProofHoundWebhookModule } from './webhook';
+export { ProofHoundWorkerModule } from './worker';
