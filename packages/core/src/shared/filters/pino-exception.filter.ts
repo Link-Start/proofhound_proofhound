@@ -5,7 +5,11 @@ import type { Request, Response } from 'express';
 
 @Catch()
 export class PinoExceptionFilter implements ExceptionFilter {
-  private readonly logger = createLogger('exception.filter', { service: 'api' });
+  private readonly logger;
+
+  constructor(serviceName = 'api') {
+    this.logger = createLogger('exception.filter', { service: serviceName });
+  }
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -16,29 +20,14 @@ export class PinoExceptionFilter implements ExceptionFilter {
     const payload = {
       status,
       requestId: request.id,
-      req: {
-        method: request.method,
-        url: request.originalUrl ?? request.url,
-      },
+      req: { method: request.method, url: request.originalUrl ?? request.url },
       errorClass: exception instanceof Error ? exception.constructor.name : typeof exception,
     };
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
-      this.logger.error(
-        {
-          ...payload,
-          err: exception,
-        },
-        'http_exception_thrown',
-      );
+      this.logger.error({ ...payload, err: exception }, 'http_exception_thrown');
     } else if (status >= HttpStatus.BAD_REQUEST) {
-      this.logger.warn(
-        {
-          ...payload,
-          response: responseBody,
-        },
-        'http_client_error',
-      );
+      this.logger.warn({ ...payload, response: responseBody }, 'http_client_error');
     }
 
     response.status(status).json(responseBody);
@@ -48,17 +37,10 @@ export class PinoExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       const body = exception.getResponse();
       if (typeof body === 'string') {
-        return {
-          statusCode: status,
-          message: body,
-        };
+        return { statusCode: status, message: body };
       }
       return body as Record<string, unknown>;
     }
-
-    return {
-      statusCode: status,
-      message: 'Internal server error',
-    };
+    return { statusCode: status, message: 'Internal server error' };
   }
 }
