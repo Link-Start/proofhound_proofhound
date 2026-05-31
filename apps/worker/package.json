@@ -13,7 +13,6 @@
     "test:unit": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
-    "probe:model": "tsx src/scripts/probe-model-from-env.ts",
     "start": "node dist/main.js",
     "clean": "rm -rf dist .turbo tsconfig.tsbuildinfo"
   },
