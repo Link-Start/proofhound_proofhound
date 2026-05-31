@@ -16,8 +16,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.spec.ts', 'test/**/*.spec.ts'],
-    exclude: ['node_modules/**', 'dist/**'],
+    include: ['src/**/*.spec.ts'],
+    exclude: ['node_modules/**', 'dist/**', 'test/**'],
     pool: 'forks',
     setupFiles: ['reflect-metadata'],
     testTimeout: 10_000,

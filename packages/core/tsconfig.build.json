@@ -9,6 +9,7 @@
     "test",
     "**/*.spec.ts",
     "**/__tests__/**",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "vitest.integration.config.ts"
   ]
 }
