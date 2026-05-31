@@ -27,7 +27,7 @@ async function bootstrap(): Promise<void> {
   app.use(json({ limit: env.WEBHOOK_BODY_LIMIT }));
   app.use(urlencoded({ extended: true, limit: env.WEBHOOK_BODY_LIMIT }));
   app.use(createHttpLogger({ service: 'webhook-ingress' }));
-  app.useGlobalFilters(new PinoExceptionFilter('webhook-ingress'));
+  app.useGlobalFilters(new PinoExceptionFilter('webhook-ingress', false));
   app.enableShutdownHooks();
 
   await app.listen(listenPort.port);
