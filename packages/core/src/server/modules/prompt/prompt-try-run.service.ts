@@ -26,6 +26,7 @@ import {
 } from '@proofhound/shared';
 import { toActorContext } from '../../common/access-control';
 import { AccessControlService } from '../../common/contracts/access-control.service';
+import { LimiterKeyStrategy } from '../../common/contracts/limiter-key.strategy';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { CryptoService } from '../../../shared/crypto/crypto.service';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
@@ -45,6 +46,7 @@ export class PromptTryRunService {
     @Inject(DATABASE_CLIENT) private readonly db: DbClient,
     @Inject(REDIS_LIMITER) private readonly limiter: RateLimiterLike,
     private readonly accessControl: AccessControlService,
+    private readonly limiterKeyStrategy: LimiterKeyStrategy,
   ) {}
 
   async tryRun(
@@ -82,6 +84,7 @@ export class PromptTryRunService {
       result = await invokeLLM(
         {
           model,
+          limiterKey: this.limiterKeyStrategy.buildModelKey({ projectId, source: 'local' }, model.id),
           messages: renderedPrompt.messages as LLMMessage[] | undefined,
           prompt: renderedPrompt.prompt,
           params: {

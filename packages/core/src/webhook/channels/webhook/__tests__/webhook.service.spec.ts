@@ -5,7 +5,9 @@ import {
   type WebhookAsyncCallReceipt,
 } from '@proofhound/orchestration-shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LocalWorkflowAuthorizationHook } from '../../../../server/common/contracts/workflow-authorization.hook';
 import type { BullmqService } from '../../../infrastructure/orchestration/bullmq.service';
+import { LocalConnectorContextResolver } from '../local-connector-context.resolver';
 import type { WebhookRepository, WebhookRunResultRow } from '../webhook.repository';
 import { WebhookService } from '../webhook.service';
 
@@ -119,8 +121,20 @@ describe('WebhookService', () => {
     redis = makeRedis();
   });
 
-  function makeService(repo: ReturnType<typeof makeRepo>) {
-    return new WebhookService(repo as unknown as WebhookRepository, bullmq as BullmqService, redis as never);
+  function makeService(
+    repo: ReturnType<typeof makeRepo>,
+    workflowAuth = new LocalWorkflowAuthorizationHook(),
+  ) {
+    // The connector resolver delegates to the same repo, so the existing repo-call assertions
+    // (findConnectorWithValidToken / touchTokenLastUsed / invalid|expired_webhook_token) still hold.
+    const resolver = new LocalConnectorContextResolver(repo as unknown as WebhookRepository);
+    return new WebhookService(
+      repo as unknown as WebhookRepository,
+      bullmq as BullmqService,
+      redis as never,
+      resolver,
+      workflowAuth,
+    );
   }
 
   it('authenticates a public webhook path and enqueues a release LLM job', async () => {
@@ -200,6 +214,31 @@ describe('WebhookService', () => {
         userAgent: null,
       }),
     ).rejects.toMatchObject({ message: 'expired_webhook_token' });
+  });
+
+  it('gates enqueue with WorkflowAuthorizationHook (throws => no job enqueued)', async () => {
+    const repo = makeRepo();
+    const denying = {
+      assertCanStart: vi.fn().mockRejectedValue(new Error('workflow_forbidden')),
+    } as unknown as LocalWorkflowAuthorizationHook;
+    const service = makeService(repo, denying);
+
+    await expect(
+      service.receive({
+        webhookSlug: 'wh-a3a1b2c3',
+        pathName: '',
+        body: { id: 'sample-1', text: 'hello' },
+        authorization: `Bearer ${TOKEN}`,
+        ipAddress: null,
+        userAgent: null,
+      }),
+    ).rejects.toMatchObject({ message: 'workflow_forbidden' });
+    expect(denying.assertCanStart).toHaveBeenCalledWith(
+      { actorId: connectorId, actorKind: 'system_webhook' },
+      { projectId, source: 'local' },
+      'llm',
+    );
+    expect(bullmq.enqueueLlmJob).not.toHaveBeenCalled();
   });
 
   it('only enables automatic judgment when webhook payload carries expected output', async () => {

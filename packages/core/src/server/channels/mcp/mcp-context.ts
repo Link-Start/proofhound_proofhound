@@ -1,59 +1,40 @@
 // mcp-context — actor / project context adapter for MCP tool entrypoints
-// See docs/specs/08-saas-adapter-boundary.md §3.3
+// See docs/specs/08-saas-adapter-boundary.md §3.3 and docs/specs/09-mcp-server.md.
 //
-// Current state:
-//   - OSS has not yet mounted a real MCP transport (mcp.controller.ts is an empty controller);
-//     `McpToolContext` is the placeholder shape used during tool dispatch; historically the actor field was passed in directly by the caller.
-//   - This file no longer hardcodes a default actor and instead relies on:
-//       1) `getMcpActor`: the tool already has the caller-provided actor (backward compatible) and returns it directly;
-//          throws if missing — forcing callers to invoke `resolveMcpActor(metadata)` first during dispatch.
-//       2) `resolveMcpActor`: wired to McpAuthResolver, performing real validation against MCP protocol metadata.
-//          This will be the standard entrypoint once the MCP transport adapter lands.
-//
-// TODO(mcp-transport): once the MCP transport is actually wired up, the transport adapter should call
-// `resolveMcpActor(metadata)` before each tool dispatch and write the result into McpToolContext.actor,
-// then invoke the tool handler — so every handler obtains the resolver-validated actor via `getMcpActor(ctx)`.
+// The MCP transport (mcp.transport.ts) authenticates and authorizes each request, then builds the
+// McpToolContext via `McpDispatchContextFactory.build(metadata)` BEFORE dispatching a tool, so every
+// tool handler obtains the resolver-validated actor through `getMcpActor(ctx)`. There is no
+// unauthenticated fallback.
 
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { LOCAL_PROJECT_CONTEXT, type ProjectContext } from '@proofhound/shared';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
+import { AccessControlService } from '../../common/contracts/access-control.service';
 import { McpAuthResolver } from '../../common/contracts/mcp-auth.resolver';
-import { ProjectContextResolver } from '../../common/contracts/project-context.resolver';
+import { ProjectAccessDeniedError, ProjectContextResolver } from '../../common/contracts/project-context.resolver';
 import type { McpRequestMetadataLike } from '../../common/contracts/types';
-import { resolveProjectContext } from '../../common/project-context';
 import type { ActorContext } from '../../common/actor-context';
 import type { McpToolContext } from './mcp.types';
 
 /**
- * Extracts the actor from an already-dispatched McpToolContext.
- * The caller must populate ctx.actor first via resolveMcpActor / the dispatch layer.
- *
- * Backward compatibility: if ctx.actor is missing but ctx.actorUserId is present, fall back to the legacy behavior.
- * This fallback will be removed once the MCP transport adapter lands (at which point ctx.actor must be injected by the resolver).
+ * Extracts the resolver-validated actor from a dispatched McpToolContext. The MCP transport
+ * (mcp.transport.ts) always injects `ctx.actor` via McpDispatchContextFactory; a missing actor means
+ * the request was not authenticated, so this throws rather than synthesizing a default.
  */
 export function getMcpActor(ctx: McpToolContext): CurrentUserPayload {
-  if (ctx.actor) return ctx.actor;
-
-  // Fallback: the MCP transport is not yet wired up; keep dev / internal scripts working.
-  // Once the MCP transport lands, this path should throw UnauthorizedException instead.
-  const projectContext = resolveProjectContext();
-  return {
-    sub: ctx.actorUserId,
-    actorId: ctx.actorUserId,
-    actorKind: 'system_mcp',
-    projectId: projectContext.projectId,
-    email: ctx.email ?? '',
-    isSuperAdmin: ctx.isSuperAdmin ?? false,
-    isActive: true,
-  };
+  if (!ctx.actor) throw new UnauthorizedException('missing_user_token');
+  return ctx.actor;
 }
 
-export function resolveMcpProjectContext(ctx: McpToolContext) {
-  return resolveProjectContext(getMcpActor(ctx));
+/** The ProjectContext carried by the validated actor (resolved by ProjectContextResolver at dispatch). */
+export function resolveMcpProjectContext(ctx: McpToolContext): ProjectContext {
+  const actor = getMcpActor(ctx);
+  return { projectId: actor.projectId ?? LOCAL_PROJECT_CONTEXT.projectId, source: 'local' };
 }
 
 /**
  * Used during MCP transport adapter dispatch: pull the token from protocol-level metadata,
- * validate via McpAuthResolver → resolve ActorContext → resolve ProjectContext,
+ * validate via McpAuthResolver → resolve ActorContext → resolve ProjectContext → authorize MCP channel,
  * and return the assembled McpToolContext.
  */
 @Injectable()
@@ -61,11 +42,21 @@ export class McpDispatchContextFactory {
   constructor(
     private readonly authResolver: McpAuthResolver,
     private readonly projectResolver: ProjectContextResolver,
+    private readonly accessControl: AccessControlService,
   ) {}
 
   async build(metadata: McpRequestMetadataLike): Promise<McpToolContext> {
     const actor = await this.authResolver.resolveFromMcp(metadata);
-    const project = await this.projectResolver.resolve(actor, { mcpMetadata: metadata });
+    let project: ProjectContext;
+    try {
+      project = await this.projectResolver.resolve(actor, { mcpMetadata: metadata });
+    } catch (error) {
+      if (error instanceof ProjectAccessDeniedError) {
+        throw new ForbiddenException(error.message);
+      }
+      throw error;
+    }
+    await this.accessControl.assertCan(actor, project, 'mcp_tool');
     const payload = toCurrentUserPayload(actor, project.projectId);
     return {
       actorUserId: actor.actorId,

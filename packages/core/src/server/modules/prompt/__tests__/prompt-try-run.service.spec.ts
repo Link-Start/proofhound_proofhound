@@ -100,6 +100,11 @@ function buildService(overrides?: {
     dbStub as never,
     limiter as never,
     new LocalAccessControlService(),
+    {
+      buildModelKey: vi.fn(
+        (project: { projectId: string }, modelId: string) => `project:${project.projectId}:model:${modelId}`,
+      ),
+    },
   );
 
   return { service, promptRepo, crypto };
@@ -167,6 +172,12 @@ describe('PromptTryRunService', () => {
     expect(out.latencyMs).toBe(432);
     expect(out.inputTokens).toBe(10);
     expect(out.outputTokens).toBe(4);
+    expect(llmClient.invokeLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limiterKey: `project:${PROJECT_ID}:model:${MODEL_ID}`,
+      }),
+      expect.anything(),
+    );
   });
 
   it('falls back to markdown JSON parsing when invokeLLM returns null parsed output', async () => {

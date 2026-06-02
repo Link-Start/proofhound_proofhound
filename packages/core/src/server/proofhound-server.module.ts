@@ -1,4 +1,4 @@
-import { Module, type DynamicModule, type Type } from '@nestjs/common';
+import { Module, type DynamicModule } from '@nestjs/common';
 import { ConfigModule } from '../shared/config/config.module';
 import { ProjectContextModule } from './common/project-context.module';
 import { CryptoModule } from '../shared/crypto/crypto.module';
@@ -21,17 +21,14 @@ import { QuickStartModule } from './modules/quick-start/quick-start.module';
 import { ReleaseLineModule } from './modules/release-line/release-line.module';
 import { RunResultModule } from './modules/run-result/run-result.module';
 import { TokenModule } from './modules/token/token.module';
+import { McpModule } from './channels/mcp/mcp.module';
+import type { ProofHoundRuntimeModuleOptions } from '../shared/runtime-module-options';
 
 // ProofHoundServerModule — the shared server root module, assembled as a dynamic module via forRoot
 // so the `contracts` adapter bindings are supplied at boot instead of hard-coded. OSS passes
 // LocalContractsModule (Local* defaults); a SaaS shell passes its own SaasContractsModule
 // (Remote* implementations). See docs/specs/08-saas-adapter-boundary.md §2.
-export interface ProofHoundServerModuleOptions {
-  // A @Global module binding every adapter extension-point token to an implementation.
-  // OSS: LocalContractsModule. SaaS: SaasContractsModule. The root module never imports a
-  // concrete Local* / Remote* class directly — only this supplied module does the binding.
-  contracts: Type<unknown> | DynamicModule;
-}
+export type ProofHoundServerModuleOptions = ProofHoundRuntimeModuleOptions;
 
 @Module({})
 export class ProofHoundServerModule {
@@ -60,6 +57,7 @@ export class ProofHoundServerModule {
         ConnectorModule,
         CanaryReleaseModule,
         ProductionReleaseModule,
+        McpModule,
       ],
       controllers: [HealthController],
       providers: [HealthService],

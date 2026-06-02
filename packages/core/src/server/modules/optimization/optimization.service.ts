@@ -39,6 +39,7 @@ import {
 import { createLogger } from '@proofhound/logger';
 import { toActorContext } from '../../common/access-control';
 import { AccessControlService } from '../../common/contracts/access-control.service';
+import { WorkflowAuthorizationHook } from '../../common/contracts/workflow-authorization.hook';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { isUniqueViolation } from '../../common/errors/db-error';
 import { aggregateExperimentMetrics } from '../experiment/experiment.aggregator';
@@ -95,6 +96,7 @@ export class OptimizationService {
     private readonly runResults: RunResultService,
     private readonly promptRepo: PromptRepository,
     private readonly accessControl: AccessControlService,
+    private readonly workflowAuth: WorkflowAuthorizationHook,
   ) {}
 
   async listOptimizations(
@@ -200,6 +202,12 @@ export class OptimizationService {
     let resolvedPromptId = body.promptId ?? null;
     let resolvedBaseVersionId = body.baseVersionId ?? null;
     const requestedPromptLanguage = body.promptLanguage ?? DEFAULT_PROMPT_LANGUAGE;
+    let workflowStartAuthorized = false;
+    const assertWorkflowStart = async () => {
+      if (workflowStartAuthorized) return;
+      await this.workflowAuth.assertCanStart(toActorContext(actor), { projectId, source: 'local' }, 'optimization');
+      workflowStartAuthorized = true;
+    };
 
     if (
       body.startingMode === 'from_experiment' &&
@@ -236,6 +244,7 @@ export class OptimizationService {
       if (!dataset) {
         throw new BadRequestException(`Dataset ${body.datasetId} not found`);
       }
+      await assertWorkflowStart();
       resolvedPromptId = await this.createPlaceholderPromptWithRetry({
         projectId,
         datasetName: dataset.name,
@@ -247,6 +256,8 @@ export class OptimizationService {
     }
 
     const resolvedPromptLanguage = await this.resolvePromptLanguage(body.promptLanguage, resolvedBaseVersionId);
+
+    await assertWorkflowStart();
 
     const insertedId = await this.insertOptimizationOrThrowNameConflict({
       projectId,
@@ -381,6 +392,7 @@ export class OptimizationService {
     }
 
     if (parsedAction === 'resume') {
+      await this.workflowAuth.assertCanStart(toActorContext(actor), { projectId, source: 'local' }, 'optimization');
       await this.launcher.resume(optimizationId);
     }
 

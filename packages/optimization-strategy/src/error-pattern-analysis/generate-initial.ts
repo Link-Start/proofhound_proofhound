@@ -35,6 +35,7 @@ export class FirstVersionParseError extends Error {
 export interface GenerateInitialVersionArgs {
   optimizationId: string;
   analysisModel: ModelInvocationConfig;
+  analysisLimiterKey: string;
   // Samples already randomly drawn from the dataset — the caller is responsible for sampling size = initialSamplingRounds × initialSamplesPerRound
   samples: Array<{ id: string; data: Record<string, unknown> }>;
   goals: OptimizationGoal[];
@@ -305,6 +306,7 @@ export async function generateInitialVersion(
   const result = await invokeLLM(
     {
       model: args.analysisModel,
+      limiterKey: args.analysisLimiterKey,
       messages,
       params: {
         temperature: args.strategyConfig.temperature,
