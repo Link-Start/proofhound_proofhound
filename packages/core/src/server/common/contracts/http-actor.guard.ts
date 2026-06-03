@@ -55,7 +55,7 @@ function readProjectIdHeader(request: Request): string | undefined {
 }
 
 export function toCurrentUserPayload(actor: ActorContext): CurrentUserPayload {
-  return {
+  const payload: CurrentUserPayload = {
     sub: actor.actorId,
     actorId: actor.actorId,
     actorKind: actor.actorKind,
@@ -66,6 +66,8 @@ export function toCurrentUserPayload(actor: ActorContext): CurrentUserPayload {
     isSuperAdmin: isOwnerActor(actor.actorKind),
     isActive: true,
   };
+  if (actor.orgId !== undefined) payload.orgId = actor.orgId;
+  return payload;
 }
 
 // OSS single-workspace: UI session user and API-token script both represent the local owner,
