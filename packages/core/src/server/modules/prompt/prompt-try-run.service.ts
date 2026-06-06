@@ -27,10 +27,12 @@ import {
 import { toActorContext } from '../../common/access-control';
 import { AccessControlService } from '../../common/contracts/access-control.service';
 import { LimiterKeyStrategy } from '../../common/contracts/limiter-key.strategy';
+import { RuntimeLimitsProvider } from '../../common/contracts/runtime-limits.provider';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { CryptoService } from '../../../shared/crypto/crypto.service';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 import { REDIS_LIMITER } from '../../../shared/redis/redis.constants';
+import { applyRuntimeLimits } from '../../../shared/llm/runtime-limits';
 import { renderPromptForSample } from '../experiment/experiment.renderer';
 import { PromptRepository } from './prompt.repository';
 
@@ -47,6 +49,7 @@ export class PromptTryRunService {
     @Inject(REDIS_LIMITER) private readonly limiter: RateLimiterLike,
     private readonly accessControl: AccessControlService,
     private readonly limiterKeyStrategy: LimiterKeyStrategy,
+    private readonly runtimeLimitsProvider: RuntimeLimitsProvider,
   ) {}
 
   async tryRun(
@@ -54,6 +57,10 @@ export class PromptTryRunService {
     promptId: string,
     rawDto: unknown,
     actor: CurrentUserPayload,
+    // orgId (SaaS-only; undefined in OSS) is sourced from the resolved ProjectContext — the project's org
+    // is the rate-limit bucket (SPEC 08 §3.7), not the actor's org. OSS leaves it undefined so the
+    // LocalLimiterKeyStrategy key stays `model:<id>`.
+    orgId?: string,
   ): Promise<PromptTryRunResponseDto> {
     const parsed = promptTryRunRequestSchema.parse(rawDto);
     await this.assertAccessible(projectId, actor);
@@ -69,6 +76,13 @@ export class PromptTryRunService {
     }
 
     const model = await this.loadModelConfig(parsed.modelId);
+    const project = { projectId, ...(orgId ? { orgId } : {}), source: 'local' as const };
+    const mergedLimits = await this.runtimeLimitsProvider.mergeLlmLimits({
+      project,
+      modelId: model.id,
+      source: 'prompt_try_run',
+    });
+    const effectiveModel = applyRuntimeLimits(model, mergedLimits);
 
     const variables = parseVariables(version.variables);
     const outputSchema = parseOutputSchema(version.outputSchema);
@@ -83,8 +97,8 @@ export class PromptTryRunService {
     try {
       result = await invokeLLM(
         {
-          model,
-          limiterKey: this.limiterKeyStrategy.buildModelKey({ projectId, source: 'local' }, model.id),
+          model: effectiveModel,
+          limiterKey: this.limiterKeyStrategy.buildModelKey(project, model.id),
           messages: renderedPrompt.messages as LLMMessage[] | undefined,
           prompt: renderedPrompt.prompt,
           params: {

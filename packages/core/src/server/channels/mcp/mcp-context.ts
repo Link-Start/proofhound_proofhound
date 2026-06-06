@@ -28,8 +28,16 @@ export function getMcpActor(ctx: McpToolContext): CurrentUserPayload {
 
 /** The ProjectContext carried by the validated actor (resolved by ProjectContextResolver at dispatch). */
 export function resolveMcpProjectContext(ctx: McpToolContext): ProjectContext {
+  if (ctx.project) return ctx.project;
   const actor = getMcpActor(ctx);
-  return { projectId: actor.projectId ?? LOCAL_PROJECT_CONTEXT.projectId, source: 'local' };
+  const project: ProjectContext = {
+    projectId: actor.projectId ?? LOCAL_PROJECT_CONTEXT.projectId,
+    source: 'local',
+  };
+  // orgId (SaaS-only; undefined in OSS) is the project's rate-limit bucket (SPEC 08 §3.7). Carry it so
+  // MCP tool handlers feed the same org into services as the HTTP @CurrentProject path does.
+  if (actor.orgId !== undefined) project.orgId = actor.orgId;
+  return project;
 }
 
 /**
@@ -61,6 +69,7 @@ export class McpDispatchContextFactory {
     return {
       actorUserId: actor.actorId,
       actor: payload,
+      project,
       email: payload.email,
       isSuperAdmin: payload.isSuperAdmin,
     };

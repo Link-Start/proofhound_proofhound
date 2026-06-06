@@ -7,6 +7,7 @@ import type { CryptoService } from '../../../../shared/crypto/crypto.service';
 import type { PromptRepository } from '../prompt.repository';
 import { PromptTryRunService } from '../prompt-try-run.service';
 import { LocalAccessControlService } from '../../../common/contracts/local-access-control.service';
+import type { RuntimeLimitsProvider } from '../../../common/contracts/runtime-limits.provider';
 
 vi.mock('@proofhound/llm-client', async (importOriginal) => {
   const actual = await importOriginal<object>();
@@ -35,6 +36,7 @@ function buildService(overrides?: {
   promptRepo?: Partial<PromptRepository>;
   crypto?: Partial<CryptoService>;
   modelRow?: Record<string, unknown> | null;
+  runtimeLimitsProvider?: Partial<RuntimeLimitsProvider>;
 }) {
   const modelRow = overrides?.modelRow ?? {
     id: MODEL_ID,
@@ -101,10 +103,16 @@ function buildService(overrides?: {
     limiter as never,
     new LocalAccessControlService(),
     {
-      buildModelKey: vi.fn(
-        (project: { projectId: string }, modelId: string) => `project:${project.projectId}:model:${modelId}`,
+      // SaaS-shaped key strategy: derive the org bucket from the project (SPEC 08 §3.7) when an orgId is
+      // carried. Lets the test prove the project's orgId reaches buildModelKey. OSS ignores it → `model:<id>`.
+      buildModelKey: vi.fn((project: { projectId: string; orgId?: string }, modelId: string) =>
+        project.orgId ? `org:${project.orgId}:model:${modelId}` : `project:${project.projectId}:model:${modelId}`,
       ),
     },
+    {
+      mergeLlmLimits: vi.fn().mockImplementation(async (input) => input.limits),
+      ...overrides?.runtimeLimitsProvider,
+    } as RuntimeLimitsProvider,
   );
 
   return { service, promptRepo, crypto };
@@ -175,6 +183,56 @@ describe('PromptTryRunService', () => {
     expect(llmClient.invokeLLM).toHaveBeenCalledWith(
       expect.objectContaining({
         limiterKey: `project:${PROJECT_ID}:model:${MODEL_ID}`,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('threads the project orgId into the limiter key (SaaS rate-limit bucket, SPEC 08 §3.7)', async () => {
+    llmClient.invokeLLM.mockResolvedValue({
+      content: '{"answer":"hi"}',
+      rawResponse: {},
+      parsed: { answer: 'hi' },
+      usage: { inputTokens: 10, outputTokens: 4 },
+      costEstimate: 0.0005,
+      durationMs: 432,
+    });
+
+    const { service } = buildService();
+    // orgId is sourced from the resolved ProjectContext (controller passes @CurrentProject().orgId), not the actor.
+    await service.tryRun(PROJECT_ID, PROMPT_ID, validRequest(), actor, '00000000-0000-4000-8000-000000000777');
+
+    expect(llmClient.invokeLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ limiterKey: `org:00000000-0000-4000-8000-000000000777:model:${MODEL_ID}` }),
+      expect.anything(),
+    );
+  });
+
+  it('merges RuntimeLimitsProvider plan cap into prompt try-run model limits', async () => {
+    llmClient.invokeLLM.mockResolvedValue({
+      content: '{"answer":"hi"}',
+      rawResponse: {},
+      parsed: { answer: 'hi' },
+      usage: { inputTokens: 10, outputTokens: 4 },
+      costEstimate: 0.0005,
+      durationMs: 432,
+    });
+
+    const runtimeLimitsProvider = {
+      mergeLlmLimits: vi.fn().mockResolvedValue({ rpmLimit: 12, tpmLimit: 1200, concurrency: 3 }),
+    };
+    const { service } = buildService({ runtimeLimitsProvider });
+
+    await service.tryRun(PROJECT_ID, PROMPT_ID, validRequest(), actor, '00000000-0000-4000-8000-000000000777');
+
+    expect(runtimeLimitsProvider.mergeLlmLimits).toHaveBeenCalledWith({
+      project: { projectId: PROJECT_ID, orgId: '00000000-0000-4000-8000-000000000777', source: 'local' },
+      modelId: MODEL_ID,
+      source: 'prompt_try_run',
+    });
+    expect(llmClient.invokeLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.objectContaining({ rpmLimit: 12, tpmLimit: 1200, concurrencyLimit: 3 }),
       }),
       expect.anything(),
     );

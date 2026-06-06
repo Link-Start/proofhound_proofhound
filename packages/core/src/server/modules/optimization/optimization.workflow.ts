@@ -51,6 +51,7 @@ import {
   type PromptLanguageDto,
   type PromptOutputSchemaDto,
   type PromptJudgmentRulesDto,
+  type ProjectContext,
   promptLanguageSchema,
   promptVariableSchema,
 } from '@proofhound/shared';
@@ -58,10 +59,12 @@ import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { LimiterKeyStrategy } from '../../common/contracts/limiter-key.strategy';
+import { RuntimeLimitsProvider } from '../../common/contracts/runtime-limits.provider';
 import { CryptoService } from '../../../shared/crypto/crypto.service';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 import { DrizzleRunResultWriter } from '../../infrastructure/llm/run-result-writer';
 import { REDIS_LIMITER } from '../../../shared/redis/redis.constants';
+import { applyRuntimeLimits } from '../../../shared/llm/runtime-limits';
 import { ExperimentService } from '../experiment/experiment.service';
 import { ExperimentWorkflowRegistrar } from '../experiment/experiment.workflow';
 import { PromptRepository } from '../prompt/prompt.repository';
@@ -107,6 +110,9 @@ interface WorkflowConfigSnapshot {
   reason?: string;
   // Context
   projectId: string;
+  // orgId (SaaS-only; undefined in OSS) is seeded from the launching actor via runWorkflow, so the
+  // analysis limiter key and child experiment launches can be org-scoped without re-querying.
+  orgId?: string;
   optimizationName: string;
   promptId: string | null;
   baseVersionId: string | null;
@@ -178,11 +184,11 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     service: 'server',
   });
 
-  readonly runWorkflow: (optimizationId: string) => Promise<void>;
-  private readonly loadConfigStep: (optimizationId: string) => Promise<WorkflowConfigSnapshot>;
+  readonly runWorkflow: (optimizationId: string, orgId?: string) => Promise<void>;
+  private readonly loadConfigStep: (optimizationId: string, orgId?: string) => Promise<WorkflowConfigSnapshot>;
   private readonly markStartedStep: (optimizationId: string) => Promise<void>;
   // SPEC 25 §2.1: from_dataset_only start exclusive — sample from the dataset + call analysisModel to generate the first prompt version
-  private readonly generateFirstVersionStep: (optimizationId: string) => Promise<void>;
+  private readonly generateFirstVersionStep: (optimizationId: string, orgId?: string) => Promise<void>;
   private readonly preparePromptBaselineStep: (optimizationId: string) => Promise<PromptBaselinePrepareOutcome>;
   private readonly recordBaselineWorkflowIdStep: (experimentId: string, workflowId: string) => Promise<void>;
   private readonly markPromptBaselineFailedStep: (experimentId: string, failureReason: string) => Promise<void>;
@@ -241,6 +247,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     @Inject(REDIS_LIMITER) private readonly limiter: RateLimiter,
     private readonly runResultWriter: DrizzleRunResultWriter,
     private readonly limiterKeyStrategy: LimiterKeyStrategy,
+    private readonly runtimeLimitsProvider: RuntimeLimitsProvider,
   ) {
     super('optimization-workflow');
     this.loadConfigStep = DBOS.registerStep(this.loadConfigImpl.bind(this), {
@@ -302,13 +309,13 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     this.logger.info({}, 'optimization_workflow_registered');
   }
 
-  private async runImpl(optimizationId: string): Promise<void> {
+  private async runImpl(optimizationId: string, orgId?: string): Promise<void> {
     this.logger.debug({ optimizationId }, 'workflow_run_start');
 
     try {
       let snapshot: WorkflowConfigSnapshot;
       try {
-        snapshot = await this.loadConfigStep(optimizationId);
+        snapshot = await this.loadConfigStep(optimizationId, orgId);
       } catch (error) {
         await this.finalizeStep(optimizationId, 'failed', {
           reason: `load_config_failed: ${(error as Error).message}`,
@@ -329,13 +336,13 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       // subsequent ensurePromptBaseline follows the same baseline-experiment path as from_prompt_version.
       if (snapshot.startingMode === 'from_dataset_only' && !snapshot.baseVersionId) {
         try {
-          await this.generateFirstVersionStep(optimizationId);
+          await this.generateFirstVersionStep(optimizationId, snapshot.orgId);
         } catch (error) {
           const reason = mapFirstVersionErrorReason(error);
           await this.finalizeStep(optimizationId, 'failed', { reason });
           return;
         }
-        const reloaded = await this.loadConfigStep(optimizationId);
+        const reloaded = await this.loadConfigStep(optimizationId, orgId);
         if (!reloaded.ok) {
           await this.finalizeStep(optimizationId, 'failed', {
             reason: reloaded.reason ?? 'reload_after_first_version_failed',
@@ -440,7 +447,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
           try {
             await DBOS.startWorkflow(this.experimentWorkflow.runWorkflow, {
               workflowID: expWorkflowId,
-            })(prepare.experimentId);
+            })(prepare.experimentId, snapshot.orgId);
           } catch (error) {
             const message = (error as Error).message;
             this.logger.warn(
@@ -529,7 +536,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       try {
         await DBOS.startWorkflow(this.experimentWorkflow.runWorkflow, {
           workflowID: expWorkflowId,
-        })(prepare.experimentId);
+        })(prepare.experimentId, snapshot.orgId);
         await this.recordBaselineWorkflowIdStep(prepare.experimentId, expWorkflowId);
       } catch (error) {
         const message = (error as Error).message;
@@ -573,7 +580,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
 
   // ---------- step impls ----------
 
-  private async loadConfigImpl(optimizationId: string): Promise<WorkflowConfigSnapshot> {
+  private async loadConfigImpl(optimizationId: string, orgId?: string): Promise<WorkflowConfigSnapshot> {
     const ctx = await this.repo.loadWorkflowContext(optimizationId);
     if (!ctx) {
       return invalidSnapshot('optimization_not_found');
@@ -718,6 +725,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     return {
       ok: true,
       projectId: ctx.projectId,
+      orgId,
       optimizationName: ctx.name,
       promptId: ctx.promptId,
       baseVersionId: ctx.baseVersionId,
@@ -729,7 +737,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       promptLanguage,
       analysisModel,
       analysisLimiterKey: this.limiterKeyStrategy.buildModelKey(
-        { projectId: ctx.projectId, source: 'local' },
+        { projectId: ctx.projectId, orgId, source: 'local' },
         analysisModel.id,
       ),
       taskModel,
@@ -752,6 +760,19 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
     await this.repo.markStarted(optimizationId);
   }
 
+  private async applySynchronousRuntimeLimits(
+    project: ProjectContext,
+    model: ModelInvocationConfig,
+    source: 'optimization_analysis' | 'optimization_generate',
+  ): Promise<ModelInvocationConfig> {
+    const mergedLimits = await this.runtimeLimitsProvider.mergeLlmLimits({
+      project,
+      modelId: model.id,
+      source,
+    });
+    return applyRuntimeLimits(model, mergedLimits);
+  }
+
   // SPEC 25 §2.1: first version generation for the from_dataset_only start.
   // 1) randomly sample initialSamplingRounds × initialSamplesPerRound items from the dataset
   // 2) call analysisModel to have the LLM induce the first prompt body / variables / outputSchema
@@ -759,7 +780,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
   // 4) backfill the versionId into optimizations.base_version_id
   // 5) reuse §12 round_steps record (round_index=0, step='generate_prompt')
   // On failure, throw an Error with a specific reason; runImpl catches it, maps to the finalize reason code, and finalizes the whole optimization as failed.
-  private async generateFirstVersionImpl(optimizationId: string): Promise<void> {
+  private async generateFirstVersionImpl(optimizationId: string, orgId?: string): Promise<void> {
     const ctx = await this.repo.loadWorkflowContext(optimizationId);
     if (!ctx) {
       throw new Error('first_version_generation_failed_v1:context_missing');
@@ -811,8 +832,13 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         throw new Error('first_version_generation_failed_v1:analysis_model_unavailable');
       }
       const analysisLimiterKey = this.limiterKeyStrategy.buildModelKey(
-        { projectId: ctx.projectId, source: 'local' },
+        { projectId: ctx.projectId, orgId, source: 'local' },
         analysisModel.id,
+      );
+      const effectiveAnalysisModel = await this.applySynchronousRuntimeLimits(
+        { projectId: ctx.projectId, ...(orgId ? { orgId } : {}), source: 'local' },
+        analysisModel,
+        'optimization_generate',
       );
 
       // Load and randomly sample
@@ -846,7 +872,7 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
       const generated = await generateInitialVersion(
         {
           optimizationId,
-          analysisModel,
+          analysisModel: effectiveAnalysisModel,
           analysisLimiterKey,
           samples,
           goals: goalsParsed.data.map(toLoopGoal),
@@ -1348,11 +1374,20 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         dbosWorkflowId: dbosWorkflowIdForSteps,
       });
       try {
+        const analysisModel = await this.applySynchronousRuntimeLimits(
+          {
+            projectId: snapshot.projectId,
+            ...(snapshot.orgId ? { orgId: snapshot.orgId } : {}),
+            source: 'local',
+          },
+          snapshot.analysisModel,
+          'optimization_analysis',
+        );
         analysisFull = await analyzeFailures(
           {
             optimizationId,
             roundNumber,
-            analysisModel: snapshot.analysisModel,
+            analysisModel,
             analysisLimiterKey: snapshot.analysisLimiterKey,
             currentVersion: analysisVersion,
             previousVersion,
@@ -1445,11 +1480,20 @@ export class OptimizationWorkflowRegistrar extends ConfiguredInstance {
         dbosWorkflowId: dbosWorkflowIdForSteps,
       });
       try {
+        const analysisModel = await this.applySynchronousRuntimeLimits(
+          {
+            projectId: snapshot.projectId,
+            ...(snapshot.orgId ? { orgId: snapshot.orgId } : {}),
+            source: 'local',
+          },
+          snapshot.analysisModel,
+          'optimization_generate',
+        );
         const draft = await generateNextVersion(
           {
             optimizationId,
             roundNumber,
-            analysisModel: snapshot.analysisModel,
+            analysisModel,
             analysisLimiterKey: snapshot.analysisLimiterKey,
             currentVersion: baseVersionForRound,
             analysis: analysisFull,

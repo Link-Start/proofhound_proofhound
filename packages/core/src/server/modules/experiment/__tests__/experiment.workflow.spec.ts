@@ -125,10 +125,7 @@ describe('ExperimentWorkflow.runImpl — finalize 决策', () => {
     const { registrar, finalize } = buildRegistrar();
     const r = registrar as unknown as Record<string, unknown>;
     r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 2, batchSize: 1 });
-    r['readControlStateStep'] = vi
-      .fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce('stop');
+    r['readControlStateStep'] = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce('stop');
     r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);
     const enqueue = vi.fn().mockResolvedValueOnce(['rr1']);
     r['enqueueBatchStep'] = enqueue;
@@ -162,9 +159,7 @@ describe('ExperimentWorkflow.runImpl — finalize 决策', () => {
     r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);
     const enqueue = vi.fn().mockResolvedValueOnce(['rr1']);
     r['enqueueBatchStep'] = enqueue;
-    r['pollUntilBatchDoneStep'] = vi
-      .fn()
-      .mockResolvedValueOnce({ terminalCount: 0, failedCount: 0, control: 'stop' });
+    r['pollUntilBatchDoneStep'] = vi.fn().mockResolvedValueOnce({ terminalCount: 0, failedCount: 0, control: 'stop' });
 
     await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
 
@@ -212,6 +207,66 @@ describe('ExperimentWorkflow.runImpl — finalize 决策', () => {
 
     expect(aggregate).not.toHaveBeenCalled();
     expect(finalize).toHaveBeenCalledWith('exp-1', 'failed', 'payload_project_id_invalid');
+  });
+});
+
+describe('ExperimentWorkflow.enqueueBatchImpl — orgId 透传', () => {
+  // Drive runWorkflow(experimentId, orgId) through the real enqueueBatchImpl (loadRenderContext /
+  // loadSampleDataByIds stubbed), capturing the LlmJobPayload handed to bullmq.enqueueLlmJob.
+  function buildEnqueueRegistrar() {
+    const enqueueLlmJob = vi.fn().mockResolvedValue(undefined);
+    const db = {} as never;
+    const bullmq = { enqueueLlmJob } as never;
+    const runResults = {} as never;
+    const registrar = new ExperimentWorkflowRegistrar(db, bullmq, runResults);
+
+    const r = registrar as unknown as Record<string, unknown>;
+    r['finalizeStep'] = vi.fn().mockResolvedValue(undefined);
+    r['markStartedStep'] = vi.fn().mockResolvedValue(undefined);
+    r['aggregateMetricsStep'] = vi.fn().mockResolvedValue(undefined);
+    r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 1, batchSize: 1 });
+    r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
+    r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);
+    r['pollUntilBatchDoneStep'] = vi.fn().mockResolvedValueOnce({ terminalCount: 1, failedCount: 0 });
+    r['loadRenderContext'] = vi.fn().mockResolvedValue({
+      projectId: 'prj-1',
+      promptVersionId: 'pv-1',
+      promptId: 'p-1',
+      modelId: 'm-1',
+      runConfig: {},
+      body: 'hello',
+      variables: [],
+      outputSchema: null,
+      judgmentRules: null,
+      promptLanguage: 'en-US',
+    });
+    r['loadSampleDataByIds'] = vi.fn().mockResolvedValue([{ id: 's1', data: {} }]);
+
+    return { registrar, enqueueLlmJob };
+  }
+
+  it('runWorkflow(id, 00000000-0000-4000-8000-000000000888) → enqueued payload 携带 orgId=00000000-0000-4000-8000-000000000888', async () => {
+    const { registrar, enqueueLlmJob } = buildEnqueueRegistrar();
+
+    await (registrar as unknown as { runWorkflow: (id: string, orgId?: string) => Promise<void> }).runWorkflow(
+      'exp-1',
+      '00000000-0000-4000-8000-000000000888',
+    );
+
+    expect(enqueueLlmJob).toHaveBeenCalledTimes(1);
+    expect(enqueueLlmJob.mock.calls[0]?.[0]).toMatchObject({
+      orgId: '00000000-0000-4000-8000-000000000888',
+      projectId: 'prj-1',
+    });
+  });
+
+  it('OSS 默认无 orgId → enqueued payload.orgId 为 undefined', async () => {
+    const { registrar, enqueueLlmJob } = buildEnqueueRegistrar();
+
+    await (registrar as unknown as { runWorkflow: (id: string, orgId?: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(enqueueLlmJob).toHaveBeenCalledTimes(1);
+    expect(enqueueLlmJob.mock.calls[0]?.[0]?.orgId).toBeUndefined();
   });
 });
 

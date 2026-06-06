@@ -25,6 +25,7 @@ export class CanaryRuntimeInputError extends Error {
 export interface CanaryRuntimeConfig {
   id: string;
   projectId: string;
+  orgId?: string;
   releaseVariantId?: string | null;
   promptVersionId: string;
   promptId: string;
@@ -130,6 +131,7 @@ export function buildReleaseLlmPayload(input: {
 
   return {
     projectId: input.release.projectId,
+    ...(input.release.orgId ? { orgId: input.release.orgId } : {}),
     source: 'release',
     sourceId: input.release.id,
     releaseVariantId: input.release.releaseVariantId ?? null,

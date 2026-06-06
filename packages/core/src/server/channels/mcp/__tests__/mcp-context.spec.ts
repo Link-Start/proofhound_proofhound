@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '../../../common/actor-context';
 import type { AccessControlService } from '../../../common/contracts/access-control.service';
 import type { McpAuthResolver } from '../../../common/contracts/mcp-auth.resolver';
-import { ProjectAccessDeniedError, type ProjectContextResolver } from '../../../common/contracts/project-context.resolver';
+import {
+  ProjectAccessDeniedError,
+  type ProjectContextResolver,
+} from '../../../common/contracts/project-context.resolver';
 import type { McpRequestMetadataLike } from '../../../common/contracts/types';
 import type { CurrentUserPayload } from '../../../common/decorators/current-user.decorator';
 import { getMcpActor, McpDispatchContextFactory, resolveMcpProjectContext } from '../mcp-context';
@@ -37,6 +40,22 @@ describe('mcp-context', () => {
     expect(resolveMcpProjectContext({ actorUserId: 'tok-1', actor })).toEqual({ projectId: 'p-9', source: 'local' });
   });
 
+  it('resolveMcpProjectContext carries orgId for org-pinned MCP actors (SaaS rate-limit bucket, SPEC 08 §3.7)', () => {
+    const orgActor: CurrentUserPayload = { ...actor, orgId: '00000000-0000-4000-8000-000000000111' };
+    expect(resolveMcpProjectContext({ actorUserId: 'tok-1', actor: orgActor })).toEqual({
+      projectId: 'p-9',
+      source: 'local',
+      orgId: '00000000-0000-4000-8000-000000000111',
+    });
+  });
+
+  it('resolveMcpProjectContext prefers the resolved project orgId over the actor orgId', () => {
+    const orgActor: CurrentUserPayload = { ...actor, orgId: 'actor-org' };
+    const project: ProjectContext = { projectId: 'p-9', orgId: 'project-org', source: 'local' };
+
+    expect(resolveMcpProjectContext({ actorUserId: 'tok-1', actor: orgActor, project })).toEqual(project);
+  });
+
   it('McpDispatchContextFactory authorizes the MCP channel before returning context', async () => {
     const authResolver = { resolveFromMcp: vi.fn().mockResolvedValue(actorContext) };
     const projectResolver = { resolve: vi.fn().mockResolvedValue(projectContext) };
@@ -61,10 +80,11 @@ describe('mcp-context', () => {
       isSuperAdmin: false,
       isActive: true,
     });
+    expect(ctx.project).toEqual(projectContext);
   });
 
   it('McpDispatchContextFactory preserves orgId for org-pinned MCP actors', async () => {
-    const orgActorContext: ActorContext = { ...actorContext, orgId: 'org-1' };
+    const orgActorContext: ActorContext = { ...actorContext, orgId: '00000000-0000-4000-8000-000000000111' };
     const authResolver = { resolveFromMcp: vi.fn().mockResolvedValue(orgActorContext) };
     const projectResolver = { resolve: vi.fn().mockResolvedValue(projectContext) };
     const accessControl = { assertCan: vi.fn().mockResolvedValue(undefined) };
@@ -76,7 +96,11 @@ describe('mcp-context', () => {
 
     const ctx = await factory.build(metadata);
 
-    expect(ctx.actor).toMatchObject({ actorId: 'tok-1', projectId: 'p-9', orgId: 'org-1' });
+    expect(ctx.actor).toMatchObject({
+      actorId: 'tok-1',
+      projectId: 'p-9',
+      orgId: '00000000-0000-4000-8000-000000000111',
+    });
   });
 
   it('McpDispatchContextFactory rejects dispatch when mcp_tool is denied', async () => {

@@ -13,32 +13,32 @@ export class OptimizationLauncher {
     private readonly repo: OptimizationRepository,
   ) {}
 
-  async launch(optimizationId: string): Promise<string> {
-    return this.startWorkflowWithIdSuffix(optimizationId, 'start');
+  // orgId (SaaS-only; undefined in OSS) is seeded from the resolved ProjectContext (the project's org is the
+  // rate-limit bucket, SPEC 08 §3.7) and threaded into the workflow run input, so the worker can compose an
+  // org-scoped rate-limit key without re-querying. Recovery hydrates the row's project before resume.
+  async launch(optimizationId: string, orgId?: string): Promise<string> {
+    return this.startWorkflowWithIdSuffix(optimizationId, 'start', orgId);
   }
 
-  async resume(optimizationId: string): Promise<string> {
-    return this.startWorkflowWithIdSuffix(optimizationId, 'resume');
+  async resume(optimizationId: string, orgId?: string): Promise<string> {
+    return this.startWorkflowWithIdSuffix(optimizationId, 'resume', orgId);
   }
 
-  async retry(optimizationId: string): Promise<string> {
-    return this.startWorkflowWithIdSuffix(optimizationId, 'retry');
+  async retry(optimizationId: string, orgId?: string): Promise<string> {
+    return this.startWorkflowWithIdSuffix(optimizationId, 'retry', orgId);
   }
 
-  async startWithWorkflowId(optimizationId: string, workflowId: string): Promise<string> {
+  async startWithWorkflowId(optimizationId: string, workflowId: string, orgId?: string): Promise<string> {
     const handle = await DBOS.startWorkflow(this.workflow.runWorkflow, {
       workflowID: workflowId,
-    })(optimizationId);
-    this.logger.info(
-      { optimizationId, workflowId, handleId: handle.workflowID },
-      'optimization_workflow_started',
-    );
+    })(optimizationId, orgId);
+    this.logger.info({ optimizationId, workflowId, handleId: handle.workflowID }, 'optimization_workflow_started');
     return workflowId;
   }
 
-  private async startWorkflowWithIdSuffix(optimizationId: string, kind: string): Promise<string> {
+  private async startWorkflowWithIdSuffix(optimizationId: string, kind: string, orgId?: string): Promise<string> {
     const workflowId = `optimization:${optimizationId}:${kind}:${Date.now()}`;
-    await this.startWithWorkflowId(optimizationId, workflowId);
+    await this.startWithWorkflowId(optimizationId, workflowId, orgId);
     await this.repo.setDbosWorkflowId(optimizationId, workflowId);
     return workflowId;
   }

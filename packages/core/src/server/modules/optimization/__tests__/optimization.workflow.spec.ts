@@ -1,6 +1,31 @@
-import { describe, expect, it } from 'vitest';
+// Mock @dbos-inc/dbos-sdk so the registrar can be instantiated without a live DBOS runtime:
+// registerStep/registerWorkflow degrade to identity (this.xxxStep === the bound impl), ConfiguredInstance
+// is a trivial base. Harmless to the pure-helper tests below (none touch DBOS).
+// startWorkflow captures the registered function + workflow options, returning a curried fn that records the
+// invocation args — this lets the runImpl child-launch test assert which function was started with which args.
+const startWorkflowCalls: Array<{ fn: unknown; options: unknown; args: unknown[] }> = [];
+vi.mock('@dbos-inc/dbos-sdk', () => ({
+  DBOS: {
+    registerStep: (fn: unknown) => fn,
+    registerWorkflow: (fn: unknown) => fn,
+    sleepSeconds: vi.fn(async () => undefined),
+    startWorkflow: (fn: unknown, options: unknown) => {
+      return (...args: unknown[]) => {
+        startWorkflowCalls.push({ fn, options, args });
+        return Promise.resolve({ workflowID: 'wf-id', getResult: async () => undefined });
+      };
+    },
+    get workflowID() {
+      return undefined;
+    },
+  },
+  ConfiguredInstance: class {},
+}));
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FirstVersionParseError } from '@proofhound/optimization-strategy';
 import {
+  OptimizationWorkflowRegistrar,
   buildOptimizationExperimentName,
   buildSamplesForStrategy,
   computeOptimizationBaselineExperimentId,
@@ -508,5 +533,268 @@ describe('pickRandomSamples (SPEC 25 §2.1 first-version sampling)', () => {
     const b = pickRandomSamples(items, 20, 'seed-b');
     // With extremely small probability two seeds could produce identical sequences; adjust if flaky
     expect(a).not.toEqual(b);
+  });
+});
+
+// orgId (SaaS-only; undefined in OSS) is threaded runWorkflow(optimizationId, orgId) → loadConfigStep(optimizationId, orgId)
+// → loadConfigImpl, which composes the analysis rate-limit key via limiterKeyStrategy.buildModelKey. The key must carry
+// orgId so a SaaS LimiterKeyStrategy can isolate the per-tenant counting space; OSS passes undefined and the local
+// strategy ignores it (key behavior unchanged). Driven through the real loadConfigImpl with repo / model loads stubbed.
+describe('OptimizationWorkflow.loadConfigImpl — orgId 透传 analysisLimiterKey', () => {
+  function buildRegistrar() {
+    const buildModelKey = vi.fn((_project: unknown, modelId: string) => `model:${modelId}`);
+    const limiterKeyStrategy = { buildModelKey } as never;
+    const repo = {
+      loadWorkflowContext: vi.fn(),
+      listRoundExperimentsForOptimization: vi.fn().mockResolvedValue([]),
+    } as never;
+
+    const registrar = new OptimizationWorkflowRegistrar(
+      {} as never, // db (loadModelInvocationConfig overridden below, so unused)
+      repo,
+      {} as never, // promptRepo
+      {} as never, // experimentWorkflow
+      {} as never, // experimentService
+      {} as never, // crypto
+      {} as never, // limiter
+      {} as never, // runResultWriter
+      limiterKeyStrategy,
+      { mergeLlmLimits: vi.fn().mockImplementation(async (input) => input.limits) } as never,
+    );
+
+    const r = registrar as unknown as Record<string, unknown>;
+    // loadModelInvocationConfig reads this.db; stub it so analysis / task models resolve without a DB.
+    r['loadModelInvocationConfig'] = vi
+      .fn()
+      .mockImplementation(async (modelId: string) => ({ id: modelId, providerType: 'openai' }));
+
+    const ctx = {
+      id: 'opt-1',
+      projectId: 'prj-1',
+      name: 'opt',
+      description: null,
+      optimizationHint: null,
+      strategy: 'error_pattern',
+      strategyConfig: {},
+      startingMode: 'from_prompt_version',
+      sourceExperimentId: null,
+      promptId: 'p-1',
+      baseVersionId: 'pv-1',
+      baseVersionBody: 'body',
+      baseVersionVariables: [],
+      baseVersionOutputSchema: null,
+      baseVersionJudgmentRules: null,
+      baseVersionPromptLanguage: 'en-US',
+      baseVersionNumber: 1,
+      datasetId: 'ds-1',
+      datasetSampleCount: 10,
+      experimentModelId: 'task-model',
+      analysisModelId: 'analysis-model',
+      promptLanguage: 'en-US',
+      goals: [{ metric: 'accuracy', comparator: 'gte', target: 0.9, scope: 'overall' }],
+      fieldWhitelist: { inputFields: [], metaFields: [] },
+      runConfig: {},
+      maxRounds: 5,
+      currentRound: 0,
+      bestVersionId: null,
+      bestMetrics: { accuracy: 0.8 },
+      status: 'running',
+      controlState: null,
+      startedAt: null,
+      finishedAt: null,
+      createdBy: 'u-1',
+    };
+    (repo as unknown as { loadWorkflowContext: ReturnType<typeof vi.fn> }).loadWorkflowContext.mockResolvedValue(ctx);
+
+    return { registrar, buildModelKey };
+  }
+
+  it('passes orgId into buildModelKey for the analysis limiter key', async () => {
+    const { registrar, buildModelKey } = buildRegistrar();
+    const snapshot = await (
+      registrar as unknown as {
+        loadConfigImpl: (id: string, orgId?: string) => Promise<{ ok: boolean; orgId?: string }>;
+      }
+    ).loadConfigImpl('opt-1', '00000000-0000-4000-8000-000000000888');
+
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.orgId).toBe('00000000-0000-4000-8000-000000000888');
+    expect(buildModelKey).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'prj-1', orgId: '00000000-0000-4000-8000-000000000888', source: 'local' }),
+      'analysis-model',
+    );
+  });
+
+  it('OSS default (no orgId) → buildModelKey receives orgId=undefined and snapshot.orgId is undefined', async () => {
+    const { registrar, buildModelKey } = buildRegistrar();
+    const snapshot = await (
+      registrar as unknown as {
+        loadConfigImpl: (id: string, orgId?: string) => Promise<{ ok: boolean; orgId?: string }>;
+      }
+    ).loadConfigImpl('opt-1');
+
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.orgId).toBeUndefined();
+    expect(buildModelKey).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'prj-1', orgId: undefined, source: 'local' }),
+      'analysis-model',
+    );
+  });
+});
+
+describe('OptimizationWorkflow.applySynchronousRuntimeLimits — plan cap', () => {
+  it('merges RuntimeLimitsProvider caps before synchronous optimization LLM calls', async () => {
+    const runtimeLimitsProvider = {
+      mergeLlmLimits: vi.fn().mockResolvedValue({ rpmLimit: 30, tpmLimit: 2000, concurrency: 2 }),
+    };
+    const registrar = new OptimizationWorkflowRegistrar(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      runtimeLimitsProvider as never,
+    );
+
+    const model = {
+      id: 'analysis-model',
+      providerType: 'openai',
+      providerModelId: 'gpt-4o',
+      endpoint: 'https://api.openai.com/v1',
+      apiKey: 'sk-test',
+      capabilities: { image: 'none' as const },
+      rpmLimit: 60,
+      tpmLimit: 100000,
+      concurrencyLimit: 10,
+      autoConcurrency: false,
+      inputTokenPricePerMillion: '0',
+      outputTokenPricePerMillion: '0',
+      extraBody: {},
+    };
+    const effective = await (
+      registrar as unknown as {
+        applySynchronousRuntimeLimits: (
+          project: { projectId: string; orgId?: string; source: 'local' },
+          inputModel: typeof model,
+          source: 'optimization_analysis' | 'optimization_generate',
+        ) => Promise<typeof model>;
+      }
+    ).applySynchronousRuntimeLimits(
+      { projectId: 'prj-1', orgId: '00000000-0000-4000-8000-000000000888', source: 'local' },
+      model,
+      'optimization_analysis',
+    );
+
+    expect(runtimeLimitsProvider.mergeLlmLimits).toHaveBeenCalledWith({
+      project: { projectId: 'prj-1', orgId: '00000000-0000-4000-8000-000000000888', source: 'local' },
+      modelId: 'analysis-model',
+      source: 'optimization_analysis',
+    });
+    expect(effective).toMatchObject({ rpmLimit: 30, tpmLimit: 2000, concurrencyLimit: 2 });
+  });
+});
+
+// orgId (SaaS-only; undefined in OSS) threads runWorkflow(optimizationId, orgId) → loadConfigStep → snapshot.orgId,
+// and runImpl must forward that snapshot.orgId as the 2nd arg of the child experiment launch
+// DBOS.startWorkflow(this.experimentWorkflow.runWorkflow, { workflowID })(experimentId, snapshot.orgId).
+// This proves the per-project (org) rate-limit bucket (SPEC 08 §3.7) reaches the child experiment workflow.
+// We drive the real runImpl through exactly one round with the internal steps stubbed at the smallest seam,
+// and capture the DBOS.startWorkflow invocation recorded by the module mock.
+describe('OptimizationWorkflow.runImpl — child experiment inherits snapshot.orgId', () => {
+  // A sentinel function standing in for ExperimentWorkflowRegistrar.runWorkflow, so the captured startWorkflow
+  // target can be identity-checked: runImpl must start *this* function, not loadConfigStep or any other.
+  const experimentRunWorkflow = vi.fn();
+
+  function buildRegistrar() {
+    const repo = {} as never;
+    const experimentWorkflow = { runWorkflow: experimentRunWorkflow } as never;
+
+    const registrar = new OptimizationWorkflowRegistrar(
+      {} as never, // db
+      repo,
+      {} as never, // promptRepo
+      experimentWorkflow,
+      {} as never, // experimentService
+      {} as never, // crypto
+      {} as never, // limiter
+      {} as never, // runResultWriter
+      {} as never, // limiterKeyStrategy
+      { mergeLlmLimits: vi.fn().mockImplementation(async (input) => input.limits) } as never,
+    );
+
+    // Stub the internal DBOS steps on the instance (registerStep was identity, so these props hold the bound impls).
+    // The from_experiment start skips the prompt-baseline bootstrap, so runImpl goes straight into the round loop.
+    const snapshot = {
+      ok: true,
+      projectId: 'prj-1',
+      orgId: '00000000-0000-4000-8000-000000000888',
+      startingMode: 'from_experiment',
+      baseVersionId: 'pv-1',
+      sourceExperimentId: 'exp-src',
+      nextRound: 1,
+      maxRounds: 5,
+      bestVersion: null,
+      bestMetrics: {},
+      goals: [{ metric: 'accuracy', comparator: 'gte', target: 0.9, scope: 'overall' }],
+      resumeChildExpId: null,
+    };
+    const r = registrar as unknown as Record<string, unknown>;
+    r['loadConfigStep'] = vi.fn().mockResolvedValue(snapshot);
+    r['markStartedStep'] = vi.fn().mockResolvedValue(undefined);
+    r['readStateStep'] = vi.fn().mockResolvedValue({ status: 'running', controlState: null });
+    r['prepareRoundStep'] = vi.fn().mockResolvedValue({ kind: 'launch', experimentId: 'child-exp-1' });
+    // Return goals_met so runImpl finalizes and exits after a single round (one child launch).
+    r['finalizeRoundStep'] = vi.fn().mockResolvedValue({ kind: 'goals_met', metrics: {}, isBest: true });
+    r['finalizeStep'] = vi.fn().mockResolvedValue(undefined);
+
+    return registrar;
+  }
+
+  beforeEach(() => {
+    startWorkflowCalls.length = 0;
+    experimentRunWorkflow.mockClear();
+  });
+
+  it('forwards snapshot.orgId as the 2nd arg of the child experiment startWorkflow', async () => {
+    const registrar = buildRegistrar();
+    await (registrar as unknown as { runImpl: (id: string, orgId?: string) => Promise<void> }).runImpl(
+      'opt-1',
+      '00000000-0000-4000-8000-000000000888',
+    );
+
+    // Exactly one child experiment launch (single round), targeting the experiment workflow with (experimentId, orgId).
+    const childLaunch = startWorkflowCalls.find((c) => c.fn === experimentRunWorkflow);
+    expect(childLaunch).toBeDefined();
+    expect(childLaunch?.args).toEqual(['child-exp-1', '00000000-0000-4000-8000-000000000888']);
+  });
+
+  it('OSS default (snapshot.orgId undefined) → child experiment launched with orgId=undefined', async () => {
+    const registrar = buildRegistrar();
+    // Re-stub loadConfigStep to drop orgId (OSS: ProjectContext.orgId is undefined → snapshot.orgId undefined).
+    const r = registrar as unknown as Record<string, unknown>;
+    (r['loadConfigStep'] as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      projectId: 'prj-1',
+      orgId: undefined,
+      startingMode: 'from_experiment',
+      baseVersionId: 'pv-1',
+      sourceExperimentId: 'exp-src',
+      nextRound: 1,
+      maxRounds: 5,
+      bestVersion: null,
+      bestMetrics: {},
+      goals: [{ metric: 'accuracy', comparator: 'gte', target: 0.9, scope: 'overall' }],
+      resumeChildExpId: null,
+    });
+
+    await (registrar as unknown as { runImpl: (id: string, orgId?: string) => Promise<void> }).runImpl('opt-1');
+
+    const childLaunch = startWorkflowCalls.find((c) => c.fn === experimentRunWorkflow);
+    expect(childLaunch).toBeDefined();
+    expect(childLaunch?.args).toEqual(['child-exp-1', undefined]);
   });
 });
