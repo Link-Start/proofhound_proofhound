@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="proofhound-logo-title">
+  <title id="proofhound-logo-title">ProofHound</title>
+  <rect width="512" height="512" rx="102" fill="#11131A" />
+  <svg x="54" y="125" width="405" height="262" viewBox="0 0 68 44" fill="none">
+    <path d="M16 4 L4 22 L16 40" stroke="#F4F3EF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M52 4 L64 22 L52 40" stroke="#F4F3EF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+    <g transform="translate(34 25) scale(0.75)" fill="#F4F3EF">
+      <ellipse cx="0" cy="9" rx="14" ry="10.5" />
+      <circle cx="-15" cy="-6" r="5.6" />
+      <circle cx="-5" cy="-13" r="5.8" />
+      <circle cx="6" cy="-13" r="5.8" />
+      <circle cx="16" cy="-6" r="5.6" />
+    </g>
+  </svg>
+</svg>
