@@ -27,7 +27,12 @@ import {
   readExpectedField,
   type ExperimentPlan,
 } from '../experiment.workflow';
+import { ObjectStorageProvider } from '../../../common/contracts/object-storage.provider';
+import { DatasetSamplePayloadReader } from '../../dataset/dataset-sample-payload';
 import { describe, expect, it, vi } from 'vitest';
+
+// Object storage disabled → the dataset-sample reader is a pure inline pass-through.
+const datasetSampleReader = new DatasetSamplePayloadReader({ isEnabled: () => false } as unknown as ObjectStorageProvider);
 
 const PLAN: ExperimentPlan = {
   experimentId: 'exp-1',
@@ -46,19 +51,22 @@ function buildRegistrar() {
   const db = {} as never;
   const bullmq = {} as never;
   const runResults = {} as never;
-  const registrar = new ExperimentWorkflowRegistrar(db, bullmq, runResults);
+  const compactor = {} as never;
+  const registrar = new ExperimentWorkflowRegistrar(db, bullmq, runResults, compactor, datasetSampleReader);
 
   const finalize = vi.fn().mockResolvedValue(undefined);
   const markStarted = vi.fn().mockResolvedValue(undefined);
   const clearResume = vi.fn().mockResolvedValue(undefined);
   const aggregate = vi.fn().mockResolvedValue(undefined);
+  const compact = vi.fn().mockResolvedValue(undefined);
 
   (registrar as unknown as Record<string, unknown>)['finalizeStep'] = finalize;
   (registrar as unknown as Record<string, unknown>)['markStartedStep'] = markStarted;
   (registrar as unknown as Record<string, unknown>)['clearResumeStep'] = clearResume;
   (registrar as unknown as Record<string, unknown>)['aggregateMetricsStep'] = aggregate;
+  (registrar as unknown as Record<string, unknown>)['compactRunResultsStep'] = compact;
 
-  return { registrar, finalize, markStarted, aggregate };
+  return { registrar, finalize, markStarted, aggregate, compact };
 }
 
 describe('ExperimentWorkflow.runImpl — finalize 决策', () => {
@@ -218,12 +226,14 @@ describe('ExperimentWorkflow.enqueueBatchImpl — orgId 透传', () => {
     const db = {} as never;
     const bullmq = { enqueueLlmJob } as never;
     const runResults = {} as never;
-    const registrar = new ExperimentWorkflowRegistrar(db, bullmq, runResults);
+    const compactor = {} as never;
+    const registrar = new ExperimentWorkflowRegistrar(db, bullmq, runResults, compactor, datasetSampleReader);
 
     const r = registrar as unknown as Record<string, unknown>;
     r['finalizeStep'] = vi.fn().mockResolvedValue(undefined);
     r['markStartedStep'] = vi.fn().mockResolvedValue(undefined);
     r['aggregateMetricsStep'] = vi.fn().mockResolvedValue(undefined);
+    r['compactRunResultsStep'] = vi.fn().mockResolvedValue(undefined);
     r['loadPlanStep'] = vi.fn().mockResolvedValue({ ...PLAN, totalSamples: 1, batchSize: 1 });
     r['readControlStateStep'] = vi.fn().mockResolvedValue(null);
     r['loadSampleIdBatchStep'] = vi.fn().mockResolvedValueOnce(['s1']);

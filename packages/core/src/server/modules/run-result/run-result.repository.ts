@@ -17,6 +17,8 @@ import type {
 } from '@proofhound/shared';
 import { sql, type SQL } from 'drizzle-orm';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
+import type { RunResultPayloadRef } from './run-result-payload';
+import { RunResultPayloadReader } from './run-result-payload.reader';
 
 export interface BatchTerminalCounts {
   terminalCount: number;
@@ -30,7 +32,10 @@ export interface ExperimentAccessRow {
 
 @Injectable()
 export class RunResultRepository {
-  constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
+  constructor(
+    @Inject(DATABASE_CLIENT) private readonly db: DbClient,
+    private readonly payloadReader: RunResultPayloadReader,
+  ) {}
 
   async aggregateExperimentLatency(experimentId: string): Promise<{
     averageMs: number | null;
@@ -201,6 +206,8 @@ export class RunResultRepository {
           OR rr.raw_response ILIKE ${pattern}
           OR rr.input_variables::text ILIKE ${pattern}
           OR rr.decision_output ILIKE ${pattern}
+          OR rr.input_preview ILIKE ${pattern}
+          OR rr.output_preview ILIKE ${pattern}
           OR rr.expected_output ILIKE ${pattern}
           OR rr.error_message ILIKE ${pattern}
         )`,
@@ -232,9 +239,12 @@ export class RunResultRepository {
         rr.expected_output,
         ds.data AS sample_data,
         d.field_schema AS dataset_field_schema,
+        rr.input_preview,
+        rr.output_preview,
         rr.input_variables,
         rr.raw_response,
         rr.parsed_output,
+        rr.payload_ref,
         rr.error_class,
         rr.error_message,
         rr.latency_ms,
@@ -332,6 +342,8 @@ export class RunResultRepository {
           OR rr.raw_response ILIKE ${pattern}
           OR rr.input_variables::text ILIKE ${pattern}
           OR rr.decision_output ILIKE ${pattern}
+          OR rr.input_preview ILIKE ${pattern}
+          OR rr.output_preview ILIKE ${pattern}
           OR rr.expected_output ILIKE ${pattern}
           OR rr.error_message ILIKE ${pattern}
         )`,
@@ -383,9 +395,12 @@ export class RunResultRepository {
         rr.judgment_status,
         rr.is_correct,
         rr.decision_output,
+        rr.input_preview,
+        rr.output_preview,
         rr.input_variables,
         rr.raw_response,
         rr.parsed_output,
+        rr.payload_ref,
         rr.error_class,
         rr.error_message,
         rr.latency_ms,
@@ -421,8 +436,28 @@ export class RunResultRepository {
     const totalList = unwrapRows<{ total: number | string }>(totalResult);
     const total = Number(totalList[0]?.total ?? 0);
 
+    // Release run_results offload input_variables / rendered_prompt (SPEC 30 §9.4); hydrate the page
+    // (bounded by pageSize) so the release list keeps showing input. Pass-through when not offloaded.
+    const releaseRows = unwrapRows<ReleaseRunResultRowShape>(dataRowsResult);
+    const releaseFields = await this.payloadReader.hydrateMany(
+      releaseRows.map((r) => ({
+        renderedPrompt: null,
+        inputVariables: r.input_variables,
+        rawResponse: r.raw_response,
+        parsedOutput: r.parsed_output,
+        payloadRef: r.payload_ref,
+      })),
+    );
+    releaseRows.forEach((r, i) => {
+      const f = releaseFields[i];
+      if (!f) return;
+      r.input_variables = f.inputVariables;
+      r.raw_response = f.rawResponse;
+      r.parsed_output = f.parsedOutput;
+    });
+
     return {
-      data: unwrapRows<ReleaseRunResultRowShape>(dataRowsResult).map(toReleaseListItem),
+      data: releaseRows.map(toReleaseListItem),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -458,6 +493,7 @@ export class RunResultRepository {
         rr.input_variables,
         rr.raw_response,
         rr.parsed_output,
+        rr.payload_ref,
         rr.dbos_workflow_id,
         rr.bullmq_job_id
       FROM ph_runs.run_results rr
@@ -474,7 +510,22 @@ export class RunResultRepository {
     const list = unwrapRows<RunResultDetailRowShape>(rows);
     const first = list[0];
     if (!first) return null;
-    return toDetail(first);
+    // Resolve the large fields through the seam: inline when present, else read the offload shard
+    // (SPEC 30 §9.2). A no-op pass-through when the row was never compacted / storage is disabled.
+    const fields = await this.payloadReader.hydrate({
+      renderedPrompt: first.rendered_prompt,
+      inputVariables: first.input_variables,
+      rawResponse: first.raw_response,
+      parsedOutput: first.parsed_output,
+      payloadRef: first.payload_ref,
+    });
+    return toDetail({
+      ...first,
+      rendered_prompt: fields.renderedPrompt,
+      input_variables: fields.inputVariables,
+      raw_response: fields.rawResponse,
+      parsed_output: fields.parsedOutput,
+    });
   }
 }
 
@@ -491,9 +542,12 @@ interface RunResultRowShape {
   expected_output: string | null;
   sample_data: unknown;
   dataset_field_schema: unknown;
+  input_preview: string | null;
+  output_preview: string | null;
   input_variables: unknown;
   raw_response: string | null;
   parsed_output: unknown;
+  payload_ref: RunResultPayloadRef | null;
   error_class: string | null;
   error_message: string | null;
   latency_ms: number | string | null;
@@ -511,6 +565,7 @@ interface RunResultDetailRowShape extends RunResultRowShape {
   input_variables: unknown;
   raw_response: string | null;
   parsed_output: unknown;
+  payload_ref: RunResultPayloadRef | null;
   dbos_workflow_id: string | null;
   bullmq_job_id: string | null;
 }
@@ -541,6 +596,7 @@ interface ReleaseRunResultRowShape {
   input_variables: unknown;
   raw_response: string | null;
   parsed_output: unknown;
+  payload_ref: RunResultPayloadRef | null;
   error_class: string | null;
   error_message: string | null;
   latency_ms: number | string | null;
@@ -645,6 +701,14 @@ function formatReleaseVersionLabel(
   return `v${Math.max(0, targetProductionNumber - 1)}.${candidateNumber ?? 0}`;
 }
 
+const PREVIEW_MAX = 1000;
+function previewOfValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  if (text.length === 0) return null;
+  return text.length > PREVIEW_MAX ? text.slice(0, PREVIEW_MAX) : text;
+}
+
 function toListItem(row: RunResultRowShape): RunResultListItemDto {
   return {
     id: row.id,
@@ -659,6 +723,10 @@ function toListItem(row: RunResultRowShape): RunResultListItemDto {
     expectedOutput: row.expected_output,
     datasetTextFields: getDatasetFieldValues(row.dataset_field_schema, row.sample_data, TEXT_FIELD_ROLES),
     datasetImageFields: getDatasetFieldValues(row.dataset_field_schema, row.sample_data, IMAGE_FIELD_ROLES),
+    // List previews come from the persisted preview columns once compacted, else are computed from the
+    // still-inline fields (SPEC 30 §9). The full fields below are null after compaction (detail rehydrates).
+    inputPreview: row.input_preview ?? previewOfValue(row.input_variables),
+    outputPreview: row.output_preview ?? row.decision_output ?? previewOfValue(row.parsed_output) ?? row.raw_response,
     inputVariables: row.input_variables ?? null,
     rawResponse: row.raw_response,
     parsedOutput: row.parsed_output ?? null,

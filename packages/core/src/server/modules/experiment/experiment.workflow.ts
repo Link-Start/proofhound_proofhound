@@ -15,6 +15,8 @@ import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 import { BullmqService } from '../../infrastructure/orchestration/bullmq.service';
+import { type DatasetSamplePayloadRef, DatasetSamplePayloadReader } from '../dataset/dataset-sample-payload';
+import { RunResultCompactor } from '../run-result/run-result-compactor';
 import { RunResultService } from '../run-result/run-result.service';
 import { aggregateExperimentMetrics } from './experiment.aggregator';
 import { renderPromptForSample } from './experiment.renderer';
@@ -81,6 +83,7 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     runResultIds: string[],
   ) => Promise<{ terminalCount: number; failedCount: number; control: 'stop' | 'cancel' | null }>;
   private readonly aggregateMetricsStep: (experimentId: string) => Promise<void>;
+  private readonly compactRunResultsStep: (experimentId: string, projectId: string) => Promise<void>;
   private readonly finalizeStep: (
     experimentId: string,
     kind: 'success' | 'failed' | 'stopped' | 'cancelled',
@@ -91,6 +94,8 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     @Inject(DATABASE_CLIENT) private readonly db: DbClient,
     private readonly bullmq: BullmqService,
     private readonly runResults: RunResultService,
+    private readonly compactor: RunResultCompactor,
+    private readonly datasetSampleReader: DatasetSamplePayloadReader,
   ) {
     super('experiment-workflow');
     this.loadPlanStep = DBOS.registerStep(this.loadPlanImpl.bind(this), { name: 'experiment.loadPlan' });
@@ -108,6 +113,9 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     });
     this.aggregateMetricsStep = DBOS.registerStep(this.aggregateMetricsImpl.bind(this), {
       name: 'experiment.aggregateMetrics',
+    });
+    this.compactRunResultsStep = DBOS.registerStep(this.compactRunResultsImpl.bind(this), {
+      name: 'experiment.compactRunResults',
     });
     this.finalizeStep = DBOS.registerStep(this.finalizeImpl.bind(this), { name: 'experiment.finalize' });
 
@@ -196,10 +204,12 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
 
       // All samples failed → the experiment as a whole is failed; partial failures still count as success (failed_samples is already reflected in metrics)
       if (totalTerminal > 0 && totalFailed === totalTerminal) {
+        await this.compactRunResultsStep(experimentId, plan.projectId);
         await this.finalizeStep(experimentId, 'failed', 'all_samples_failed');
         return;
       }
 
+      await this.compactRunResultsStep(experimentId, plan.projectId);
       await this.finalizeStep(experimentId, 'success');
     } catch (error) {
       this.logger.error({ experimentId, error: (error as Error).message }, 'experiment_workflow_failed');
@@ -411,6 +421,27 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     );
   }
 
+  // Tier this experiment's run-result large fields into object-storage shards (SPEC 30 §9.3). The run
+  // is the natural batch boundary; all rows are terminal here. A no-op when object storage is disabled.
+  // Best-effort: a compaction failure must not fail an otherwise-successful experiment — rows stay
+  // inline and the periodic compactor retries later — so it is caught and logged, never rethrown.
+  private async compactRunResultsImpl(experimentId: string, projectId: string): Promise<void> {
+    try {
+      const result = await this.compactor.compact({ projectId, source: 'experiment', sourceId: experimentId });
+      if (result.compactedRows > 0) {
+        this.logger.info(
+          { experimentId, compactedRows: result.compactedRows, shards: result.shards, generation: result.generation },
+          'step_compact_run_results_done',
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        { experimentId, error: (error as Error).message },
+        'step_compact_run_results_failed',
+      );
+    }
+  }
+
   private async finalizeImpl(
     experimentId: string,
     kind: 'success' | 'failed' | 'stopped' | 'cancelled',
@@ -473,10 +504,15 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
   ): Promise<Array<{ id: string; data: Record<string, unknown> | null }>> {
     if (sampleIds.length === 0) return [];
     const rows = await this.db
-      .select({ id: datasetSamples.id, data: datasetSamples.data })
+      .select({ id: datasetSamples.id, data: datasetSamples.data, payloadRef: datasetSamples.payloadRef })
       .from(datasetSamples)
       .where(inArrayUuids(datasetSamples.id, sampleIds));
-    return rows.map((r) => ({ id: r.id, data: (r.data as Record<string, unknown> | null) ?? null }));
+    // Sample data may be offloaded to a shard once promote tiers it out (SPEC 22 §7.3); resolve it
+    // through the seam (inline when present, else batched shard read). Pass-through when disabled.
+    const hydrated = await this.datasetSampleReader.hydrateMany(
+      rows.map((r) => ({ data: r.data, payloadRef: (r.payloadRef as DatasetSamplePayloadRef | null) ?? null })),
+    );
+    return rows.map((r, i) => ({ id: r.id, data: (hydrated[i] as Record<string, unknown> | null) ?? null }));
   }
 }
 

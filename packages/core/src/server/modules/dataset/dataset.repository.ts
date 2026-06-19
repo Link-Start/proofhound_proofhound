@@ -4,8 +4,14 @@ import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
 import type { CreateDatasetDto, DatasetFieldSchemaDto } from '@proofhound/shared';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
+import { ObjectStorageProvider } from '../../common/contracts/object-storage.provider';
+import { offloadStagingToShards } from './dataset-sample-offload';
+import { type DatasetSamplePayloadRef, DatasetSamplePayloadReader } from './dataset-sample-payload';
 
 const { optimizations, datasetSamples, datasets, experiments, projects, promptVersions } = schema;
+
+// Per-shard batch for small-file create offload (samples are already in memory; one shard per batch).
+const CREATE_SHARD_BATCH = 200;
 
 export interface DatasetProjectAccessRow {
   id: string;
@@ -72,7 +78,23 @@ export interface DatasetDeletionImpactRows {
 
 @Injectable()
 export class DatasetRepository {
-  constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
+  constructor(
+    @Inject(DATABASE_CLIENT) private readonly db: DbClient,
+    private readonly sampleReader: DatasetSamplePayloadReader,
+    private readonly storage: ObjectStorageProvider,
+  ) {}
+
+  // Resolve each row's `data` through the seam (inline when present, else from its shard) so callers
+  // that render full sample content keep working after a dataset is offloaded (SPEC 22 §7.3).
+  private async hydrateSampleRows<T extends { data: unknown; payloadRef?: unknown }>(rows: T[]): Promise<T[]> {
+    const hydrated = await this.sampleReader.hydrateMany(
+      rows.map((r) => ({ data: r.data, payloadRef: (r.payloadRef as DatasetSamplePayloadRef | null) ?? null })),
+    );
+    rows.forEach((r, i) => {
+      r.data = hydrated[i] ?? null;
+    });
+    return rows;
+  }
 
   private datasetSelectFields = {
     id: datasets.id,
@@ -150,11 +172,12 @@ export class DatasetRepository {
 
   // Full scan — only for export (complete dump). Detail browsing must use listDatasetSamplesPage.
   async listDatasetSamples(datasetId: string): Promise<DatasetSampleRow[]> {
-    return this.db
+    const rows = await this.db
       .select()
       .from(datasetSamples)
       .where(eq(datasetSamples.datasetId, datasetId))
       .orderBy(asc(datasetSamples.createdAt), asc(datasetSamples.id));
+    return this.hydrateSampleRows(rows);
   }
 
   // Server-side paginated browse with optional cross-field search (data::text ILIKE), so the detail page
@@ -164,8 +187,12 @@ export class DatasetRepository {
     options: { limit: number; offset: number; search?: string },
   ): Promise<{ rows: DatasetSampleRow[]; total: number }> {
     const searchTerm = options.search?.trim();
+    // Search matches inline data or, once a sample is offloaded, its search_preview (SPEC 22 §7.3).
     const where = searchTerm
-      ? and(eq(datasetSamples.datasetId, datasetId), sql`${datasetSamples.data}::text ILIKE ${`%${searchTerm}%`}`)
+      ? and(
+          eq(datasetSamples.datasetId, datasetId),
+          sql`(${datasetSamples.data}::text ILIKE ${`%${searchTerm}%`} OR ${datasetSamples.searchPreview} ILIKE ${`%${searchTerm}%`})`,
+        )
       : eq(datasetSamples.datasetId, datasetId);
 
     const [rows, countResult] = await Promise.all([
@@ -182,7 +209,7 @@ export class DatasetRepository {
         .where(where),
     ]);
 
-    return { rows, total: Number(countResult[0]?.count ?? 0) };
+    return { rows: await this.hydrateSampleRows(rows), total: Number(countResult[0]?.count ?? 0) };
   }
 
   // SQL GROUP BY on the expected-output field so list/detail never load all sample rows into memory.
@@ -191,15 +218,19 @@ export class DatasetRepository {
     datasetId: string,
     fieldName: string,
   ): Promise<Array<{ label: string; count: number }>> {
-    const label = sql<string>`btrim(${datasetSamples.data} ->> ${fieldName})`;
+    // Read the field from inline data (scalar only), or from index_values once the sample is offloaded
+    // (index_values holds only short scalars by construction) (SPEC 22 §7.3).
+    const value = sql<string | null>`COALESCE(${datasetSamples.data} ->> ${fieldName}, ${datasetSamples.indexValues} ->> ${fieldName})`;
+    const label = sql<string>`btrim(${value})`;
     const rows = await this.db
       .select({ label, count: sql<number>`count(*)::int` })
       .from(datasetSamples)
       .where(
         and(
           eq(datasetSamples.datasetId, datasetId),
-          sql`jsonb_typeof(${datasetSamples.data} -> ${fieldName}) IN ('string', 'number', 'boolean')`,
-          sql`btrim(${datasetSamples.data} ->> ${fieldName}) <> ''`,
+          sql`(jsonb_typeof(${datasetSamples.data} -> ${fieldName}) IN ('string', 'number', 'boolean')
+            OR (${datasetSamples.data} IS NULL AND ${datasetSamples.indexValues} ->> ${fieldName} IS NOT NULL))`,
+          sql`btrim(${value}) <> ''`,
         ),
       )
       // GROUP BY ordinal: the same ${fieldName} binds to different param positions in select vs group-by,
@@ -568,13 +599,42 @@ export class DatasetRepository {
         throw new Error('Dataset insert returned no row');
       }
 
-      await tx.insert(datasetSamples).values(
-        args.dto.samples.map((sample) => ({
+      if (this.storage.isEnabled()) {
+        // Small-file create mirrors offload-at-promote (SPEC 22 §7.2): the samples are already in
+        // memory, so the batch reader just slices them. Object storage off → the inline insert below.
+        const samples = args.dto.samples;
+        const { storagePrefix } = await offloadStagingToShards({
           datasetId: dataset.id,
-          data: sample,
-          externalId: this.getExternalId(sample, args.externalIdFieldName),
-        })),
-      );
+          sampleCount: samples.length,
+          batchSize: CREATE_SHARD_BATCH,
+          fieldSchema: args.fieldSchema,
+          readBatch: async (offset, limit) =>
+            samples.slice(offset, offset + limit).map((sample) => ({
+              data: sample,
+              externalId: this.getExternalId(sample, args.externalIdFieldName),
+            })),
+          putShard: (name, body) =>
+            this.storage.putObject(
+              { project: { projectId: args.projectId, source: 'local' }, resourceType: 'dataset_normalized', resourceId: dataset.id, name },
+              body,
+              { codec: 'gzip' },
+            ),
+          insertRows: async (rows) => {
+            await tx.insert(datasetSamples).values(rows);
+          },
+        });
+        if (storagePrefix) {
+          await tx.update(datasets).set({ storagePrefix }).where(eq(datasets.id, dataset.id));
+        }
+      } else {
+        await tx.insert(datasetSamples).values(
+          args.dto.samples.map((sample) => ({
+            datasetId: dataset.id,
+            data: sample,
+            externalId: this.getExternalId(sample, args.externalIdFieldName),
+          })),
+        );
+      }
 
       return {
         ...dataset,
