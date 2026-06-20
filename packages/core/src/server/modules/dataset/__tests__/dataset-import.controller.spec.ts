@@ -41,7 +41,26 @@ function importItem(overrides: Record<string, unknown> = {}) {
     sourceFormat: rawImportBody.sourceFormat,
     declaredTotalRows: null,
     receivedRows: 0,
-    status: 'importing',
+    status: 'uploaded',
+    state: 'uploaded',
+    progress: {
+      state: 'uploaded',
+      uploadedBytes: rawImportBody.sourceFile.fileSizeBytes,
+      parsedRows: 0,
+      importedRows: 0,
+      totalRows: null,
+      totalBytes: rawImportBody.sourceFile.fileSizeBytes,
+      percentage: 75,
+    },
+    errorCode: null,
+    errorMessage: null,
+    jobId: null,
+    rawUploadCompletedAt: null,
+    queuedAt: null,
+    startedAt: null,
+    completedAt: null,
+    failedAt: null,
+    abortedAt: null,
     createdAt: '2026-06-20T00:00:00.000Z',
     updatedAt: '2026-06-20T00:00:00.000Z',
     ...overrides,
@@ -64,7 +83,8 @@ function createServiceMock() {
     }),
     getImport: vi.fn().mockResolvedValue(importItem()),
     appendBatch: vi.fn().mockResolvedValue({ importId: IMPORT_ID, receivedRows: 1 }),
-    complete: vi.fn().mockResolvedValue({ dataset: { id: 'ds-1' }, sampleCount: 1 }),
+    completeRawUpload: vi.fn().mockResolvedValue(importItem()),
+    complete: vi.fn().mockResolvedValue(importItem({ status: 'queued', state: 'queued' })),
     abort: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -151,5 +171,16 @@ describe('DatasetImportController', () => {
       { batchStartIndex: 0, samples: [{ sample_id: 'case-1' }] },
       expect.objectContaining({ sub: ACTOR_ID, actorKind: 'local_user' }),
     );
+  });
+
+  it('delegates raw upload completion before queueing the import job', async () => {
+    await request(app.getHttpServer()).post(`/dataset-imports/${IMPORT_ID}/upload-complete`).expect(201);
+
+    expect(service.completeRawUpload).toHaveBeenCalledWith(
+      LOCAL_PROJECT_CONTEXT.projectId,
+      IMPORT_ID,
+      expect.objectContaining({ sub: ACTOR_ID, actorKind: 'local_user' }),
+    );
+    expect(service.complete).not.toHaveBeenCalled();
   });
 });

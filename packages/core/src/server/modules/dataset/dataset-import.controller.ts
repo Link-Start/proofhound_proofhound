@@ -90,6 +90,15 @@ export class DatasetImportController {
     return this.service.complete(project.projectId, this.parseImportId(importId), actor);
   }
 
+  @Post(':importId/upload-complete')
+  async completeRawUpload(
+    @Param('importId') importId: string,
+    @CurrentUser() actor: CurrentUserPayload,
+    @CurrentProject() project: ProjectContext,
+  ) {
+    return this.service.completeRawUpload(project.projectId, this.parseImportId(importId), actor);
+  }
+
   // sendBeacon-compatible cancel: browser fires this on navigate-away / tab close.
   @Post(':importId/abort')
   @HttpCode(HttpStatus.NO_CONTENT)

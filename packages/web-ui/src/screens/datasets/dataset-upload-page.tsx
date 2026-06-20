@@ -235,15 +235,15 @@ export function estimateUploadProgressBytes(sourceFile: CreateDatasetDto['upload
   return Math.max(1, sourceFile.fileSizeBytes);
 }
 
-// Files larger than this are not parsed whole on drop: only a head prefix is read for preview,
-// and on import they stream off disk through the dataset-import session.
-const SYNC_MAX_FILE_BYTES = 10 * 1024 * 1024;
+// Files larger than this are not parsed whole on drop: only a head prefix is read for preview.
+// They prefer raw upload + server-side import when object storage supports browser upload sessions.
+const SYNC_MAX_FILE_BYTES = 1024 * 1024;
 // Below the file-size threshold a parsed dataset still routes through the import session once it exceeds
 // this many samples, because the synchronous POST /datasets path is capped server-side.
 const SYNC_MAX_SAMPLES = 5000;
 const IMPORT_BATCH_SIZE = 1000;
 const DEFAULT_RAW_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024;
-const RAW_IMPORT_MIN_FILE_BYTES = 256 * 1024 * 1024;
+const RAW_BUFFERED_FORMAT_MAX_BYTES = 64 * 1024 * 1024;
 
 export type DatasetUploadImportPath = 'sync' | 'buffered' | 'streaming' | 'raw';
 
@@ -251,12 +251,34 @@ function toImportSourceFormat(fileName: string): DatasetImportSourceFormat {
   const lower = fileName.toLowerCase();
   if (lower.endsWith('.csv')) return 'csv';
   if (lower.endsWith('.tsv')) return 'tsv';
+  if (lower.endsWith('.json')) return 'json';
+  if (lower.endsWith('.zip')) return 'zip';
   return 'jsonl';
 }
 
 function isStreamingImportFileName(fileName: string) {
   const lower = fileName.toLowerCase();
   return lower.endsWith('.jsonl') || lower.endsWith('.csv') || lower.endsWith('.tsv');
+}
+
+function isRawImportFileName(fileName: string) {
+  const lower = fileName.toLowerCase();
+  return (
+    lower.endsWith('.jsonl') ||
+    lower.endsWith('.csv') ||
+    lower.endsWith('.tsv') ||
+    lower.endsWith('.json') ||
+    lower.endsWith('.zip')
+  );
+}
+
+function canUseRawImportForFile(
+  file: Pick<File, 'name' | 'size'>,
+  capabilities: DatasetRawImportCapabilitiesDto | null,
+) {
+  if (capabilities?.supported !== true) return false;
+  if (!isRawImportFileName(file.name) || file.size > capabilities.maxBytes) return false;
+  return isStreamingImportFileName(file.name) || file.size <= RAW_BUFFERED_FORMAT_MAX_BYTES;
 }
 
 export function selectDatasetUploadImportPath({
@@ -270,19 +292,19 @@ export function selectDatasetUploadImportPath({
   parsedSampleCount: number;
   rawImportCapabilities: DatasetRawImportCapabilitiesDto | null;
 }): DatasetUploadImportPath {
+  if (file.size <= SYNC_MAX_FILE_BYTES && parsedSampleCount <= SYNC_MAX_SAMPLES) {
+    return 'sync';
+  }
+
+  if (canUseRawImportForFile(file, rawImportCapabilities)) {
+    return 'raw';
+  }
+
   if (isLargeFile) {
-    if (
-      rawImportCapabilities?.supported === true &&
-      isStreamingImportFileName(file.name) &&
-      file.size > RAW_IMPORT_MIN_FILE_BYTES &&
-      file.size <= rawImportCapabilities.maxBytes
-    ) {
-      return 'raw';
-    }
     return 'streaming';
   }
 
-  return parsedSampleCount > SYNC_MAX_SAMPLES ? 'buffered' : 'sync';
+  return 'buffered';
 }
 
 function yieldToBrowser() {
@@ -421,11 +443,18 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
   const [rawImportCapabilities, setRawImportCapabilities] = useState<DatasetRawImportCapabilitiesDto | null>(null);
   const importAbortRef = useRef<AbortController | null>(null);
   const importIdRef = useRef<string | null>(null);
+  const abortOnLeaveRef = useRef(false);
   const leaveActionRef = useRef<(() => void) | null>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  const [serverImportContinues, setServerImportContinues] = useState(false);
 
-  // Leaving the page mid-import aborts the session so the server clears its staging rows (中断即删干净).
-  useEffect(() => () => importAbortRef.current?.abort(), []);
+  // Before raw upload is finalized, leaving can cancel the transfer. After server-side import starts, it continues.
+  useEffect(
+    () => () => {
+      if (abortOnLeaveRef.current) importAbortRef.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -444,7 +473,7 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
 
   // While an import is in flight, guard every way to leave so the user is warned before losing it.
   useEffect(() => {
-    if (!isImporting) return undefined;
+    if (!isImporting || serverImportContinues) return undefined;
 
     // Tab close / refresh / hard URL change: only the browser's native prompt is possible here.
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -502,11 +531,11 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
       document.removeEventListener('click', onClickCapture, true);
       window.removeEventListener('popstate', onPopState);
     };
-  }, [isImporting, router, projectId]);
+  }, [isImporting, serverImportContinues, router, projectId]);
 
   const confirmLeaveImport = () => {
     setLeaveDialogOpen(false);
-    importAbortRef.current?.abort();
+    if (abortOnLeaveRef.current) importAbortRef.current?.abort();
     setIsImporting(false);
     const action = leaveActionRef.current;
     leaveActionRef.current = null;
@@ -551,12 +580,14 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
     try {
       const file = await selectDatasetFile(files);
       const large = file.size > SYNC_MAX_FILE_BYTES;
-      if (large && !isStreamingImportFile(file)) {
-        // Large JSON arrays / ZIPs are not parsed whole on drop until they have real streaming parsers.
+      const canRawImportWholeFile = canUseRawImportForFile(file, rawImportCapabilities);
+      if (large && !isStreamingImportFile(file) && !canRawImportWholeFile) {
+        // Large JSON arrays / ZIPs are only previewed with a bounded parser before raw import.
         throw new Error('large_requires_streaming_format');
       }
-      // Large files: read only a head prefix for preview/mapping, never the whole file.
-      const parsed = large ? await parseStreamingPrefix(file) : await parseDatasetFile(file);
+      // Streaming formats read only a head prefix; bounded JSON/ZIP raw imports may parse the small whole file for preview.
+      const parsed =
+        large && isStreamingImportFile(file) ? await parseStreamingPrefix(file) : await parseDatasetFile(file);
       setSelectedFile(file);
       setParsedFile(parsed);
       setIsLargeFile(large);
@@ -601,6 +632,8 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
 
     const controller = new AbortController();
     importAbortRef.current = controller;
+    abortOnLeaveRef.current = true;
+    setServerImportContinues(false);
     setIsImporting(true);
     uploadProgress.start(t('datasets.transfer.uploadTitle'), totalBytes);
     await yieldToBrowser();
@@ -628,6 +661,7 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
       setIsImporting(false);
       importAbortRef.current = null;
       importIdRef.current = null;
+      abortOnLeaveRef.current = false;
     }
   };
 
@@ -647,6 +681,8 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
 
     const controller = new AbortController();
     importAbortRef.current = controller;
+    abortOnLeaveRef.current = true;
+    setServerImportContinues(false);
     setIsImporting(true);
     uploadProgress.start(t('datasets.transfer.uploadTitle'), totalBytes);
     await yieldToBrowser();
@@ -660,6 +696,12 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
           importIdRef.current = id;
         },
         onUploaded: () => uploadProgress.update({ loadedBytes: totalBytes, totalBytes }),
+        onProgress: ({ phase }) => {
+          if (phase === 'queued' || phase === 'parsing' || phase === 'importing') {
+            abortOnLeaveRef.current = false;
+            setServerImportContinues(true);
+          }
+        },
       });
       uploadProgress.complete(totalBytes);
       router.push(`/datasets`);
@@ -669,6 +711,8 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
       setIsImporting(false);
       importAbortRef.current = null;
       importIdRef.current = null;
+      abortOnLeaveRef.current = false;
+      setServerImportContinues(false);
     }
   };
 
@@ -691,6 +735,8 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
 
     const controller = new AbortController();
     importAbortRef.current = controller;
+    abortOnLeaveRef.current = true;
+    setServerImportContinues(false);
     setIsImporting(true);
     uploadProgress.start(t('datasets.transfer.uploadTitle'), estimatedBytes);
     await yieldToBrowser();
@@ -717,6 +763,7 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
       setIsImporting(false);
       importAbortRef.current = null;
       importIdRef.current = null;
+      abortOnLeaveRef.current = false;
     }
   };
 
@@ -810,8 +857,20 @@ export function DatasetUploadPage({ projectId }: { projectId: string }) {
           >
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <div>
-              <div className="font-medium">{t('datasets.upload.importingNoticeTitle')}</div>
-              <div className="mt-0.5 text-[12.5px]">{t('datasets.upload.importingNoticeBody')}</div>
+              <div className="font-medium">
+                {t(
+                  serverImportContinues
+                    ? 'datasets.upload.backgroundImportNoticeTitle'
+                    : 'datasets.upload.importingNoticeTitle',
+                )}
+              </div>
+              <div className="mt-0.5 text-[12.5px]">
+                {t(
+                  serverImportContinues
+                    ? 'datasets.upload.backgroundImportNoticeBody'
+                    : 'datasets.upload.importingNoticeBody',
+                )}
+              </div>
             </div>
           </div>
         )}

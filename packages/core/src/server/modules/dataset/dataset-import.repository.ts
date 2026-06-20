@@ -27,10 +27,19 @@ export interface DatasetImportRow {
   importMode: string;
   rawUploadSessionId: string | null;
   rawUploadExpiresAt: Date | null;
+  rawUploadCompletedAt: Date | null;
   rawObjectRef: StoredObjectRef | null;
   declaredTotalRows: number | null;
   receivedRows: number;
+  jobId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
   status: string;
+  queuedAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  failedAt: Date | null;
+  abortedAt: Date | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -42,6 +51,7 @@ export interface CreateDatasetImportArgs {
   actorUserId: string;
   dto: CreateDatasetImportDto;
   importMode?: 'batch' | 'raw_object';
+  initialStatus?: 'created' | 'uploading';
   rawUploadSession?: {
     sessionId: string;
     expiresAt: string;
@@ -111,6 +121,7 @@ export class DatasetImportRepository {
         rawUploadSessionId: args.rawUploadSession?.sessionId ?? null,
         rawUploadExpiresAt: args.rawUploadSession?.expiresAt ? new Date(args.rawUploadSession.expiresAt) : null,
         declaredTotalRows: args.dto.declaredTotalRows ?? null,
+        status: args.initialStatus ?? (args.importMode === 'raw_object' ? 'created' : 'uploading'),
         createdBy: args.actorUserId,
       })
       .returning();
@@ -140,6 +151,7 @@ export class DatasetImportRepository {
         .update(datasetImports)
         .set({
           receivedRows: sql`GREATEST(${datasetImports.receivedRows}, ${nextReceivedRows})`,
+          status: 'importing',
           updatedAt: new Date(),
         })
         .where(eq(datasetImports.id, importId))
@@ -160,7 +172,7 @@ export class DatasetImportRepository {
     );
   }
 
-  // Atomic promote: create the dataset row, bulk-copy staging rows into dataset_samples, mark the session ready, drop staging.
+  // Atomic promote: create the dataset row, bulk-copy staging rows into dataset_samples, mark the session completed, drop staging.
   async promote(args: PromoteDatasetImportArgs): Promise<{ sampleCount: number }> {
     return this.db.transaction(async (tx) => {
       const [countRow] = await tx
@@ -231,7 +243,7 @@ export class DatasetImportRepository {
 
       await tx
         .update(datasetImports)
-        .set({ status: 'ready', datasetId: args.datasetId, updatedAt: new Date() })
+        .set({ status: 'completed', datasetId: args.datasetId, completedAt: new Date(), updatedAt: new Date() })
         .where(eq(datasetImports.id, args.importId));
 
       await tx.delete(datasetImportSamples).where(eq(datasetImportSamples.importId, args.importId));
@@ -252,7 +264,12 @@ export class DatasetImportRepository {
     const rows = await this.db
       .select()
       .from(datasetImports)
-      .where(and(eq(datasetImports.status, 'importing'), lt(datasetImports.updatedAt, olderThan)));
+      .where(
+        and(
+          sql`${datasetImports.status} IN ('created', 'uploading', 'uploaded')`,
+          lt(datasetImports.updatedAt, olderThan),
+        ),
+      );
     return rows as DatasetImportRow[];
   }
 
@@ -276,5 +293,101 @@ export class DatasetImportRepository {
       .where(and(eq(datasetImports.projectId, projectId), eq(datasetImports.id, importId)))
       .returning();
     return (row as DatasetImportRow | undefined) ?? null;
+  }
+
+  async markRawUploadCompleted(
+    projectId: string,
+    importId: string,
+    rawObjectRef: StoredObjectRef,
+  ): Promise<DatasetImportRow | null> {
+    const now = new Date();
+    const [row] = await this.db
+      .update(datasetImports)
+      .set({
+        rawObjectRef,
+        status: 'uploaded',
+        rawUploadCompletedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(datasetImports.projectId, projectId),
+          eq(datasetImports.id, importId),
+          sql`${datasetImports.status} IN ('created', 'uploading', 'uploaded')`,
+        ),
+      )
+      .returning();
+    return (row as DatasetImportRow | undefined) ?? null;
+  }
+
+  async markQueued(projectId: string, importId: string, jobId: string): Promise<DatasetImportRow | null> {
+    const now = new Date();
+    const [row] = await this.db
+      .update(datasetImports)
+      .set({
+        status: 'queued',
+        jobId,
+        queuedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(datasetImports.projectId, projectId),
+          eq(datasetImports.id, importId),
+          sql`${datasetImports.status} IN ('uploaded', 'queued')`,
+        ),
+      )
+      .returning();
+    return (row as DatasetImportRow | undefined) ?? null;
+  }
+
+  async markParsing(projectId: string, importId: string): Promise<DatasetImportRow | null> {
+    const now = new Date();
+    const [row] = await this.db
+      .update(datasetImports)
+      .set({ status: 'parsing', startedAt: now, updatedAt: now, errorCode: null, errorMessage: null })
+      .where(
+        and(
+          eq(datasetImports.projectId, projectId),
+          eq(datasetImports.id, importId),
+          sql`${datasetImports.status} IN ('uploaded', 'queued', 'parsing', 'importing')`,
+        ),
+      )
+      .returning();
+    return (row as DatasetImportRow | undefined) ?? null;
+  }
+
+  async markFailed(projectId: string, importId: string, errorCode: string, errorMessage: string): Promise<void> {
+    const now = new Date();
+    await this.db
+      .update(datasetImports)
+      .set({
+        status: 'failed',
+        errorCode,
+        errorMessage: errorMessage.slice(0, 2000),
+        failedAt: now,
+        updatedAt: now,
+      })
+      .where(and(eq(datasetImports.projectId, projectId), eq(datasetImports.id, importId)));
+    await this.clearStaging(importId);
+  }
+
+  async markAborted(projectId: string, importId: string): Promise<DatasetImportRow | null> {
+    const now = new Date();
+    const [row] = await this.db
+      .update(datasetImports)
+      .set({
+        status: 'aborted',
+        abortedAt: now,
+        updatedAt: now,
+      })
+      .where(and(eq(datasetImports.projectId, projectId), eq(datasetImports.id, importId)))
+      .returning();
+    await this.clearStaging(importId);
+    return (row as DatasetImportRow | undefined) ?? null;
+  }
+
+  async clearStaging(importId: string): Promise<void> {
+    await this.db.delete(datasetImportSamples).where(eq(datasetImportSamples.importId, importId));
   }
 }

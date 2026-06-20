@@ -15,7 +15,7 @@ import { BullmqService } from './bullmq.service';
         },
       }),
     }),
-    BullModule.registerQueue({ name: 'llm' }, { name: 'probe' }),
+    BullModule.registerQueue({ name: 'llm' }, { name: 'probe' }, { name: 'dataset-import' }),
   ],
   providers: [BullmqService],
   exports: [BullmqService],

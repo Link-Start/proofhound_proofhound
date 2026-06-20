@@ -1983,7 +1983,7 @@ const dictionaries = {
     'datasets.action.replaceImageUrl': '更换图片 URL',
     'datasets.action.replaceImageBase64': '更换 base64 内容',
     'datasets.upload.title': '上传新数据集',
-    'datasets.upload.subtitle': '选择本地文件后即时解析预览，确认字段角色映射后写入后端。',
+    'datasets.upload.subtitle': '选择本地文件后只读取预览，确认字段角色映射后直传原始文件并由后端导入。',
     'datasets.upload.basicInfo': '基本信息',
     'datasets.upload.basicInfoHint': '默认使用文件名',
     'datasets.upload.name': '名称',
@@ -2015,7 +2015,7 @@ const dictionaries = {
     'datasets.upload.importRows': '入库',
     'datasets.upload.previewRange': '前 5 行',
     'datasets.upload.chooseFile': '选择数据集文件',
-    'datasets.upload.chooseFileHelp': '选择文件、选择文件夹，或把文件夹拖入这里；浏览器内解析真实数据。',
+    'datasets.upload.chooseFileHelp': '选择文件、选择文件夹，或把文件夹拖入这里；浏览器只读取开头用于预览。',
     'datasets.upload.browse': '浏览文件',
     'datasets.upload.browseFolder': '选择文件夹',
     'datasets.upload.dropHere': '松手导入文件夹',
@@ -2025,16 +2025,16 @@ const dictionaries = {
     'datasets.upload.unsupportedFile': '暂不支持该文件类型，请上传 CSV、TSV、JSONL、JSON 数组或 ZIP。',
     'datasets.upload.limitInfoLabel': '查看上传大小限制',
     'datasets.upload.limitInfoTitle': '上传大小限制',
-    'datasets.upload.limitInfoSmall':
-      '小文件路径：小于 {syncLimit} 的 CSV / TSV / JSONL / JSON / ZIP 会在浏览器内解析后提交。',
+    'datasets.upload.limitInfoSmall': '小文件同步入库阈值：{syncLimit}；超过后走原始文件直传与服务端导入。',
     'datasets.upload.limitInfoStreaming':
-      '超过小文件阈值的 JSONL / CSV / TSV 会流式解析并分批上传，单批请求保持低于服务端 body limit。',
+      'CSV / TSV / JSONL 大文件只在浏览器读取开头用于预览；最终入库以服务端解析原始文件为准。',
     'datasets.upload.limitInfoRaw': '原始文件直传上限：当前部署配置为 {rawLimit}；仅在对象存储支持浏览器直传时启用。',
-    'datasets.upload.limitInfoJsonZip': '超过小文件阈值的 JSON 数组和 ZIP 暂不支持流式导入，请拆分后上传。',
+    'datasets.upload.limitInfoJsonZip':
+      'JSON 数组和 ZIP 可通过原始文件直传导入，但只在有界解析阈值内支持；更大的文件请拆分后上传。',
     'datasets.upload.streamingFile': '大文件 · 导入时统计样本数',
     'datasets.upload.previewPrefixOnly': '仅预览文件开头若干行',
     'datasets.upload.largeRequiresStreamingFormat':
-      '超过 10MB 的文件目前仅支持 JSONL、CSV 或 TSV 流式导入；JSON 数组和 ZIP 请拆分到 10MB 以下再上传。',
+      '超过有界解析阈值的 JSON 数组和 ZIP 暂不支持导入；请拆分后上传，或改用 CSV / TSV / JSONL。',
     'datasets.upload.imageSamples.title': '图片样例数据',
     'datasets.upload.imageSamples.hint': '下载不同图片字段写法的最小样例。',
     'datasets.upload.imageSamples.urlFields': 'URL 多字段',
@@ -2042,11 +2042,12 @@ const dictionaries = {
     'datasets.upload.imageSamples.base64': 'Base64 JSONL',
     'datasets.upload.imageSamples.zip': 'ZIP 相对路径',
     'datasets.upload.imageSamples.downloadAria': '下载图片样例：{name}',
-    'datasets.upload.importingNoticeTitle': '导入进行中，请勿离开本页',
-    'datasets.upload.importingNoticeBody':
-      '离开、返回、刷新或关闭页面会中断导入并清除已上传到服务器的数据，需要重新上传。',
-    'datasets.upload.leaveConfirmTitle': '离开会导致导入失败',
-    'datasets.upload.leaveConfirmBody': '导入尚未完成。离开本页会中断导入并清除已上传到服务器的数据。确定要离开吗？',
+    'datasets.upload.importingNoticeTitle': '原始文件上传中，请暂时留在本页',
+    'datasets.upload.importingNoticeBody': '上传完成并进入服务端导入后，可以离开页面；后台任务会继续解析和入库。',
+    'datasets.upload.backgroundImportNoticeTitle': '服务端导入已开始',
+    'datasets.upload.backgroundImportNoticeBody': '可以离开本页，导入会在后台继续；完成后数据集会出现在列表中。',
+    'datasets.upload.leaveConfirmTitle': '离开会取消当前上传',
+    'datasets.upload.leaveConfirmBody': '原始文件还没有完成直传。离开本页会取消本次上传并清理会话。确定要离开吗？',
     'datasets.upload.leaveConfirmStay': '留在本页',
     'datasets.upload.leaveConfirmLeave': '仍要离开',
     'datasets.upload.parseFailed': '文件解析失败，请检查格式、表头或 JSON 结构。',
@@ -5208,7 +5209,8 @@ const dictionaries = {
     'datasets.action.replaceImageUrl': 'Replace image URL',
     'datasets.action.replaceImageBase64': 'Replace base64 content',
     'datasets.upload.title': 'Upload dataset',
-    'datasets.upload.subtitle': 'Parse the local file for preview, confirm field roles, then write it through the API.',
+    'datasets.upload.subtitle':
+      'Read only a preview from the local file, confirm field roles, then upload the raw file for server-side import.',
     'datasets.upload.basicInfo': 'Basic information',
     'datasets.upload.basicInfoHint': 'Defaults to file name',
     'datasets.upload.name': 'Name',
@@ -5241,7 +5243,7 @@ const dictionaries = {
     'datasets.upload.previewRange': 'First 5 rows',
     'datasets.upload.chooseFile': 'Choose dataset file',
     'datasets.upload.chooseFileHelp':
-      'Choose a file, choose a folder, or drop a folder here; real data is parsed in the browser.',
+      'Choose a file, choose a folder, or drop a folder here; the browser reads only the prefix for preview.',
     'datasets.upload.browse': 'Browse file',
     'datasets.upload.browseFolder': 'Choose folder',
     'datasets.upload.dropHere': 'Drop to import folder',
@@ -5252,17 +5254,17 @@ const dictionaries = {
     'datasets.upload.limitInfoLabel': 'View upload size limits',
     'datasets.upload.limitInfoTitle': 'Upload size limits',
     'datasets.upload.limitInfoSmall':
-      'Small-file path: CSV / TSV / JSONL / JSON / ZIP under {syncLimit} is parsed in the browser, then submitted.',
+      'Small-file synchronous import threshold: {syncLimit}; larger files use raw upload and server-side import.',
     'datasets.upload.limitInfoStreaming':
-      'JSONL / CSV / TSV above the small-file threshold is streamed locally and uploaded in batches kept below the server body limit.',
+      'Large CSV / TSV / JSONL files are read only for preview in the browser; the server parses the raw file as the source of truth.',
     'datasets.upload.limitInfoRaw':
       'Raw direct-upload maximum: this deployment is configured for {rawLimit}; enabled only when object storage supports browser upload sessions.',
     'datasets.upload.limitInfoJsonZip':
-      'JSON arrays and ZIP files above the small-file threshold are not stream-imported yet; split them before uploading.',
+      'JSON arrays and ZIP files can use raw upload only within the bounded parser threshold; split larger files before uploading.',
     'datasets.upload.streamingFile': 'Large file · sample count tallied while importing',
     'datasets.upload.previewPrefixOnly': 'Preview of the first rows only',
     'datasets.upload.largeRequiresStreamingFormat':
-      'Files over 10MB currently support streaming import for JSONL, CSV, or TSV only. Split JSON arrays and ZIP files below 10MB before uploading.',
+      'JSON arrays and ZIP files above the bounded parser threshold are not importable yet. Split them, or use CSV / TSV / JSONL.',
     'datasets.upload.imageSamples.title': 'Image sample datasets',
     'datasets.upload.imageSamples.hint': 'Download minimal examples for each image-field shape.',
     'datasets.upload.imageSamples.urlFields': 'URL fields',
@@ -5270,12 +5272,15 @@ const dictionaries = {
     'datasets.upload.imageSamples.base64': 'Base64 JSONL',
     'datasets.upload.imageSamples.zip': 'ZIP relative paths',
     'datasets.upload.imageSamples.downloadAria': 'Download image sample: {name}',
-    'datasets.upload.importingNoticeTitle': 'Import in progress — do not leave this page',
+    'datasets.upload.importingNoticeTitle': 'Raw file upload in progress',
     'datasets.upload.importingNoticeBody':
-      'Leaving, going back, refreshing, or closing the page interrupts the import and clears the data already uploaded to the server — you would need to re-upload.',
-    'datasets.upload.leaveConfirmTitle': 'Leaving will fail the import',
+      'After upload completes and server-side import starts, you can leave this page; the background task will continue parsing and importing.',
+    'datasets.upload.backgroundImportNoticeTitle': 'Server-side import started',
+    'datasets.upload.backgroundImportNoticeBody':
+      'You can leave this page; the import will continue in the background and the dataset will appear in the list when complete.',
+    'datasets.upload.leaveConfirmTitle': 'Leaving will cancel this upload',
     'datasets.upload.leaveConfirmBody':
-      'The import is not finished. Leaving this page interrupts it and clears the data already uploaded to the server. Leave anyway?',
+      'The raw file has not finished uploading. Leaving this page cancels this upload and cleans up the session. Leave anyway?',
     'datasets.upload.leaveConfirmStay': 'Stay on this page',
     'datasets.upload.leaveConfirmLeave': 'Leave anyway',
     'datasets.upload.parseFailed': 'Failed to parse the file. Check its format, header row, or JSON shape.',

@@ -18,23 +18,23 @@ import type {
   DatasetFieldMappingDto,
   DatasetImportBatchDto,
   DatasetImportBatchResponseDto,
-  DatasetImportItemDto,
   DatasetRawImportCapabilitiesDto,
   DatasetImportSourceFormat,
+  DatasetImportState,
   DatasetImportStatus,
+  DatasetImportStatusDto,
 } from '@proofhound/shared';
 import { toActorContext } from '../../common/access-control';
 import { AccessControlService } from '../../common/contracts/access-control.service';
 import { ObjectStorageProvider, type StoredObjectRef } from '../../common/contracts/object-storage.provider';
 import { QuotaPolicyHook } from '../../common/contracts/quota-policy.hook';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
+import { BullmqService } from '../../infrastructure/orchestration';
 import { buildDatasetFieldSchema } from './dataset-field-schema.util';
-import { parseRawDatasetRows } from './dataset-import-raw-parser';
 import {
   DatasetImportEmptyError,
   DatasetImportRepository,
   DatasetNameTakenError,
-  type BatchSampleRow,
   type DatasetImportRow,
 } from './dataset-import.repository';
 import { DatasetService } from './dataset.service';
@@ -46,9 +46,7 @@ const MIN_TICK_MS = 1_000;
 const IMAGE_ROLES = new Set(['image', 'image_url', 'image_base64']);
 const DEFAULT_DATASET_RAW_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_RAW_UPLOAD_EXPIRES_IN_SECONDS = 60 * 60;
-const RAW_IMPORT_BATCH_MAX_ROWS = 1000;
-const RAW_IMPORT_BATCH_MAX_BYTES = 8 * 1024 * 1024;
-const RAW_IMPORT_MAX_SAMPLE_BYTES = 8 * 1024 * 1024;
+const RAW_IMPORT_JOB_ID_PREFIX = 'dataset-raw-import';
 
 @Injectable()
 export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
@@ -62,6 +60,7 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     private readonly accessControl: AccessControlService,
     private readonly quotaPolicy: QuotaPolicyHook,
     private readonly storage: ObjectStorageProvider,
+    private readonly bullmq: BullmqService,
   ) {}
 
   onModuleInit(): void {
@@ -80,7 +79,7 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     projectId: string,
     dto: CreateDatasetImportDto,
     actor: CurrentUserPayload,
-  ): Promise<DatasetImportItemDto> {
+  ): Promise<DatasetImportStatusDto> {
     await this.getWritableProject(projectId, actor);
     this.assertConsistentMappings(dto);
     this.assertUploadSizeWithinLimit(dto.sourceFile.fileSizeBytes);
@@ -95,7 +94,7 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
       source: 'dataset_import',
     });
 
-    const row = await this.repo.createImport({ projectId, actorUserId: actor.sub, dto });
+    const row = await this.repo.createImport({ projectId, actorUserId: actor.sub, dto, initialStatus: 'uploading' });
     return this.toImportItem(row);
   }
 
@@ -173,7 +172,7 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     actor: CurrentUserPayload,
   ): Promise<DatasetImportBatchResponseDto> {
     await this.getWritableProject(projectId, actor);
-    const session = await this.requireImporting(projectId, importId);
+    const session = await this.requireImportState(projectId, importId, ['uploading', 'importing']);
     if (session.importMode !== 'batch') {
       throw new ConflictException('dataset_import_batch_not_allowed');
     }
@@ -191,7 +190,7 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     });
 
     const externalIdField = this.externalIdFieldName(session);
-    const rows: BatchSampleRow[] = dto.samples.map((sample, offset) => ({
+    const rows = dto.samples.map((sample, offset) => ({
       rowIndex: dto.batchStartIndex + offset,
       data: sample,
       externalId: this.getExternalId(sample, externalIdField),
@@ -207,59 +206,93 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     actor: CurrentUserPayload,
   ): Promise<CompleteDatasetImportResponseDto> {
     await this.getWritableProject(projectId, actor);
-    const session = await this.requireImporting(projectId, importId);
-    let rawObjectRef: StoredObjectRef | null = null;
+    const session = await this.requireImport(projectId, importId);
+
+    if (session.importMode === 'batch') {
+      return this.completeStagedImport(projectId, session, actor);
+    }
+
+    if (['queued', 'parsing', 'importing', 'completed', 'failed', 'aborted'].includes(session.status)) {
+      return this.toImportItem(session);
+    }
+    if (session.status !== 'uploaded') {
+      throw new ConflictException('dataset_raw_upload_not_completed');
+    }
+
+    await this.quotaPolicy.assertCanStore({
+      actor: toActorContext(actor),
+      bytes: nonnegativeInteger(session.fileSizeBytes),
+      project: { projectId, source: 'local' },
+      source: 'dataset_import_complete',
+    });
+
+    const jobId = `${RAW_IMPORT_JOB_ID_PREFIX}:${importId}`;
+    const queued = await this.repo.markQueued(projectId, importId, jobId);
+    if (!queued) throw new ConflictException('dataset_import_not_uploaded');
 
     try {
-      if (session.importMode === 'raw_object') {
-        rawObjectRef = await this.ensureRawObjectRef(projectId, session, actor);
-        await this.ingestRawObjectIntoStaging(projectId, session, actor, rawObjectRef);
-      }
-
-      const sampleRows = await this.repo.getSampleDataForInference(importId, TYPE_INFERENCE_SAMPLE_LIMIT);
-      const fieldSchema = buildDatasetFieldSchema(this.toFieldMappings(session), sampleRows);
-      const hasImages = fieldSchema.some((field) => IMAGE_ROLES.has(field.role));
-      const datasetId = randomUUID();
-      const { sampleCount } = await this.repo.promote({
-        importId,
-        projectId,
-        actorUserId: actor.sub,
-        datasetId,
-        name: session.name,
-        description: session.description,
-        fieldSchema,
-        hasImages,
-      });
-      const dataset = await this.datasetService.getDataset(projectId, datasetId, actor);
-      await this.datasetService.recordDatasetImportCompleted({
-        projectId,
-        datasetId,
-        importId,
-        actorId: actor.sub,
-        sampleCount,
-      });
-      if (rawObjectRef) await this.cleanupRawObjectRef(rawObjectRef, importId);
-      this.logger.info({ importId, datasetId, sampleCount }, 'dataset_import_completed');
-      return { dataset, sampleCount };
+      await this.bullmq.enqueueDatasetRawImportJob({ projectId, importId, actorId: actor.sub }, jobId);
     } catch (error) {
-      if (session.importMode === 'raw_object') {
-        await this.cleanupRawImportResources({ ...session, rawObjectRef: rawObjectRef ?? session.rawObjectRef });
-      }
-      if (error instanceof DatasetImportEmptyError) throw new BadRequestException('dataset_import_empty');
-      if (error instanceof DatasetNameTakenError) throw new ConflictException('dataset_name_taken');
+      await this.repo.markFailed(projectId, importId, 'dataset_import_enqueue_failed', (error as Error).message);
+      throw error;
+    }
+
+    this.logger.info({ importId, jobId }, 'dataset_raw_import_queued');
+    return this.toImportItem(queued);
+  }
+
+  async completeRawUpload(
+    projectId: string,
+    importId: string,
+    actor: CurrentUserPayload,
+  ): Promise<DatasetImportStatusDto> {
+    await this.getWritableProject(projectId, actor);
+    const session = await this.requireImport(projectId, importId);
+    if (session.importMode !== 'raw_object') throw new ConflictException('dataset_raw_upload_not_allowed');
+    if (['uploaded', 'queued', 'parsing', 'importing', 'completed'].includes(session.status)) {
+      return this.toImportItem(session);
+    }
+    if (session.status !== 'created' && session.status !== 'uploading') {
+      throw new ConflictException('dataset_import_not_uploading');
+    }
+    if (!session.rawUploadSessionId) throw new BadRequestException('dataset_raw_upload_missing_session');
+
+    let finalizedRef: StoredObjectRef | null = null;
+    try {
+      const ref = await this.storage.completeUpload({
+        sessionId: session.rawUploadSessionId,
+        actor: toActorContext(actor),
+        project: { projectId, source: 'local' },
+      });
+      finalizedRef = ref;
+      this.assertRawObjectWithinLimit(ref);
+      await this.quotaPolicy.assertCanStore({
+        actor: toActorContext(actor),
+        bytes: nonnegativeInteger(ref.bytes),
+        project: { projectId, source: 'local' },
+        source: 'dataset_raw_import',
+      });
+      const row = await this.repo.markRawUploadCompleted(projectId, importId, ref);
+      if (!row) throw new ConflictException('dataset_import_not_uploading');
+      this.logger.info({ importId, bytes: ref.bytes }, 'dataset_raw_upload_completed');
+      return this.toImportItem(row);
+    } catch (error) {
+      await this.repo.markFailed(projectId, importId, 'dataset_raw_upload_complete_failed', (error as Error).message);
+      await this.cleanupRawImportResources(finalizedRef ? { ...session, rawObjectRef: finalizedRef } : session);
       throw error;
     }
   }
 
-  // Cancel an in-progress import: delete the session (staging rows cascade). Idempotent — missing session is a no-op.
+  // Cancel an in-progress import. Staging rows are cleared and raw transfer resources are removed best-effort.
   async abort(projectId: string, importId: string, actor: CurrentUserPayload): Promise<void> {
     await this.getWritableProject(projectId, actor);
     const row = await this.repo.findImportById(projectId, importId);
-    await this.repo.deleteImport(projectId, importId);
-    if (row) await this.cleanupRawImportResources(row);
+    if (!row || row.status === 'completed') return;
+    const aborted = await this.repo.markAborted(projectId, importId);
+    await this.cleanupRawImportResources(aborted ?? row);
   }
 
-  async getImport(projectId: string, importId: string, actor: CurrentUserPayload): Promise<DatasetImportItemDto> {
+  async getImport(projectId: string, importId: string, actor: CurrentUserPayload): Promise<DatasetImportStatusDto> {
     await this.getAccessibleProject(projectId, actor);
     const row = await this.repo.findImportById(projectId, importId);
     if (!row) throw new NotFoundException(`Dataset import ${importId} not found`);
@@ -278,10 +311,10 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
         await this.storage.sweepPendingUploads(threshold.toISOString()).catch(() => undefined);
         return;
       }
-      const deleted = await this.repo.deleteImportsByIds(ids);
+      await Promise.all(staleImports.map((row) => this.repo.markAborted(row.projectId, row.id)));
       await Promise.all(staleImports.map((row) => this.cleanupRawImportResources(row)));
       const pendingUploads = await this.storage.sweepPendingUploads(threshold.toISOString()).catch(() => 0);
-      this.logger.info({ deleted, pendingUploads }, 'dataset_import_sweep_reaped');
+      this.logger.info({ aborted: ids.length, pendingUploads }, 'dataset_import_sweep_reaped');
     } catch (error) {
       this.logger.error({ error: (error as Error).message }, 'dataset_import_sweep_failed');
     } finally {
@@ -300,10 +333,21 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     await this.getAccessibleProject(projectId, actor);
   }
 
-  private async requireImporting(projectId: string, importId: string): Promise<DatasetImportRow> {
+  private async requireImport(projectId: string, importId: string): Promise<DatasetImportRow> {
     const row = await this.repo.findImportById(projectId, importId);
     if (!row) throw new NotFoundException(`Dataset import ${importId} not found`);
-    if (row.status !== 'importing') throw new ConflictException('dataset_import_not_importing');
+    return row;
+  }
+
+  private async requireImportState(
+    projectId: string,
+    importId: string,
+    states: DatasetImportState[],
+  ): Promise<DatasetImportRow> {
+    const row = await this.requireImport(projectId, importId);
+    if (!states.includes(row.status as DatasetImportState)) {
+      throw new ConflictException('dataset_import_invalid_state');
+    }
     return row;
   }
 
@@ -329,89 +373,44 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     return String(value);
   }
 
-  private async ingestRawObjectIntoStaging(
+  private async completeStagedImport(
     projectId: string,
     session: DatasetImportRow,
     actor: CurrentUserPayload,
-    rawObjectRef: StoredObjectRef,
-  ): Promise<StoredObjectRef> {
-    const stream = await this.storage.getObjectStream(rawObjectRef);
-    const fieldMappings = this.toFieldMappings(session);
-    const externalIdField = this.externalIdFieldName(session);
-    let batch: BatchSampleRow[] = [];
-    let batchBytes = jsonArrayBytesForEmptyBatch();
-    let rowIndex = 0;
-
-    const flush = async () => {
-      if (batch.length === 0) return;
-      await this.quotaPolicy.assertCanStore({
-        actor: toActorContext(actor),
-        bytes: batchBytes,
-        project: { projectId, source: 'local' },
-        source: 'dataset_raw_import_batch',
+  ): Promise<DatasetImportStatusDto> {
+    if (!['uploading', 'importing'].includes(session.status)) {
+      return this.toImportItem(session);
+    }
+    try {
+      const sampleRows = await this.repo.getSampleDataForInference(session.id, TYPE_INFERENCE_SAMPLE_LIMIT);
+      const fieldSchema = buildDatasetFieldSchema(this.toFieldMappings(session), sampleRows);
+      const hasImages = fieldSchema.some((field) => IMAGE_ROLES.has(field.role));
+      const datasetId = randomUUID();
+      const { sampleCount } = await this.repo.promote({
+        importId: session.id,
+        projectId,
+        actorUserId: actor.sub,
+        datasetId,
+        name: session.name,
+        description: session.description,
+        fieldSchema,
+        hasImages,
       });
-      await this.repo.appendBatch(session.id, batch, rowIndex);
-      batch = [];
-      batchBytes = jsonArrayBytesForEmptyBatch();
-    };
-
-    for await (const rawRow of parseRawDatasetRows(stream, session.sourceFormat as DatasetImportSourceFormat)) {
-      if (batch.length >= RAW_IMPORT_BATCH_MAX_ROWS) await flush();
-
-      const data = this.projectSample(rawRow, fieldMappings);
-      const sampleBytes = utf8JsonBytes(data);
-      if (sampleBytes > RAW_IMPORT_MAX_SAMPLE_BYTES) throw new BadRequestException('dataset_import_sample_too_large');
-
-      let candidateBytes = jsonArrayBytesAfterAppend(batchBytes, batch.length, sampleBytes);
-      if (candidateBytes > RAW_IMPORT_BATCH_MAX_BYTES) {
-        if (batch.length === 0) throw new BadRequestException('dataset_import_sample_too_large');
-        await flush();
-        candidateBytes = jsonArrayBytesAfterAppend(batchBytes, batch.length, sampleBytes);
-        if (candidateBytes > RAW_IMPORT_BATCH_MAX_BYTES) {
-          throw new BadRequestException('dataset_import_sample_too_large');
-        }
-      }
-
-      batch.push({ rowIndex, data, externalId: this.getExternalId(data, externalIdField) });
-      batchBytes = candidateBytes;
-      rowIndex += 1;
+      await this.datasetService.recordDatasetImportCompleted({
+        projectId,
+        datasetId,
+        importId: session.id,
+        actorId: actor.sub,
+        sampleCount,
+      });
+      this.logger.info({ importId: session.id, datasetId, sampleCount }, 'dataset_import_completed');
+      const row = await this.repo.findImportById(projectId, session.id);
+      return this.toImportItem(row ?? { ...session, datasetId, status: 'completed', receivedRows: sampleCount });
+    } catch (error) {
+      if (error instanceof DatasetImportEmptyError) throw new BadRequestException('dataset_import_empty');
+      if (error instanceof DatasetNameTakenError) throw new ConflictException('dataset_name_taken');
+      throw error;
     }
-
-    await flush();
-    return rawObjectRef;
-  }
-
-  private async ensureRawObjectRef(
-    projectId: string,
-    session: DatasetImportRow,
-    actor: CurrentUserPayload,
-  ): Promise<StoredObjectRef> {
-    if (session.rawObjectRef) {
-      this.assertRawObjectWithinLimit(session.rawObjectRef);
-      return session.rawObjectRef;
-    }
-    if (!session.rawUploadSessionId) throw new BadRequestException('dataset_raw_upload_missing_session');
-
-    const ref = await this.storage.completeUpload({
-      sessionId: session.rawUploadSessionId,
-      actor: toActorContext(actor),
-      project: { projectId, source: 'local' },
-    });
-    this.assertRawObjectWithinLimit(ref);
-    await this.repo.markRawObjectRef(projectId, session.id, ref);
-    return ref;
-  }
-
-  private projectSample(
-    sample: Record<string, unknown>,
-    fieldMappings: DatasetFieldMappingDto[],
-  ): Record<string, unknown> {
-    return Object.fromEntries(
-      fieldMappings.map((field) => [
-        field.name,
-        Object.prototype.hasOwnProperty.call(sample, field.name) ? sample[field.name] : null,
-      ]),
-    );
   }
 
   private assertRawObjectWithinLimit(ref: StoredObjectRef): void {
@@ -445,7 +444,9 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
     return `input.${dto.sourceFormat}`;
   }
 
-  private toImportItem(row: DatasetImportRow): DatasetImportItemDto {
+  private toImportItem(row: DatasetImportRow): DatasetImportStatusDto {
+    const state = row.status as DatasetImportStatus;
+    const progress = buildImportProgress(row, state);
     return {
       id: row.id,
       projectId: row.projectId,
@@ -458,7 +459,18 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
       sourceFormat: row.sourceFormat as DatasetImportSourceFormat,
       declaredTotalRows: row.declaredTotalRows,
       receivedRows: row.receivedRows,
-      status: row.status as DatasetImportStatus,
+      status: state,
+      state,
+      progress,
+      errorCode: row.errorCode,
+      errorMessage: row.errorMessage,
+      jobId: row.jobId,
+      rawUploadCompletedAt: isoOrNull(row.rawUploadCompletedAt),
+      queuedAt: isoOrNull(row.queuedAt),
+      startedAt: isoOrNull(row.startedAt),
+      completedAt: isoOrNull(row.completedAt),
+      failedAt: isoOrNull(row.failedAt),
+      abortedAt: isoOrNull(row.abortedAt),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -484,14 +496,39 @@ function utf8JsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value ?? null), 'utf8');
 }
 
-function jsonArrayBytesForEmptyBatch(): number {
-  return 2; // []
-}
-
-function jsonArrayBytesAfterAppend(currentArrayBytes: number, currentLength: number, nextItemBytes: number): number {
-  return currentLength === 0 ? jsonArrayBytesForEmptyBatch() + nextItemBytes : currentArrayBytes + 1 + nextItemBytes;
-}
-
 function nonnegativeInteger(value: number | undefined): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value ?? 0)) : 0;
+}
+
+function isoOrNull(value: Date | null): string | null {
+  return value ? value.toISOString() : null;
+}
+
+function buildImportProgress(row: DatasetImportRow, state: DatasetImportState) {
+  const totalBytes = nonnegativeInteger(row.fileSizeBytes);
+  const uploadedBytes =
+    row.rawObjectRef?.bytes ??
+    (['uploaded', 'queued', 'parsing', 'importing', 'completed'].includes(state) ? totalBytes : null);
+  const totalRows = row.declaredTotalRows;
+  const parsedRows = nonnegativeInteger(row.receivedRows);
+  const importedRows = state === 'completed' ? parsedRows : 0;
+
+  let percentage: number | null = null;
+  if (state === 'completed') {
+    percentage = 100;
+  } else if (totalRows && totalRows > 0) {
+    percentage = Math.min(99, Math.round((parsedRows / totalRows) * 100));
+  } else if (uploadedBytes !== null && totalBytes > 0) {
+    percentage = Math.min(75, Math.round((uploadedBytes / totalBytes) * 75));
+  }
+
+  return {
+    state,
+    uploadedBytes,
+    parsedRows,
+    importedRows,
+    totalRows,
+    totalBytes,
+    percentage,
+  };
 }

@@ -16,20 +16,22 @@ apps/server (mounts @proofhound/core/server)
           │
           ▼
 apps/worker (mounts @proofhound/core/worker)
-  └─ llm consumer -> LLM -> run_results
+  ├─ llm consumer -> LLM -> run_results
+  └─ dataset-import consumer -> raw file -> staging -> dataset_samples
 ```
 
 DBOS workflow state is written to the same Postgres instance. After a server restart, DBOS workflows resume from their step boundary; the runner service resumes from business-table state.
 
 ## 2. BullMQ Queues
 
-| Queue    | Who enqueues             | Who consumes     | Content                              |
-| -------- | ------------------------ | ---------------- | ------------------------------------ |
-| `llm`    | server workflow / runner | apps/worker      | A single LLM call                    |
-| `probe`  | server                   | server or worker | Model / connector connectivity probe |
-| `export` | server                   | server           | CSV / JSONL export                   |
+| Queue            | Who enqueues             | Who consumes  | Content                                          |
+| ---------------- | ------------------------ | ------------- | ------------------------------------------------ |
+| `llm`            | server workflow / runner | apps/worker   | A single LLM call                                |
+| `dataset-import` | server                   | apps/worker   | Stream-parse uploaded raw dataset and promote it |
+| `probe`          | server                   | server/worker | Model / connector connectivity probe             |
+| `export`         | server                   | server        | CSV / JSONL export                               |
 
-Dataset import is not in this table: the client-streamed path is a synchronous batched write, and the raw object path streams the finalized object into the same staging/promote flow at `complete` time. Neither path enters the LLM/probe/export BullMQ queues. Cleanup of abandoned sessions uses an in-server sweep tick; see [§3.5](#35-probe--export--dataset-import-cleanup).
+The `dataset-import` queue is only for raw-upload imports. The legacy client-streamed batch path remains a synchronous staging/promote request path; cleanup of abandoned pre-queued sessions uses an in-server sweep tick; see [§3.5](#35-probe--export--dataset-import-cleanup).
 
 ## 3. Orchestration Inventory
 
@@ -83,7 +85,7 @@ Release operation history is the `release_line_events` event stream:
 
 - `probe`: model or connector connectivity probe. Direct probes call `WorkflowAuthorizationHook(workflow='probe')` with the resolved ProjectContext, including `orgId` when present, before invoking the model LLM probe or connector driver. Model probes can be executed by the worker when queued because they trigger real LLM calls; queued model probes apply `RuntimeLimitsProvider` before invoking the LLM client, the same as normal LLM jobs.
 - `export`: paginate over business data, write to Storage, and return a signed URL.
-- Dataset import cleanup: large-file import does not enter DBOS or the BullMQ queue (see [22 §3.1.2](22-datasets.md#312-mediumlarge-client-streamed-batched-import) and [22 §3.1.3](22-datasets.md#313-ultra-large-raw-object-import)). Abandoned import sessions (the user leaves midway / loses connectivity / crashes without reaching `complete`) are cleaned up by an in-server **periodic sweep tick**: it scans `ph_assets.dataset_imports` for sessions where `status='importing'` and `updated_at` has exceeded the threshold with no heartbeat, deletes the session rows (staged samples are cascade-removed via the `ON DELETE CASCADE` foreign key), aborts any pending raw upload session, deletes any finalized temporary raw object, and calls `ObjectStorageProvider.sweepPendingUploads(...)` for provider-level pending objects whose database session was never created. This tick is an in-server periodic task like the [§3.3](#33-release-runner) release runner, not a queue job.
+- Dataset import: raw-upload import enters the `dataset-import` BullMQ queue after `POST /dataset-imports/:id/complete` (see [22 §3.1.2](22-datasets.md#312-raw-upload--asynchronous-backend-import)). The handler must be idempotent for the import id: if the session is already `completed`, `failed`, or `aborted`, it returns the existing state; otherwise it streams the raw object, writes staging batches, promotes, records usage events, and clears temporary resources. Abandoned sessions that never reached the queue (`created` / `uploading` / `uploaded`) are cleaned up by an in-server **periodic sweep tick**: it marks them `aborted`, clears staging rows, aborts pending upload sessions, deletes finalized temporary raw objects, and calls `ObjectStorageProvider.sweepPendingUploads(...)` for provider-level pending objects whose database session was never created.
 
 ### 3.6 Webhook Entry Point
 
@@ -139,16 +141,17 @@ The current open-source schema does not keep a separate `ph_streaming` table; sh
 
 ## 7. Division of Responsibilities
 
-| Responsibility              | apps/server | apps/worker |
-| --------------------------- | ----------- | ----------- |
-| REST / MCP param validation | ✓           | -           |
-| Start a DBOS workflow       | ✓           | -           |
-| Enqueue a BullMQ job        | ✓           | -           |
-| Release runner              | ✓           | -           |
-| Consume the `llm` queue     | -           | ✓           |
-| Call the LLM                | -           | ✓           |
-| Write run results           | ✓ or worker | ✓           |
-| Redis rate limit            | ✓ or worker | ✓           |
+| Responsibility                     | apps/server | apps/worker |
+| ---------------------------------- | ----------- | ----------- |
+| REST / MCP param validation        | ✓           | -           |
+| Start a DBOS workflow              | ✓           | -           |
+| Enqueue a BullMQ job               | ✓           | -           |
+| Release runner                     | ✓           | -           |
+| Consume the `llm` queue            | -           | ✓           |
+| Consume the `dataset-import` queue | -           | ✓           |
+| Call the LLM                       | -           | ✓           |
+| Write run results                  | ✓ or worker | ✓           |
+| Redis rate limit                   | ✓ or worker | ✓           |
 
 Rate limiting has **two independent gates**; do not conflate them when configuring:
 

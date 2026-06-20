@@ -13,6 +13,7 @@ export type StorageQuotaSource =
   | 'dataset_import_batch'
   | 'dataset_raw_import'
   | 'dataset_raw_import_batch'
+  | 'dataset_import_complete'
   | 'run_result';
 
 export interface StorageQuotaInput {

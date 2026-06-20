@@ -20,7 +20,7 @@ The page has two levels:
 - List level: all datasets within the instance, sorted by creation time, showing name, total sample count, category distribution, field modalities, creation time, update time, etc. **Field modalities are shown in aggregated form**: the set of modalities a dataset contains is derived from field roles (`text` comes from `role=text` fields, `image` comes from `role ∈ {image, image_url, image_base64}` fields); for multimodal datasets, multiple modality icons are shown side by side; purely structured datasets (only id / metadata / expected_output) fall back to a single `text` icon. The category distribution is computed from the scalar values in the "expected output" field, with a horizontal bar showing all category segments; hovering over a specific category segment shows the category name, count, and proportion, while the list also displays the total category count. Creation time / update time are uniformly displayed in the UI as `YYYY/MM/DD HH:mm:ss`.
 - Detail level: click into a dataset to browse its samples. **Pagination and search are handled server-side** (`GET /datasets/:id/samples?page&pageSize&search`, LIMIT/OFFSET + cross-field `data::text ILIKE`); the detail page only ever loads the current page at any moment, so even a large dataset is never loaded all at once; exports still go through a full dump. The sample table and edit cards display all stored fields, sorted by "ID → text variables → images → expected output → metadata", with the action column fixed on the right. The system creation time / update time fields are not displayed by default and can later be enabled via explicit column settings.
 
-> A large-file dataset that is being imported is **not written to the `datasets` table** (see [§3.1](#31-uploading-data), streaming / raw import). In-progress import sessions **do not appear on the dataset list page**: imports are driven by the upload page until completion (see [§3.1.2](#312-mediumlarge-client-streamed-batched-import) and [§3.1.3](#313-ultra-large-raw-object-import)), so import progress and visibility are handled by the upload page itself, and the list level does not fold in "in-progress import sessions". Only after `complete` succeeds does a dataset appear in the list as a formal dataset. Failed / interrupted sessions are deleted outright, leaving nothing behind.
+> A dataset being imported is **not written to the `datasets` table** until promotion succeeds (see [§3.1](#31-uploading-data)). In-progress import sessions **do not appear on the dataset list page**: progress and failure details are exposed through the dataset import status API and upload page. Only after the asynchronous import job reaches `completed` does a dataset appear as a formal dataset. Failed / aborted sessions are retained long enough for readable status and error display, while staging rows and temporary raw objects are cleaned up best-effort.
 
 ## 3. Available actions
 
@@ -33,31 +33,73 @@ Main supported forms:
 - A single JSON array
 - ZIP package (CSV/JSONL + images in the same package, automatically encoding images as base64 inlined into samples)
 
-In V1, the current upload page only exposes formats that already have real parsing and backend ingestion wired up: CSV / TSV / JSONL / JSON array / ZIP. A ZIP package must contain one CSV / TSV / JSONL / JSON array data file, with an optional `manifest.json` to specify the data file via the `file` field; if there is no manifest, the frontend picks the first data file at the shallowest level. Images in the same ZIP package are referenced by relative path from sample fields, and during upload parsing the frontend converts the images into `data:image/...;base64,...` inlined into the samples. Excel falls under the same upload semantics as a subsequent parser extension; before the corresponding parsing pipeline is wired up, the frontend must not fake "supported" status using sample files, fixed row counts, or fake previews.
+In V1, the current upload page only exposes formats that already have real parsing and backend ingestion wired up: CSV / TSV / JSONL / JSON array / ZIP. A ZIP package must contain one CSV / TSV / JSONL / JSON array data file, with an optional `manifest.json` to specify the data file via the `file` field; if there is no manifest, the parser picks the first data file at the shallowest level. Images in the same ZIP package are referenced by relative path from sample fields, and import parsing converts the images into `data:image/...;base64,...` inlined into the samples. Excel falls under the same upload semantics as a subsequent parser extension; before the corresponding parsing pipeline is wired up, the frontend must not fake "supported" status using sample files, fixed row counts, or fake previews.
 
 Regardless of which path is taken, the user first selects, in the "field mapping wizard", which fields to ingest, then confirms the roles of the selected fields: text variable, image, image URL, image base64, metadata, expected output; at most one field per dataset may be marked as "expected output". Unselected fields are not written to the sample JSON, nor do they enter the field manifest.
 
 **There is no hard upper limit on a dataset's total sample count**; large files are fully ingested through one of the import paths below. Only the synchronous path keeps a protective threshold on the "number of samples per request", and exceeding it guides the user to a streaming path—this is request-body protection, not a dataset-size limit. The original uploaded file is not retained as a source of business truth after import; the ingested `dataset_samples.data` or normalized object-storage shards are the only data source for frontend display and experiment runs.
 
-The upload/import surface has three paths:
+The upload/import surface has two current paths and one legacy fallback:
 
-| Path                                | Formats                              | Transport                                                                                                                                                                         | When used                                                                                                                                         |
-| ----------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Small-file synchronous upload       | CSV / TSV / JSONL / JSON array / ZIP | Frontend parses the whole file and submits `POST /datasets`                                                                                                                       | Files below the synchronous file-size threshold and request sample-count threshold                                                                |
-| Medium/large client-streamed import | JSONL / CSV / TSV                    | Frontend streams/parses the local file, then sends bounded batches to `POST /dataset-imports/:id/batch`                                                                           | Files above the synchronous threshold, or parsed files with too many samples for one request                                                      |
-| Ultra-large raw object import       | JSONL / CSV / TSV                    | Browser uploads the raw file directly to `ObjectStorageProvider`, then `POST /dataset-imports/:id/complete` makes the backend stream-parse the object into staging and promote it | Files large enough that browser-to-API JSON batches are undesirable, when the configured object storage provider supports browser upload sessions |
+| Path                           | Formats                              | Transport                                                                                                                                                            | When used                                                                                                                                      |
+| ------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Raw upload + async import      | CSV / TSV / JSONL / small JSON / ZIP | Browser uploads the unmodified file to `ObjectStorageProvider`; server/worker finalizes, streams/parses, stages, then promotes in the background                     | Main path whenever the configured provider supports browser upload sessions and the file is within `DATASET_RAW_UPLOAD_MAX_BYTES`              |
+| Small-file synchronous upload  | CSV / TSV / JSONL / JSON array / ZIP | Frontend parses the whole file and submits `POST /datasets`                                                                                                          | Files below the synchronous threshold, primarily for small manual uploads and tests                                                            |
+| Client-streamed batch fallback | JSONL / CSV / TSV                    | Frontend streams/parses the local file, then sends bounded batches to `POST /dataset-imports/:id/batch`; server still atomically promotes from staging on `complete` | Transitional fallback when raw upload is unavailable and the file is too large for `POST /datasets`; it is not the preferred long-term UX path |
 
-JSON arrays and ZIP packages are intentionally kept on the small-file path until a real streaming parser exists for those formats; a large JSON / ZIP is rejected instead of being read whole in the browser. The raw import path is a generic OSS object-storage capability. It must depend only on `ObjectStorageProvider` and must not embed R2-specific APIs, SaaS plan gates, edition flags, or billing logic.
+Browser parsing is used only for preview, field mapping, and small-file fallback. For raw import, the backend parse is the source of truth: the worker reads the stored object, applies field mappings, writes staging rows, and promotes the dataset. The raw import path is a generic OSS object-storage capability. It must depend only on `ObjectStorageProvider` and must not embed R2-specific APIs, SaaS plan gates, edition flags, tenant concepts, or billing logic.
 
 `DATASET_RAW_UPLOAD_MAX_BYTES` configures the maximum accepted raw upload size. The OSS default is `2147483648` (2 GiB). Self-hosted deployments may lower or raise it, but import still keeps the existing protective limits: single sample / line size, batch row count, batch byte size, decompressed payload size for formats that add compression later, stale import timeout, and cleanup of expired pending uploads.
 
-The upload page must surface the current size limits next to the file picker with an info icon: the small-file synchronous threshold, the JSONL / CSV / TSV streaming behavior, the configured raw-upload maximum, and the fact that large JSON arrays / ZIP packages are rejected until those formats have real streaming parsers.
+The upload page must surface the current size limits next to the file picker with an info icon: the small-file synchronous threshold, the raw-upload maximum, the supported raw formats, and the fact that JSON array / ZIP raw import uses a bounded buffered parser until a true streaming parser is introduced.
+
+Raw import sessions use the following state machine:
+
+| State       | Meaning                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| `created`   | Import session exists and a raw upload session has been issued, but upload has not begun |
+| `uploading` | Browser upload is in progress, or a client-batched session is accepting batches          |
+| `uploaded`  | Raw upload was finalized and verified by `completeUpload`, but no import job is queued   |
+| `queued`    | A `dataset-import` BullMQ job was enqueued                                               |
+| `parsing`   | Worker has opened the raw object and is parsing/applying field mappings                  |
+| `importing` | Worker is writing staging rows or promoting them into the final dataset                  |
+| `completed` | Dataset row and samples are fully promoted; temporary raw object and staging are cleared |
+| `failed`    | Import cannot continue; `error_code` / `error_message` explain why                       |
+| `aborted`   | User or stale-session cleanup cancelled the import and removed temporary resources       |
+
+`GET /dataset-imports/:id` returns this state plus progress: uploaded bytes when known, parsed/imported rows, declared total rows when supplied, total bytes, best-effort percentage, error fields, job id, and lifecycle timestamps. Percentage is informational; the authoritative state is the status string.
 
 #### 3.1.1 Small-file synchronous upload
 
 When a file is smaller than the synchronous threshold: the frontend parses it in full, previews the first few rows, and after the user completes the field mapping it submits; the server, within a single transaction, creates the dataset row and writes the samples one by one, making it immediately usable. The sample count, field manifest, and content modalities are maintained automatically by the platform.
 
-#### 3.1.2 Medium/large client-streamed batched import
+#### 3.1.2 Raw upload + asynchronous backend import
+
+When object storage is configured and supports browser-direct upload sessions, the raw path is the main OSS import path for all non-small files and may also be used for small files. The browser reads only a prefix for preview and field mapping, then transfers the original file bytes unchanged.
+
+1. `POST /dataset-imports/raw` creates the import row and calls `ObjectStorageProvider.createUploadSession(...)` for `resourceType='dataset_raw'`. If the provider returns `null`, the deployment does not support raw upload and the frontend may fall back to the legacy client-batched path when feasible.
+2. The browser uploads the raw file to the provider's upload URL. Entrypoint authentication and business validation stay in NestJS; the storage signature is only a short-lived byte-transfer capability.
+3. `POST /dataset-imports/:id/upload-complete` finalizes the provider upload with `completeUpload(...)`, verifies size / ownership / optional checksum through the provider contract, stores the finalized `raw_object_ref`, and moves the session to `uploaded`.
+4. `POST /dataset-imports/:id/complete` is asynchronous for raw sessions: it enqueues a `dataset-import` BullMQ job and returns the current import status instead of parsing the whole file in the HTTP request.
+5. The worker opens `ObjectStorageProvider.getObjectStream(...)`, parses the raw file, applies the selected field mappings, writes bounded batches to `dataset_import_samples`, infers field schema from staged rows, and promotes everything into `datasets` / `dataset_samples` in a transaction.
+6. On success, the raw object is deleted or made unreachable, staging rows are cleared, and the import row moves to `completed`.
+
+Parser support:
+
+- CSV / TSV: parsed with a Node stream parser; quoted delimiters, quoted newlines, escaped quotes, and CRLF must work.
+- JSONL: parsed line by line with a per-line byte limit.
+- JSON array: supported only under a bounded buffered parser threshold; oversized JSON arrays are rejected with a readable error instead of being loaded unbounded.
+- ZIP: supported only under a bounded buffered parser threshold. A package contains one CSV / TSV / JSONL / JSON data file, optionally selected by `manifest.json.file`; image references are resolved relative to the data file and inlined as data URLs.
+
+Abort and failure cleanup:
+
+- `POST /dataset-imports/:id/abort` can be called until `completed`. It marks the session `aborted`, clears staging rows, aborts any pending upload session, and deletes any finalized raw object best-effort.
+- If upload finalization, queue enqueue, parse, validation, staging, or promotion fails, the session moves to `failed`, stores an error code and readable message, clears staging rows, and deletes the temporary raw object best-effort.
+- Leaving the upload page after the job is queued does **not** stop the import; the frontend only warns that the import will continue in the background. Leaving before upload/job handoff may abort the active transfer.
+
+Quota / policy hooks are invoked at generic OSS boundaries only: raw session creation pre-checks declared file size, upload completion verifies actual uploaded bytes, import batching/staging checks actual batch bytes, and completion/promotion confirms final usage. OSS uses permissive defaults; SaaS may replace the hooks later without adding org / billing concepts to OSS code.
+
+#### 3.1.3 Legacy client-streamed batched import
 
 A file exceeding the synchronous threshold is not submitted all at once but goes through a **client-driven batched import session**: samples first enter a staging table, and once collected they are atomically promoted to a formal dataset within a single transaction; during this period there is no "half-visible" dataset. This path does not depend on any object storage.
 
@@ -65,27 +107,15 @@ A file exceeding the synchronous threshold is not submitted all at once but goes
 2. `POST /dataset-imports` creates an import session (recording the name, field mapping, and file metadata); at this point the **dataset row is not yet created**.
 3. The frontend parses the file in a streaming fashion. JSONL is parsed line by line; CSV / TSV must use a mature streaming parser that correctly handles quoted commas, quoted newlines, escaped quotes, and CRLF. Each time the frontend accumulates a batch, it submits the batch to `POST /dataset-imports/:id/batch`; the server writes this batch of samples into the staging table `dataset_import_samples` (deduplicated by `(import_id, row_index)`, with idempotent resubmission of a single batch) and advances the session's collected-row count and heartbeat time. Batches must be submitted serially to guarantee that what has been ingested is a continuous prefix.
    - A batch is bounded by both row count and encoded JSON payload bytes, so the server can keep `SERVER_BODY_LIMIT` small (for example 10 MiB) instead of allowing arbitrary request bodies.
-4. `POST /dataset-imports/:id/complete`: within **a single transaction** the server creates the formal dataset row, batch-promotes the session's staged samples to `dataset_samples` (reassigning sample primary keys), infers field types by sampling, computes the category distribution via SQL aggregation, writes the total sample count and `has_images`, and finally clears the session's staged samples. The dataset either appears in its entirety or not at all.
+4. `POST /dataset-imports/:id/complete`: within **a single transaction** the server creates the formal dataset row, batch-promotes the session's staged samples to `dataset_samples` (reassigning sample primary keys), infers field types by sampling, computes the category distribution via SQL aggregation, writes the total sample count and `has_images`, and finally clears the session's staged samples. The dataset either appears in its entirety or not at all. The response uses the same import-status DTO and ends at `completed`.
 
 Constraints during import:
 
 - **The user must stay on the new-dataset page until completion**: batched pushing is driven by that page's frontend loop, so leaving the page / closing or refreshing the tab interrupts the import. The frontend uses a route navigation guard + a `beforeunload` prompt to intercept accidental departures.
-- **Interruption means invalidation, full cleanup, no resumption**: any departure that does not reach `complete` (intentional departure, closing the page, network loss, crash) invalidates the import—the samples already written to the staging table and the session record are deleted together, **leaving no half-finished dataset and offering no resumable import**; to obtain this dataset, you must re-upload.
+- **Interruption means invalidation, full cleanup, no resumption**: any departure that does not reach `complete` (intentional departure, closing the page, network loss, crash) invalidates the import—the samples already written to the staging table are cleared and the session moves to `aborted`, **leaving no half-finished dataset and offering no resumable import**; to obtain this dataset, you must re-upload.
   - Normal departure: the frontend uses `navigator.sendBeacon` to notify the server to clean up immediately (`POST /dataset-imports/:id/abort`, which is the action of the import panel's "Cancel" button).
-  - Crash / network loss (beacon cannot be delivered): the server periodically sweeps and finds `importing` sessions with no heartbeat for a long time, deleting them automatically (see [03 §3.5](03-orchestration.md#35-probe--export--dataset-import-cleanup)).
-- Staged samples are attached to the import session via a foreign key with `ON DELETE CASCADE`, so cleanup only requires deleting the session row; the formal `datasets` / `dataset_samples` are never written to throughout, so there is no risk of an "in-import dataset being mistakenly referenced by an experiment", and there is no need to introduce a `status` gate on the dataset.
-
-#### 3.1.3 Ultra-large raw object import
-
-When object storage is configured and supports browser-direct upload sessions, the frontend may choose the raw import path for very large JSONL / CSV / TSV files. The default frontend heuristic is to prefer raw import above 256 MiB when the file is within `DATASET_RAW_UPLOAD_MAX_BYTES`; this is a client-side routing threshold, not a backend hard limit.
-
-1. The frontend still reads only a small prefix locally for preview + field mapping, using the same parsers as §3.1.2.
-2. `POST /dataset-imports/raw` creates an import session and calls `ObjectStorageProvider.createUploadSession(...)` for `resourceType='dataset_raw'`. If the provider returns `null`, the deployment does not support browser direct upload; the frontend must not show the 2 GiB raw upload affordance and should fall back to the client-streamed path when feasible.
-3. The browser uploads the unmodified raw file bytes to the provider's upload URL. Entrypoint authentication and business validation remain in NestJS; the storage signature is only a time-limited byte-transfer capability.
-4. `POST /dataset-imports/:id/complete` finalizes the upload with `ObjectStorageProvider.completeUpload(...)`, verifies size / ownership / optional checksum through the provider contract, opens `getObjectStream(...)`, parses the raw JSONL / CSV / TSV stream on the backend, writes rows into `dataset_import_samples`, and then runs the same promote transaction as §3.1.2.
-5. On success, the temporary raw object is deleted or made unreachable; the normalized dataset samples / shards are the source of truth. On abort, failure, stale session cleanup, or pending-upload expiry, the session row and any pending/finalized raw object are cleaned up best-effort.
-
-This path is deliberately generic: OSS may use S3, MinIO, local development adapters, or another provider implementation through `ObjectStorageProvider`. It must not depend on a specific managed storage product.
+  - Crash / network loss (beacon cannot be delivered): the server periodically sweeps and finds pre-complete sessions with no heartbeat for a long time, aborting them automatically (see [03 §3.5](03-orchestration.md#35-probe--export--dataset-import-cleanup)).
+- Staged samples are attached to the import session via a foreign key with `ON DELETE CASCADE`, and the service also explicitly clears them on completed / failed / aborted outcomes; the formal `datasets` / `dataset_samples` are never written to throughout, so there is no risk of an "in-import dataset being mistakenly referenced by an experiment", and there is no need to introduce a `status` gate on the dataset.
 
 ### 3.2 Field role maintenance
 
@@ -151,8 +181,8 @@ Field roles determine the platform's runtime behavior:
 - The platform automatically decides whether to use a URL or base64 at inference time based on the model's capability declaration
 - There is an upper limit on single-image size, and obviously oversized source files should be intercepted at upload time; before inference `llm-client` still applies fallback downscaling and re-encoding to base64 / data URL inlined images to avoid sending oversized images directly to the model provider
 - Remote image URLs are not actively downloaded and rewritten at the LLM layer; if a model consumes images in URL form, the size and accessibility of the resource the URL points to are guaranteed by the dataset/connector source
-- Large-file uploads go through either client-side streaming batched writes (see [§3.1.2](#312-mediumlarge-client-streamed-batched-import)) or, when the provider supports browser upload sessions, raw object import (see [§3.1.3](#313-ultra-large-raw-object-import)); both write rows into PostgreSQL staging and then atomically promote
-- A ZIP with inlined base64 images can be very large, but its image inlining is still done on the frontend; **large ZIPs currently go only through the small-file synchronous path** and are not accepted by either streaming path
+- Large-file uploads prefer raw object import when the provider supports browser upload sessions (see [§3.1.2](#312-raw-upload--asynchronous-backend-import)); the legacy client-side batched fallback remains available for JSONL / CSV / TSV when raw upload is unavailable (see [§3.1.3](#313-legacy-client-streamed-batched-import))
+- ZIP image inlining is performed by the backend raw parser for raw imports and by the frontend parser only for the small-file fallback; large ZIPs are accepted only up to the bounded ZIP parser threshold
 
 ## 7. Large-payload storage tiering
 

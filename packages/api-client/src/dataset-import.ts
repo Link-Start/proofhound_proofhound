@@ -6,6 +6,7 @@ import type {
   DatasetImportBatchDto,
   DatasetImportBatchResponseDto,
   DatasetImportItemDto,
+  DatasetImportStatusDto,
   DatasetRawImportCapabilitiesDto,
   DatasetRawUploadSessionDto,
 } from '@proofhound/shared';
@@ -14,7 +15,7 @@ import { getServerBaseUrl } from './public-env';
 
 export const datasetImportClient = {
   getDatasetImport: (projectId: string, importId: string) =>
-    httpClient.get<DatasetImportItemDto>(`/dataset-imports/${importId}`).then((r) => r.data),
+    httpClient.get<DatasetImportStatusDto>(`/dataset-imports/${importId}`).then((r) => r.data),
   getRawImportCapabilities: (_projectId: string) =>
     httpClient.get<DatasetRawImportCapabilitiesDto>(`/dataset-imports/raw/capabilities`).then((r) => r.data),
   createDatasetImport: (projectId: string, body: CreateDatasetImportDto) =>
@@ -38,6 +39,8 @@ export const datasetImportClient = {
   },
   appendDatasetImportBatch: (projectId: string, importId: string, body: DatasetImportBatchDto) =>
     httpClient.post<DatasetImportBatchResponseDto>(`/dataset-imports/${importId}/batch`, body).then((r) => r.data),
+  completeRawDatasetUpload: (projectId: string, importId: string) =>
+    httpClient.post<DatasetImportStatusDto>(`/dataset-imports/${importId}/upload-complete`, {}).then((r) => r.data),
   completeDatasetImport: (projectId: string, importId: string) =>
     httpClient.post<CompleteDatasetImportResponseDto>(`/dataset-imports/${importId}/complete`, {}).then((r) => r.data),
   abortDatasetImport: (projectId: string, importId: string) =>
