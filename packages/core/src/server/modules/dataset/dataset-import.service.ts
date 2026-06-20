@@ -226,7 +226,7 @@ export class DatasetImportService implements OnModuleInit, OnModuleDestroy {
       source: 'dataset_import_complete',
     });
 
-    const jobId = `${RAW_IMPORT_JOB_ID_PREFIX}:${importId}`;
+    const jobId = `${RAW_IMPORT_JOB_ID_PREFIX}-${importId}`;
     const queued = await this.repo.markQueued(projectId, importId, jobId);
     if (!queued) throw new ConflictException('dataset_import_not_uploaded');
 

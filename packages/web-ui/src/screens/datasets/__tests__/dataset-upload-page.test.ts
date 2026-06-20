@@ -29,10 +29,28 @@ describe('DatasetUploadPage import helpers', () => {
     expect(estimateUploadProgressBytes({ fileName: 'empty.csv', fileSizeBytes: 0 })).toBe(1);
   });
 
-  it('prefers raw import for non-small supported files when the provider supports upload sessions', () => {
+  it('uses streaming batches for medium CSV/TSV/JSONL files and raw import past the raw threshold', () => {
     expect(
       selectDatasetUploadImportPath({
         file: { name: 'train.csv', size: 2 * 1024 * 1024 },
+        isLargeFile: true,
+        parsedSampleCount: 5,
+        rawImportCapabilities: { supported: true, maxBytes: 2 * 1024 * 1024 * 1024 },
+      }),
+    ).toBe('streaming');
+
+    expect(
+      selectDatasetUploadImportPath({
+        file: { name: 'train.csv', size: 300 * 1024 * 1024 },
+        isLargeFile: true,
+        parsedSampleCount: 5,
+        rawImportCapabilities: { supported: true, maxBytes: 2 * 1024 * 1024 * 1024 },
+      }),
+    ).toBe('streaming');
+
+    expect(
+      selectDatasetUploadImportPath({
+        file: { name: 'train.csv', size: 600 * 1024 * 1024 },
         isLargeFile: true,
         parsedSampleCount: 5,
         rawImportCapabilities: { supported: true, maxBytes: 2 * 1024 * 1024 * 1024 },
@@ -41,7 +59,7 @@ describe('DatasetUploadPage import helpers', () => {
 
     expect(
       selectDatasetUploadImportPath({
-        file: { name: 'train.csv', size: 300 * 1024 * 1024 },
+        file: { name: 'train.csv', size: 600 * 1024 * 1024 },
         isLargeFile: true,
         parsedSampleCount: 5,
         rawImportCapabilities: { supported: false, maxBytes: 2 * 1024 * 1024 * 1024 },
@@ -68,7 +86,7 @@ describe('DatasetUploadPage import helpers', () => {
     ).toBe('streaming');
   });
 
-  it('prefers raw import when a small parsed file exceeds the synchronous sample-count guard', () => {
+  it('uses buffered import when a small parsed file exceeds the synchronous sample-count guard', () => {
     expect(
       selectDatasetUploadImportPath({
         file: { name: 'train.jsonl', size: 1024 },
@@ -76,7 +94,7 @@ describe('DatasetUploadPage import helpers', () => {
         parsedSampleCount: 5001,
         rawImportCapabilities: { supported: true, maxBytes: 2 * 1024 * 1024 * 1024 },
       }),
-    ).toBe('raw');
+    ).toBe('buffered');
     expect(
       selectDatasetUploadImportPath({
         file: { name: 'train.jsonl', size: 1024 },
