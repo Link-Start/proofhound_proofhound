@@ -38,7 +38,8 @@ function serviceStub(): DatasetImportService {
     }),
     getImport: vi.fn().mockResolvedValue({ id: IMPORT_ID }),
     appendBatch: vi.fn().mockResolvedValue({ importId: IMPORT_ID, receivedRows: 1 }),
-    complete: vi.fn().mockResolvedValue({ dataset: { id: IMPORT_ID }, sampleCount: 1 }),
+    complete: vi.fn().mockResolvedValue({ id: IMPORT_ID, status: 'queued' }),
+    completeRawUpload: vi.fn().mockResolvedValue({ id: IMPORT_ID, status: 'uploaded' }),
     abort: vi.fn().mockResolvedValue(undefined),
   } as unknown as DatasetImportService;
 }
@@ -65,6 +66,7 @@ describe('MCP dataset-import tools', () => {
       'dataset_import_get',
       'dataset_import_append_batch',
       'dataset_import_complete',
+      'dataset_import_upload_complete',
       'dataset_import_abort',
     ]);
   });
@@ -261,6 +263,33 @@ describe('MCP dataset-import tools', () => {
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toContain('invalid tool input');
     expect(service.complete).not.toHaveBeenCalled();
+  });
+
+  it('dataset_import_upload_complete: delegates the import id scoped by project + actor', async () => {
+    const service = serviceStub();
+    const result = await dispatchTool(
+      createDatasetImportTools(service),
+      'dataset_import_upload_complete',
+      { importId: IMPORT_ID },
+      context,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(service.completeRawUpload).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID, actor);
+  });
+
+  it('dataset_import_upload_complete: non-uuid importId is a clean tool error', async () => {
+    const service = serviceStub();
+    const result = await dispatchTool(
+      createDatasetImportTools(service),
+      'dataset_import_upload_complete',
+      { importId: 'bad' },
+      context,
+    );
+
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('invalid tool input');
+    expect(service.completeRawUpload).not.toHaveBeenCalled();
   });
 
   it('dataset_import_abort: delegates the import id and returns ok', async () => {

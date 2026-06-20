@@ -1,5 +1,5 @@
 import type { DatasetImportClient } from '@proofhound/api-client';
-import type { CreateDatasetImportDto } from '@proofhound/shared';
+import type { CreateDatasetImportDto, DatasetImportState, DatasetImportStatusDto } from '@proofhound/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
   estimateDatasetImportBatchBytes,
@@ -23,13 +23,56 @@ function fakeClient(overrides: Partial<DatasetImportClient> = {}): DatasetImport
     getDatasetImport: vi.fn(),
     createDatasetImport: vi.fn().mockResolvedValue({ id: 'imp-1' }),
     appendDatasetImportBatch: vi.fn(),
-    completeDatasetImport: vi.fn().mockResolvedValue({ dataset: { id: 'ds-1' }, sampleCount: 3 }),
+    completeRawDatasetUpload: vi.fn(),
+    completeDatasetImport: vi.fn().mockResolvedValue(importStatus('completed', { receivedRows: 3 })),
     abortDatasetImport: vi.fn().mockResolvedValue(undefined),
     getRawImportCapabilities: vi.fn(),
     createRawDatasetImport: vi.fn(),
     uploadRawDatasetFile: vi.fn(),
     ...overrides,
   } as unknown as DatasetImportClient;
+}
+
+function importStatus(
+  state: DatasetImportState,
+  overrides: Partial<DatasetImportStatusDto> = {},
+): DatasetImportStatusDto {
+  return {
+    id: 'imp-raw-1',
+    projectId: PROJECT_ID,
+    datasetId: state === 'completed' ? 'ds-1' : null,
+    importMode: 'raw_object',
+    name: CREATE_BODY.name,
+    description: null,
+    fileName: CREATE_BODY.sourceFile.fileName,
+    fileSizeBytes: CREATE_BODY.sourceFile.fileSizeBytes,
+    sourceFormat: CREATE_BODY.sourceFormat,
+    declaredTotalRows: null,
+    receivedRows: 0,
+    status: state,
+    state,
+    progress: {
+      state,
+      uploadedBytes: state === 'uploading' ? null : CREATE_BODY.sourceFile.fileSizeBytes,
+      parsedRows: overrides.receivedRows ?? 0,
+      importedRows: state === 'completed' ? (overrides.receivedRows ?? 0) : 0,
+      totalRows: null,
+      totalBytes: CREATE_BODY.sourceFile.fileSizeBytes,
+      percentage: state === 'completed' ? 100 : null,
+    },
+    errorCode: null,
+    errorMessage: null,
+    jobId: null,
+    rawUploadCompletedAt: null,
+    queuedAt: null,
+    startedAt: null,
+    completedAt: state === 'completed' ? '2026-06-20T00:01:00.000Z' : null,
+    failedAt: null,
+    abortedAt: null,
+    createdAt: '2026-06-20T00:00:00.000Z',
+    updatedAt: '2026-06-20T00:00:00.000Z',
+    ...overrides,
+  };
 }
 
 async function* batchesOf(...batches: Array<Array<Record<string, unknown>>>) {
@@ -67,7 +110,7 @@ describe('runDatasetImport', () => {
     });
     expect(client.completeDatasetImport).toHaveBeenCalledWith(PROJECT_ID, 'imp-1');
     expect(client.abortDatasetImport).not.toHaveBeenCalled();
-    expect(result).toEqual({ dataset: { id: 'ds-1' }, sampleCount: 3 });
+    expect(result).toMatchObject({ status: 'completed', datasetId: 'ds-1', receivedRows: 3 });
     expect(progress).toEqual([
       { phase: 'uploading', receivedRows: 2 },
       { phase: 'uploading', receivedRows: 3 },
@@ -128,6 +171,28 @@ describe('runDatasetImport', () => {
     expect(batches).toEqual([[{ id: 'a', text: rowA.text }], [{ id: 'b', text: rowB.text }]]);
     expect(batches.every((batch) => estimateDatasetImportBatchBytes(batch) <= maxBytes)).toBe(true);
   });
+
+  it('does not stringify the growing batch on every projected row', async () => {
+    const stringifySpy = vi.spyOn(JSON, 'stringify');
+    const rows = Array.from({ length: 100 }, (_, index) => ({ id: `case-${index}`, text: 'x'.repeat(16) }));
+    let totalRows = 0;
+    let stringifyCalls = 0;
+
+    try {
+      for await (const batch of projectSampleRowsToBatches(rowsOf(...rows), ['id', 'text'], {
+        maxRows: 1000,
+        maxBytes: 1024 * 1024,
+      })) {
+        totalRows += batch.length;
+      }
+      stringifyCalls = stringifySpy.mock.calls.length;
+    } finally {
+      stringifySpy.mockRestore();
+    }
+
+    expect(totalRows).toBe(100);
+    expect(stringifyCalls).toBeLessThanOrEqual(105);
+  });
 });
 
 describe('runRawDatasetImport', () => {
@@ -144,8 +209,12 @@ describe('runRawDatasetImport', () => {
         maxBytes: 2_147_483_648,
       }),
       uploadRawDatasetFile: vi.fn().mockResolvedValue(undefined),
+      completeRawDatasetUpload: vi.fn().mockResolvedValue(importStatus('uploaded')),
+      completeDatasetImport: vi.fn().mockResolvedValue(importStatus('queued')),
+      getDatasetImport: vi.fn().mockResolvedValue(importStatus('completed', { receivedRows: 1 })),
     });
     const onUploaded = vi.fn();
+    const progress: DatasetImportProgress[] = [];
 
     const result = await runRawDatasetImport({
       projectId: PROJECT_ID,
@@ -157,6 +226,8 @@ describe('runRawDatasetImport', () => {
       file,
       client,
       onUploaded,
+      onProgress: (event) => progress.push(event),
+      pollIntervalMs: 0,
     });
 
     expect(client.createRawDatasetImport).toHaveBeenCalled();
@@ -165,10 +236,13 @@ describe('runRawDatasetImport', () => {
       file,
       { signal: undefined },
     );
+    expect(client.completeRawDatasetUpload).toHaveBeenCalledWith(PROJECT_ID, 'imp-raw-1');
     expect(client.completeDatasetImport).toHaveBeenCalledWith(PROJECT_ID, 'imp-raw-1');
+    expect(client.getDatasetImport).toHaveBeenCalledWith(PROJECT_ID, 'imp-raw-1');
     expect(client.abortDatasetImport).not.toHaveBeenCalled();
     expect(onUploaded).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ dataset: { id: 'ds-1' }, sampleCount: 3 });
+    expect(result).toMatchObject({ status: 'completed', datasetId: 'ds-1' });
+    expect(progress.map((event) => event.phase)).toEqual(['queued', 'completed']);
   });
 
   it('aborts the raw session when direct upload fails', async () => {
@@ -195,6 +269,7 @@ describe('runRawDatasetImport', () => {
     ).rejects.toThrow('upload failed');
 
     expect(client.completeDatasetImport).not.toHaveBeenCalled();
+    expect(client.completeRawDatasetUpload).not.toHaveBeenCalled();
     expect(client.abortDatasetImport).toHaveBeenCalledWith(PROJECT_ID, 'imp-raw-1');
   });
 });

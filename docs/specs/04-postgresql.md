@@ -4,10 +4,10 @@ This document describes the database, object storage, and frontend refresh respo
 
 ## 1. Infrastructure in Use
 
-| Service                    | Purpose                                                                                                                                                                      |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL                 | All business data, dataset import staging, DBOS workflow state                                                                                                               |
-| StorageProvider (optional) | Export artifacts, payload tiering, and ultra-large raw dataset import when a provider supports browser-direct upload sessions; ordinary imports still use PostgreSQL staging |
+| Service                    | Purpose                                                                                                                                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL                 | All business data, dataset import staging, DBOS workflow state                                                                                                                               |
+| StorageProvider (optional) | Export artifacts, payload tiering, and raw dataset import byte transfer when a provider supports browser-direct upload sessions; normalized samples still promote through PostgreSQL staging |
 
 Explicitly not used:
 
@@ -52,9 +52,9 @@ For public-facing deployments, UI channel authentication is handled by deploymen
 
 ## 4. Storage
 
-Dataset import has a PostgreSQL-first main path: small upload and client-streamed JSONL / CSV / TSV import write samples into PostgreSQL staging tables (`ph_assets.dataset_imports` / `dataset_import_samples`), then atomically promote to a formal dataset on `complete`. See [22 §3.1.2](22-datasets.md#312-mediumlarge-client-streamed-batched-import) and [06 §4.3.1](06-database-schema.md#431-ph_assetsdataset_imports--dataset_import_samples).
+Dataset import has a PostgreSQL-first normalization path: small upload writes formal rows directly, while raw upload and legacy client-streamed import write samples into PostgreSQL staging tables (`ph_assets.dataset_imports` / `dataset_import_samples`) and atomically promote to a formal dataset only after parsing/validation succeeds. See [22 §3.1.2](22-datasets.md#312-raw-upload--asynchronous-backend-import), [22 §3.1.3](22-datasets.md#313-legacy-client-streamed-batched-import), and [06 §4.3.1](06-database-schema.md#431-ph_assetsdataset_imports--dataset_import_samples).
 
-Ultra-large raw dataset import may use `StorageProvider` only as a temporary byte-transfer layer: the browser uploads the raw JSONL / CSV / TSV object through `ObjectStorageProvider.createUploadSession(...)`, the backend finalizes it, streams it back with `getObjectStream(...)`, writes parsed samples into PostgreSQL staging, and then promotes. The raw object is not the source of business truth after import and must be deleted or swept on success, abort, stale-session cleanup, or pending-upload expiry. This is an OSS-generic object storage path; it must not depend on a specific managed provider such as R2.
+Raw dataset import uses `StorageProvider` only as a temporary byte-transfer layer: the browser uploads the raw CSV / TSV / JSONL / JSON / ZIP object through `ObjectStorageProvider.createUploadSession(...)`, the backend finalizes it with `completeUpload(...)`, and a worker streams it back with `getObjectStream(...)`, writes parsed samples into PostgreSQL staging, and then promotes. The raw object is not the source of business truth after import and must be deleted or swept on success, abort, stale-session cleanup, or pending-upload expiry. This is an OSS-generic object storage path; it must not depend on a specific managed provider such as R2.
 
 `StorageProvider` targets standard implementations such as S3 / MinIO / OSS / local file storage by default and is not bound to any specific managed platform. When object storage is enabled, follow the convention "the path does not contain project_id; business ownership is maintained by the database `project_id`":
 
@@ -84,10 +84,10 @@ Metadata registration and business validation always go through NestJS; entrypoi
 
 ## 7. Replacement Paths
 
-| Layer              | Replacement Method                                                                                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL         | Any standard PostgreSQL 14+, replace `DATABASE_URL`                                                                                                        |
-| Storage (optional) | Implement `StorageProvider` against S3 / MinIO / OSS / local file storage; browser raw upload is available only when the provider supports upload sessions |
+| Layer              | Replacement Method                                                                                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL         | Any standard PostgreSQL 14+, replace `DATABASE_URL`                                                                                                              |
+| Storage (optional) | Implement `ObjectStorageProvider` against S3 / MinIO / OSS / local file storage; browser raw upload is available only when the provider supports upload sessions |
 
 ## 8. Mapping to Business SPECs
 

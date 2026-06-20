@@ -1,7 +1,7 @@
 /**
- * MCP tool definitions for large-file dataset import (streaming batch ingestion).
+ * MCP tool definitions for dataset import (raw upload plus legacy streaming batch ingestion).
  * Delegates to DatasetImportService, matching the REST surface 1:1.
- * See docs/specs/22-datasets.md §3.1.2 and docs/specs/00-overview.md §5 (three-channel parity).
+ * See docs/specs/22-datasets.md §3.1 and docs/specs/00-overview.md §5 (three-channel parity).
  */
 import {
   createDatasetImportSchema,
@@ -26,7 +26,7 @@ export function createDatasetImportTools(datasetImportService: DatasetImportServ
           description: { type: 'string' },
           fieldMappings: { type: 'array' },
           sourceFile: { type: 'object' },
-          sourceFormat: { type: 'string', enum: ['jsonl', 'csv', 'tsv'] },
+          sourceFormat: { type: 'string', enum: ['jsonl', 'csv', 'tsv', 'json', 'zip'] },
           declaredTotalRows: { type: 'integer' },
         },
       },
@@ -59,7 +59,7 @@ export function createDatasetImportTools(datasetImportService: DatasetImportServ
           description: { type: 'string' },
           fieldMappings: { type: 'array' },
           sourceFile: { type: 'object' },
-          sourceFormat: { type: 'string', enum: ['jsonl', 'csv', 'tsv'] },
+          sourceFormat: { type: 'string', enum: ['jsonl', 'csv', 'tsv', 'json', 'zip'] },
           declaredTotalRows: { type: 'integer' },
         },
       },
@@ -109,7 +109,7 @@ export function createDatasetImportTools(datasetImportService: DatasetImportServ
     },
     {
       name: 'dataset_import_complete',
-      description: '完成导入：单事务原子提升暂存样本为正式数据集',
+      description: '完成导入：raw import 入队后台解析，batch import 提升暂存样本为正式数据集',
       inputSchema: {
         type: 'object',
         required: ['importId'],
@@ -124,8 +124,24 @@ export function createDatasetImportTools(datasetImportService: DatasetImportServ
       },
     },
     {
+      name: 'dataset_import_upload_complete',
+      description: '完成 raw upload 校验并把会话推进到 uploaded 状态',
+      inputSchema: {
+        type: 'object',
+        required: ['importId'],
+        properties: {
+          importId: { type: 'string', format: 'uuid' },
+        },
+      },
+      handler: async (input, ctx) => {
+        const { projectId } = resolveMcpProjectContext(ctx);
+        const importId = datasetIdParamSchema.parse(input.importId);
+        return datasetImportService.completeRawUpload(projectId, importId, getMcpActor(ctx));
+      },
+    },
+    {
       name: 'dataset_import_abort',
-      description: '取消导入会话并清除已暂存样本（中断即删干净）',
+      description: '取消导入会话并清除已暂存样本和临时 raw object',
       inputSchema: {
         type: 'object',
         required: ['importId'],

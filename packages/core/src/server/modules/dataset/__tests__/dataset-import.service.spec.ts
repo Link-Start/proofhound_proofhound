@@ -1,5 +1,4 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { Readable } from 'node:stream';
 import { describe, expect, it, vi, type Mocked } from 'vitest';
 import type { CurrentUserPayload } from '../../../common/decorators/current-user.decorator';
 import {
@@ -38,10 +37,19 @@ function fakeImport(overrides: Partial<DatasetImportRow> = {}): DatasetImportRow
     importMode: 'batch',
     rawUploadSessionId: null,
     rawUploadExpiresAt: null,
+    rawUploadCompletedAt: null,
     rawObjectRef: null,
     declaredTotalRows: null,
     receivedRows: 0,
-    status: 'importing',
+    jobId: null,
+    errorCode: null,
+    errorMessage: null,
+    status: 'uploading',
+    queuedAt: null,
+    startedAt: null,
+    completedAt: null,
+    failedAt: null,
+    abortedAt: null,
     createdBy: ACTOR.sub,
     createdAt: new Date('2026-05-28T00:00:00Z'),
     updatedAt: new Date('2026-05-28T00:00:00Z'),
@@ -80,6 +88,12 @@ function buildService(storage = fakeStorage()) {
     findStaleImports: vi.fn(),
     deleteImportsByIds: vi.fn(),
     markRawObjectRef: vi.fn(),
+    markRawUploadCompleted: vi.fn(),
+    markQueued: vi.fn(),
+    markParsing: vi.fn(),
+    markFailed: vi.fn().mockResolvedValue(undefined),
+    markAborted: vi.fn(),
+    clearStaging: vi.fn().mockResolvedValue(undefined),
   } as unknown as Mocked<DatasetImportRepository>;
 
   const datasetService = {
@@ -87,14 +101,16 @@ function buildService(storage = fakeStorage()) {
     recordDatasetImportCompleted: vi.fn().mockResolvedValue(undefined),
   } as unknown as Mocked<DatasetService>;
 
+  const bullmq = { enqueueDatasetRawImportJob: vi.fn().mockResolvedValue(undefined) };
   const service = new DatasetImportService(
     repo,
     datasetService,
     new LocalAccessControlService(),
     new LocalQuotaPolicyHook(),
     storage,
+    bullmq as never,
   );
-  return { service, repo, datasetService, storage: storage as Mocked<ObjectStorageProvider> };
+  return { service, repo, datasetService, storage: storage as Mocked<ObjectStorageProvider>, bullmq };
 }
 
 const CREATE_DTO = {
@@ -113,15 +129,20 @@ describe('DatasetImportService.createImport', () => {
     expect(repo.createImport).not.toHaveBeenCalled();
   });
 
-  it('creates an importing session', async () => {
+  it('creates an uploading session', async () => {
     const { service, repo } = buildService();
     repo.createImport.mockResolvedValue(fakeImport());
 
     const result = await service.createImport(PROJECT_ID, CREATE_DTO, ACTOR);
 
     expect(result.id).toBe(IMPORT_ID);
-    expect(result.status).toBe('importing');
-    expect(repo.createImport).toHaveBeenCalledWith({ projectId: PROJECT_ID, actorUserId: ACTOR.sub, dto: CREATE_DTO });
+    expect(result.status).toBe('uploading');
+    expect(repo.createImport).toHaveBeenCalledWith({
+      projectId: PROJECT_ID,
+      actorUserId: ACTOR.sub,
+      dto: CREATE_DTO,
+      initialStatus: 'uploading',
+    });
   });
 });
 
@@ -187,70 +208,11 @@ describe('DatasetImportService raw import', () => {
     );
   });
 
-  it('streams a raw CSV object from storage into staging, then promotes', async () => {
+  it('finalizes a raw upload and moves the session to uploaded', async () => {
     const storage = fakeStorage({
       isEnabled: vi.fn().mockReturnValue(true),
       supportsClientUploadSessions: vi.fn().mockReturnValue(true),
       completeUpload: vi.fn().mockResolvedValue(RAW_REF),
-      getObjectStream: vi
-        .fn()
-        .mockResolvedValue(
-          Readable.from(['sample_id,text,expected_output,ignored\n', 'case-1,"hello, world",positive,nope\n']),
-        ),
-      deleteObjects: vi.fn().mockResolvedValue(undefined),
-    });
-    const { service, repo, datasetService } = buildService(storage);
-    repo.findImportById.mockResolvedValue(
-      fakeImport({
-        importMode: 'raw_object',
-        sourceFormat: 'csv',
-        rawUploadSessionId: 'upload-1',
-        fieldMappings: [
-          { name: 'sample_id', role: 'id' },
-          { name: 'text', role: 'text' },
-          { name: 'expected_output', role: 'expected' },
-        ],
-      }),
-    );
-    repo.markRawObjectRef.mockResolvedValue(fakeImport({ importMode: 'raw_object', rawObjectRef: RAW_REF }));
-    repo.appendBatch.mockResolvedValue(1);
-    repo.getSampleDataForInference.mockResolvedValue([
-      { sample_id: 'case-1', text: 'hello, world', expected_output: 'positive' },
-    ]);
-    repo.promote.mockResolvedValue({ sampleCount: 1 });
-    datasetService.getDataset.mockResolvedValue({ id: 'ds-1' } as never);
-
-    await expect(service.complete(PROJECT_ID, IMPORT_ID, ACTOR)).resolves.toEqual({
-      dataset: { id: 'ds-1' },
-      sampleCount: 1,
-    });
-
-    expect(storage.completeUpload).toHaveBeenCalledWith({
-      sessionId: 'upload-1',
-      actor: expect.objectContaining({ actorId: ACTOR.sub, actorKind: 'local_user' }),
-      project: { projectId: PROJECT_ID, source: 'local' },
-    });
-    expect(repo.appendBatch).toHaveBeenCalledWith(
-      IMPORT_ID,
-      [
-        {
-          rowIndex: 0,
-          data: { sample_id: 'case-1', text: 'hello, world', expected_output: 'positive' },
-          externalId: 'case-1',
-        },
-      ],
-      1,
-    );
-    expect(storage.deleteObjects).toHaveBeenCalledWith([RAW_REF]);
-  });
-
-  it('cleans the finalized raw object when complete fails after raw ingestion', async () => {
-    const storage = fakeStorage({
-      isEnabled: vi.fn().mockReturnValue(true),
-      supportsClientUploadSessions: vi.fn().mockReturnValue(true),
-      completeUpload: vi.fn().mockResolvedValue(RAW_REF),
-      getObjectStream: vi.fn().mockResolvedValue(Readable.from(['sample_id,text\ncase-1,hello\n'])),
-      abortUpload: vi.fn().mockResolvedValue(undefined),
       deleteObjects: vi.fn().mockResolvedValue(undefined),
     });
     const { service, repo } = buildService(storage);
@@ -259,20 +221,95 @@ describe('DatasetImportService raw import', () => {
         importMode: 'raw_object',
         sourceFormat: 'csv',
         rawUploadSessionId: 'upload-1',
-        fieldMappings: [
-          { name: 'sample_id', role: 'id' },
-          { name: 'text', role: 'text' },
-        ],
       }),
     );
-    repo.appendBatch.mockResolvedValue(1);
-    repo.getSampleDataForInference.mockResolvedValue([{ sample_id: 'case-1', text: 'hello' }]);
-    repo.promote.mockRejectedValue(new DatasetNameTakenError());
+    repo.markRawUploadCompleted.mockResolvedValue(
+      fakeImport({
+        importMode: 'raw_object',
+        status: 'uploaded',
+        rawUploadSessionId: 'upload-1',
+        rawObjectRef: RAW_REF,
+      }),
+    );
 
-    await expect(service.complete(PROJECT_ID, IMPORT_ID, ACTOR)).rejects.toBeInstanceOf(ConflictException);
+    const result = await service.completeRawUpload(PROJECT_ID, IMPORT_ID, ACTOR);
 
-    expect(storage.abortUpload).toHaveBeenCalledWith('upload-1');
-    expect(storage.deleteObjects).toHaveBeenCalledWith([RAW_REF]);
+    expect(storage.completeUpload).toHaveBeenCalledWith({
+      sessionId: 'upload-1',
+      actor: expect.objectContaining({ actorId: ACTOR.sub, actorKind: 'local_user' }),
+      project: { projectId: PROJECT_ID, source: 'local' },
+    });
+    expect(repo.markRawUploadCompleted).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID, RAW_REF);
+    expect(result.status).toBe('uploaded');
+    expect(storage.deleteObjects).not.toHaveBeenCalled();
+  });
+
+  it('queues a raw import job after upload completion', async () => {
+    const { service, repo, bullmq } = buildService();
+    repo.findImportById.mockResolvedValue(
+      fakeImport({
+        importMode: 'raw_object',
+        status: 'uploaded',
+        sourceFormat: 'csv',
+        rawUploadSessionId: 'upload-1',
+        rawObjectRef: RAW_REF,
+      }),
+    );
+    repo.markQueued.mockResolvedValue(
+      fakeImport({
+        importMode: 'raw_object',
+        status: 'queued',
+        jobId: `dataset-raw-import:${IMPORT_ID}`,
+        rawUploadSessionId: 'upload-1',
+        rawObjectRef: RAW_REF,
+      }),
+    );
+
+    const result = await service.complete(PROJECT_ID, IMPORT_ID, ACTOR);
+
+    expect(repo.markQueued).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID, `dataset-raw-import:${IMPORT_ID}`);
+    expect(bullmq.enqueueDatasetRawImportJob).toHaveBeenCalledWith(
+      { projectId: PROJECT_ID, importId: IMPORT_ID, actorId: ACTOR.sub },
+      `dataset-raw-import:${IMPORT_ID}`,
+    );
+    expect(result.status).toBe('queued');
+  });
+
+  it('returns the current raw import status once the job has been queued', async () => {
+    const { service, repo, bullmq } = buildService();
+    repo.findImportById.mockResolvedValue(
+      fakeImport({
+        importMode: 'raw_object',
+        status: 'queued',
+        jobId: `dataset-raw-import:${IMPORT_ID}`,
+        rawObjectRef: RAW_REF,
+      }),
+    );
+
+    const result = await service.complete(PROJECT_ID, IMPORT_ID, ACTOR);
+
+    expect(result.status).toBe('queued');
+    expect(repo.markQueued).not.toHaveBeenCalled();
+    expect(bullmq.enqueueDatasetRawImportJob).not.toHaveBeenCalled();
+  });
+
+  it('marks the session failed when queue enqueue fails', async () => {
+    const { service, repo, bullmq } = buildService();
+    repo.findImportById.mockResolvedValue(
+      fakeImport({
+        importMode: 'raw_object',
+        status: 'uploaded',
+        rawObjectRef: RAW_REF,
+      }),
+    );
+    repo.markQueued.mockResolvedValue(
+      fakeImport({ importMode: 'raw_object', status: 'queued', rawObjectRef: RAW_REF }),
+    );
+    bullmq.enqueueDatasetRawImportJob.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(service.complete(PROJECT_ID, IMPORT_ID, ACTOR)).rejects.toThrow('redis down');
+
+    expect(repo.markFailed).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID, 'dataset_import_enqueue_failed', 'redis down');
   });
 
   it('aborts the pending raw upload session when completeUpload fails', async () => {
@@ -291,10 +328,45 @@ describe('DatasetImportService raw import', () => {
       }),
     );
 
-    await expect(service.complete(PROJECT_ID, IMPORT_ID, ACTOR)).rejects.toThrow('upload_missing');
+    await expect(service.completeRawUpload(PROJECT_ID, IMPORT_ID, ACTOR)).rejects.toThrow('upload_missing');
 
+    expect(repo.markFailed).toHaveBeenCalledWith(
+      PROJECT_ID,
+      IMPORT_ID,
+      'dataset_raw_upload_complete_failed',
+      'upload_missing',
+    );
     expect(storage.abortUpload).toHaveBeenCalledWith('upload-1');
     expect(storage.deleteObjects).not.toHaveBeenCalled();
+  });
+
+  it('cleans the finalized raw object when uploaded bytes exceed the raw limit', async () => {
+    const storage = fakeStorage({
+      isEnabled: vi.fn().mockReturnValue(true),
+      supportsClientUploadSessions: vi.fn().mockReturnValue(true),
+      completeUpload: vi.fn().mockResolvedValue({ ...RAW_REF, bytes: 3 * 1024 * 1024 * 1024 }),
+      abortUpload: vi.fn().mockResolvedValue(undefined),
+      deleteObjects: vi.fn().mockResolvedValue(undefined),
+    });
+    const { service, repo } = buildService(storage);
+    repo.findImportById.mockResolvedValue(
+      fakeImport({
+        importMode: 'raw_object',
+        sourceFormat: 'csv',
+        rawUploadSessionId: 'upload-1',
+      }),
+    );
+
+    await expect(service.completeRawUpload(PROJECT_ID, IMPORT_ID, ACTOR)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(repo.markFailed).toHaveBeenCalledWith(
+      PROJECT_ID,
+      IMPORT_ID,
+      'dataset_raw_upload_complete_failed',
+      'dataset_raw_upload_too_large',
+    );
+    expect(storage.abortUpload).toHaveBeenCalledWith('upload-1');
+    expect(storage.deleteObjects).toHaveBeenCalledWith([{ ...RAW_REF, bytes: 3 * 1024 * 1024 * 1024 }]);
   });
 });
 
@@ -334,7 +406,7 @@ describe('DatasetImportService.appendBatch', () => {
 
   it('rejects appending to a non-importing session', async () => {
     const { service, repo } = buildService();
-    repo.findImportById.mockResolvedValue(fakeImport({ status: 'ready' }));
+    repo.findImportById.mockResolvedValue(fakeImport({ status: 'completed' }));
 
     await expect(
       service.appendBatch(PROJECT_ID, IMPORT_ID, { batchStartIndex: 0, samples: [{ id: 'a' }] }, ACTOR),
@@ -363,20 +435,30 @@ describe('DatasetImportService.complete', () => {
 
   it('promotes with a field schema derived from mappings + sampled rows', async () => {
     const { service, repo, datasetService } = buildService();
-    repo.findImportById.mockResolvedValue(
-      fakeImport({ fieldMappings: [{ name: 'label', role: 'expected' }], name: 'Large dataset' }),
-    );
+    repo.findImportById
+      .mockResolvedValueOnce(
+        fakeImport({ fieldMappings: [{ name: 'label', role: 'expected' }], name: 'Large dataset' }),
+      )
+      .mockResolvedValueOnce(
+        fakeImport({
+          fieldMappings: [{ name: 'label', role: 'expected' }],
+          name: 'Large dataset',
+          status: 'completed',
+          datasetId: '00000000-0000-4000-8000-000000000200',
+          receivedRows: 3,
+          completedAt: new Date('2026-05-28T00:01:00Z'),
+        }),
+      );
     repo.getSampleDataForInference.mockResolvedValue([{ label: 'spam' }]);
     repo.promote.mockResolvedValue({ sampleCount: 3 });
-    datasetService.getDataset.mockResolvedValue({ id: 'ds-1' } as never);
 
     const result = await service.complete(PROJECT_ID, IMPORT_ID, ACTOR);
 
-    expect(result).toEqual({ dataset: { id: 'ds-1' }, sampleCount: 3 });
+    expect(result.status).toBe('completed');
+    expect(result.datasetId).toBe('00000000-0000-4000-8000-000000000200');
     const promoteArgs = repo.promote.mock.calls[0]?.[0];
     expect(promoteArgs?.fieldSchema).toEqual([{ name: 'label', role: 'expected_output', type: 'string' }]);
     expect(promoteArgs?.hasImages).toBe(false);
-    expect(datasetService.getDataset).toHaveBeenCalledWith(PROJECT_ID, promoteArgs?.datasetId, ACTOR);
     expect(datasetService.recordDatasetImportCompleted).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
       datasetId: promoteArgs?.datasetId,
@@ -388,12 +470,14 @@ describe('DatasetImportService.complete', () => {
 });
 
 describe('DatasetImportService.abort', () => {
-  it('deletes the session (staging cascades)', async () => {
+  it('marks the session aborted and cleans raw resources', async () => {
     const { service, repo } = buildService();
+    repo.findImportById.mockResolvedValue(fakeImport({ rawUploadSessionId: 'upload-1' }));
+    repo.markAborted.mockResolvedValue(fakeImport({ status: 'aborted', rawUploadSessionId: 'upload-1' }));
 
     await service.abort(PROJECT_ID, IMPORT_ID, ACTOR);
 
-    expect(repo.deleteImport).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID);
+    expect(repo.markAborted).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID);
   });
 
   it('surfaces a missing import only on get, not on abort', async () => {
@@ -405,14 +489,15 @@ describe('DatasetImportService.abort', () => {
 });
 
 describe('DatasetImportService.sweepStaleImports', () => {
-  it('reaps stale importing sessions', async () => {
+  it('marks stale pre-queued sessions aborted', async () => {
     const { service, repo } = buildService();
     repo.findStaleImports.mockResolvedValue([fakeImport({ id: 'a' }), fakeImport({ id: 'b' })]);
-    repo.deleteImportsByIds.mockResolvedValue(2);
+    repo.markAborted.mockResolvedValue(fakeImport({ status: 'aborted' }));
 
     await service.sweepStaleImports();
 
-    expect(repo.deleteImportsByIds).toHaveBeenCalledWith(['a', 'b']);
+    expect(repo.markAborted).toHaveBeenCalledWith(PROJECT_ID, 'a');
+    expect(repo.markAborted).toHaveBeenCalledWith(PROJECT_ID, 'b');
   });
 
   it('does nothing when there are no stale sessions', async () => {
@@ -421,7 +506,7 @@ describe('DatasetImportService.sweepStaleImports', () => {
 
     await service.sweepStaleImports();
 
-    expect(repo.deleteImportsByIds).not.toHaveBeenCalled();
+    expect(repo.markAborted).not.toHaveBeenCalled();
   });
 
   it('cleans pending and finalized raw objects for stale sessions', async () => {
@@ -445,11 +530,11 @@ describe('DatasetImportService.sweepStaleImports', () => {
         rawObjectRef,
       }),
     ]);
-    repo.deleteImportsByIds.mockResolvedValue(1);
+    repo.markAborted.mockResolvedValue(fakeImport({ status: 'aborted', rawUploadSessionId: 'upload-1', rawObjectRef }));
 
     await service.sweepStaleImports();
 
-    expect(repo.deleteImportsByIds).toHaveBeenCalledWith([IMPORT_ID]);
+    expect(repo.markAborted).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID);
     expect(storage.abortUpload).toHaveBeenCalledWith('upload-1');
     expect(storage.deleteObjects).toHaveBeenCalledWith([rawObjectRef]);
     expect(storage.sweepPendingUploads).toHaveBeenCalled();

@@ -3,12 +3,14 @@ import type {
   CompleteDatasetImportResponseDto,
   CreateDatasetImportDto,
   CreateRawDatasetImportDto,
+  DatasetImportStatusDto,
 } from '@proofhound/shared';
 import { projectSamplesToColumns } from './dataset-upload-parser';
 
 export interface DatasetImportProgress {
-  phase: 'uploading' | 'completing';
+  phase: 'uploading' | 'completing' | 'queued' | 'parsing' | 'importing' | 'completed';
   receivedRows: number;
+  status?: DatasetImportStatusDto;
 }
 
 export const DEFAULT_IMPORT_BATCH_MAX_ROWS = 1000;
@@ -16,9 +18,27 @@ export const DEFAULT_IMPORT_BATCH_MAX_ROWS = 1000;
 export const DEFAULT_IMPORT_BATCH_MAX_BYTES = 8 * 1024 * 1024;
 
 const textEncoder = new TextEncoder();
+const DATASET_IMPORT_PAYLOAD_PREFIX_BYTES = textEncoder.encode('{"batchStartIndex":0,"samples":').length;
+const DATASET_IMPORT_PAYLOAD_SUFFIX_BYTES = 1; // }
 
 export function estimateDatasetImportBatchBytes(samples: Array<Record<string, unknown>>): number {
   return textEncoder.encode(JSON.stringify({ batchStartIndex: 0, samples })).length;
+}
+
+function estimateDatasetImportSampleBytes(sample: Record<string, unknown>): number {
+  return textEncoder.encode(JSON.stringify(sample)).length;
+}
+
+function emptyJsonArrayBytes(): number {
+  return 2; // []
+}
+
+function jsonArrayBytesAfterAppend(currentArrayBytes: number, currentLength: number, nextItemBytes: number): number {
+  return currentLength === 0 ? nextItemBytes + 2 : currentArrayBytes + 1 + nextItemBytes;
+}
+
+function estimateDatasetImportPayloadBytes(samplesArrayBytes: number): number {
+  return DATASET_IMPORT_PAYLOAD_PREFIX_BYTES + samplesArrayBytes + DATASET_IMPORT_PAYLOAD_SUFFIX_BYTES;
 }
 
 export async function* projectSampleRowsToBatches(
@@ -33,27 +53,34 @@ export async function* projectSampleRowsToBatches(
   const maxRows = options.maxRows ?? DEFAULT_IMPORT_BATCH_MAX_ROWS;
   const maxBytes = options.maxBytes ?? DEFAULT_IMPORT_BATCH_MAX_BYTES;
   let batch: Array<Record<string, unknown>> = [];
+  let batchArrayBytes = emptyJsonArrayBytes();
 
   for await (const row of rows) {
     if (options.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     if (batch.length >= maxRows) {
       yield batch;
       batch = [];
+      batchArrayBytes = emptyJsonArrayBytes();
     }
 
     const projected = projectSamplesToColumns([row], columns)[0] ?? {};
-    const singleBytes = estimateDatasetImportBatchBytes([projected]);
-    if (singleBytes > maxBytes) {
+    const singleBytes = estimateDatasetImportSampleBytes(projected);
+    const singlePayloadBytes = estimateDatasetImportPayloadBytes(
+      jsonArrayBytesAfterAppend(emptyJsonArrayBytes(), 0, singleBytes),
+    );
+    if (singlePayloadBytes > maxBytes) {
       throw new Error('dataset_import_sample_too_large');
     }
 
-    const candidate = [...batch, projected];
-    if (batch.length > 0 && (candidate.length > maxRows || estimateDatasetImportBatchBytes(candidate) > maxBytes)) {
+    const candidateArrayBytes = jsonArrayBytesAfterAppend(batchArrayBytes, batch.length, singleBytes);
+    if (batch.length > 0 && estimateDatasetImportPayloadBytes(candidateArrayBytes) > maxBytes) {
       yield batch;
       batch = [];
+      batchArrayBytes = emptyJsonArrayBytes();
     }
 
     batch.push(projected);
+    batchArrayBytes = jsonArrayBytesAfterAppend(batchArrayBytes, batch.length - 1, singleBytes);
   }
 
   if (batch.length > 0) {
@@ -81,6 +108,8 @@ export interface RunRawDatasetImportOptions {
   signal?: AbortSignal;
   onCreated?: (importId: string) => void;
   onUploaded?: () => void;
+  onProgress?: (progress: DatasetImportProgress) => void;
+  pollIntervalMs?: number;
   client?: DatasetImportClient;
 }
 
@@ -114,23 +143,66 @@ export async function runDatasetImport(options: RunDatasetImportOptions): Promis
   }
 }
 
-export async function runRawDatasetImport(
-  options: RunRawDatasetImportOptions,
-): Promise<CompleteDatasetImportResponseDto> {
+export async function runRawDatasetImport(options: RunRawDatasetImportOptions): Promise<DatasetImportStatusDto> {
   const client = options.client ?? datasetImportClient;
   const { projectId, createBody, file, signal } = options;
 
   const { import: session, uploadSession } = await client.createRawDatasetImport(projectId, createBody);
   options.onCreated?.(session.id);
+  let serverImportStarted = false;
 
   try {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
     await client.uploadRawDatasetFile(uploadSession, file, { signal });
     options.onUploaded?.();
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    return await client.completeDatasetImport(projectId, session.id);
+    await client.completeRawDatasetUpload(projectId, session.id);
+    const queued = await client.completeDatasetImport(projectId, session.id);
+    serverImportStarted = true;
+    options.onProgress?.({ phase: 'queued', receivedRows: queued.receivedRows, status: queued });
+    return pollDatasetImportStatus({
+      client,
+      projectId,
+      importId: session.id,
+      pollIntervalMs: options.pollIntervalMs,
+      onProgress: options.onProgress,
+    });
   } catch (error) {
-    await client.abortDatasetImport(projectId, session.id).catch(() => undefined);
+    if (!serverImportStarted) {
+      await client.abortDatasetImport(projectId, session.id).catch(() => undefined);
+    }
     throw error;
   }
+}
+
+async function pollDatasetImportStatus({
+  client,
+  projectId,
+  importId,
+  pollIntervalMs = 1500,
+  onProgress,
+}: {
+  client: DatasetImportClient;
+  projectId: string;
+  importId: string;
+  pollIntervalMs?: number;
+  onProgress?: (progress: DatasetImportProgress) => void;
+}): Promise<DatasetImportStatusDto> {
+  for (;;) {
+    await delay(pollIntervalMs);
+    const status = await client.getDatasetImport(projectId, importId);
+    if (status.state === 'completed') {
+      onProgress?.({ phase: 'completed', receivedRows: status.receivedRows, status });
+      return status;
+    }
+    if (status.state === 'failed' || status.state === 'aborted') {
+      throw new Error(status.errorCode ?? status.state);
+    }
+    const phase = status.state === 'parsing' ? 'parsing' : status.state === 'importing' ? 'importing' : 'queued';
+    onProgress?.({ phase, receivedRows: status.receivedRows, status });
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -151,9 +151,15 @@ test.describe('large delimited dataset upload', () => {
 
         const completed = await completeResponse;
         expect(completed.status()).toBe(201);
-        const completeBody = (await completed.json()) as { dataset: { id: string }; sampleCount: number };
-        datasetId = completeBody.dataset.id;
-        expect(completeBody.sampleCount).toBe(rowCount);
+        const completeBody = (await completed.json()) as {
+          datasetId: string | null;
+          progress: { importedRows: number };
+          state: string;
+        };
+        expect(completeBody.state).toBe('completed');
+        expect(completeBody.progress.importedRows).toBe(rowCount);
+        datasetId = completeBody.datasetId ?? '';
+        expect(datasetId).not.toBe('');
 
         await page.waitForURL('**/datasets');
         await expect(page.getByTestId('datasets-page')).toBeVisible();

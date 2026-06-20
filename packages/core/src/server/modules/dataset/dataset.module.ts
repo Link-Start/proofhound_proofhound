@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../../../shared/database/database.module';
+import { BullmqOrchestrationModule } from '../../infrastructure/orchestration';
 import { DatasetSamplePayloadReader } from './dataset-sample-payload';
 import { DatasetDeletionHook, LocalDatasetDeletionHook } from './dataset-deletion.hook';
 import { DatasetImportController } from './dataset-import.controller';
@@ -10,7 +11,7 @@ import { DatasetRepository } from './dataset.repository';
 import { DatasetService } from './dataset.service';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, BullmqOrchestrationModule],
   controllers: [DatasetController, DatasetImportController],
   providers: [
     DatasetRepository,

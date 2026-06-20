@@ -1,11 +1,25 @@
 import { z } from 'zod';
-import { datasetCreateResponseSchema, datasetFieldMappingSchema } from './dataset.dto';
+import { datasetFieldMappingSchema } from './dataset.dto';
 
-export const datasetImportSourceFormatSchema = z.enum(['jsonl', 'csv', 'tsv']);
+export const datasetImportSourceFormatSchema = z.enum(['jsonl', 'csv', 'tsv', 'json', 'zip']);
 export type DatasetImportSourceFormat = z.infer<typeof datasetImportSourceFormatSchema>;
 
-export const datasetImportStatusSchema = z.enum(['importing', 'ready']);
-export type DatasetImportStatus = z.infer<typeof datasetImportStatusSchema>;
+export const datasetImportStateSchema = z.enum([
+  'created',
+  'uploading',
+  'uploaded',
+  'queued',
+  'parsing',
+  'importing',
+  'completed',
+  'failed',
+  'aborted',
+]);
+export type DatasetImportState = z.infer<typeof datasetImportStateSchema>;
+
+// Backward-compatible alias while callers migrate terminology from "status" to "state".
+export const datasetImportStatusSchema = datasetImportStateSchema;
+export type DatasetImportStatus = DatasetImportState;
 
 export const datasetImportModeSchema = z.enum(['batch', 'raw_object']);
 export type DatasetImportMode = z.infer<typeof datasetImportModeSchema>;
@@ -68,8 +82,16 @@ export const datasetImportBatchResponseSchema = z.object({
 });
 export type DatasetImportBatchResponseDto = z.infer<typeof datasetImportBatchResponseSchema>;
 
-export const completeDatasetImportResponseSchema = datasetCreateResponseSchema;
-export type CompleteDatasetImportResponseDto = z.infer<typeof completeDatasetImportResponseSchema>;
+export const datasetImportProgressSchema = z.object({
+  state: datasetImportStateSchema,
+  uploadedBytes: z.number().int().nonnegative().nullable(),
+  parsedRows: z.number().int().nonnegative(),
+  importedRows: z.number().int().nonnegative(),
+  totalRows: z.number().int().nonnegative().nullable(),
+  totalBytes: z.number().int().nonnegative().nullable(),
+  percentage: z.number().min(0).max(100).nullable(),
+});
+export type DatasetImportProgressDto = z.infer<typeof datasetImportProgressSchema>;
 
 export const datasetRawImportCapabilitiesSchema = z.object({
   supported: z.boolean(),
@@ -91,3 +113,21 @@ export const createRawDatasetImportResponseSchema = z.object({
   maxBytes: z.number().int().positive(),
 });
 export type CreateRawDatasetImportResponseDto = z.infer<typeof createRawDatasetImportResponseSchema>;
+
+export const datasetImportStatusDtoSchema = datasetImportItemSchema.extend({
+  state: datasetImportStateSchema,
+  progress: datasetImportProgressSchema,
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  jobId: z.string().nullable(),
+  rawUploadCompletedAt: z.string().datetime().nullable(),
+  queuedAt: z.string().datetime().nullable(),
+  startedAt: z.string().datetime().nullable(),
+  completedAt: z.string().datetime().nullable(),
+  failedAt: z.string().datetime().nullable(),
+  abortedAt: z.string().datetime().nullable(),
+});
+export type DatasetImportStatusDto = z.infer<typeof datasetImportStatusDtoSchema>;
+
+export const completeDatasetImportResponseSchema = datasetImportStatusDtoSchema;
+export type CompleteDatasetImportResponseDto = z.infer<typeof completeDatasetImportResponseSchema>;
