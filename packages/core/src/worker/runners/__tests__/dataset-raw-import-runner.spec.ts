@@ -40,7 +40,7 @@ function fakeImport(overrides: Partial<DatasetImportRow> = {}): DatasetImportRow
     rawObjectRef: RAW_REF,
     declaredTotalRows: null,
     receivedRows: 0,
-    jobId: `dataset-raw-import:${IMPORT_ID}`,
+    jobId: `dataset-raw-import-${IMPORT_ID}`,
     errorCode: null,
     errorMessage: null,
     status: 'queued',
@@ -105,7 +105,7 @@ function buildRunner(
   return { runner, repo, storage, quotaPolicy, usageMetering, logger };
 }
 
-const JOB_CONTEXT = { bullmqJobId: `dataset-raw-import:${IMPORT_ID}`, bullmqQueue: 'dataset-import', attempt: 1 };
+const JOB_CONTEXT = { bullmqJobId: `dataset-raw-import-${IMPORT_ID}`, bullmqQueue: 'dataset-import', attempt: 1 };
 
 describe('createDatasetRawImportRunner', () => {
   it('streams a raw object into staging, promotes it, and cleans the raw object', async () => {

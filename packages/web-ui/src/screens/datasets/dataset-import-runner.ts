@@ -1,4 +1,4 @@
-import { datasetImportClient, type DatasetImportClient } from '@proofhound/api-client';
+import { datasetImportClient, type DatasetImportClient, type DatasetTransferProgress } from '@proofhound/api-client';
 import type {
   CompleteDatasetImportResponseDto,
   CreateDatasetImportDto,
@@ -108,6 +108,7 @@ export interface RunRawDatasetImportOptions {
   signal?: AbortSignal;
   onCreated?: (importId: string) => void;
   onUploaded?: () => void;
+  onUploadProgress?: (progress: DatasetTransferProgress) => void;
   onProgress?: (progress: DatasetImportProgress) => void;
   pollIntervalMs?: number;
   client?: DatasetImportClient;
@@ -153,7 +154,7 @@ export async function runRawDatasetImport(options: RunRawDatasetImportOptions): 
 
   try {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    await client.uploadRawDatasetFile(uploadSession, file, { signal });
+    await client.uploadRawDatasetFile(uploadSession, file, { signal, onProgress: options.onUploadProgress });
     options.onUploaded?.();
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
     await client.completeRawDatasetUpload(projectId, session.id);

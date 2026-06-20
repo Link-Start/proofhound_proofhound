@@ -10,8 +10,69 @@ import type {
   DatasetRawImportCapabilitiesDto,
   DatasetRawUploadSessionDto,
 } from '@proofhound/shared';
+import type { DatasetTransferProgress } from './dataset';
 import { httpClient } from './http';
 import { getServerBaseUrl } from './public-env';
+
+export interface DatasetRawUploadOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: DatasetTransferProgress) => void;
+}
+
+function uploadRawDatasetFileWithXhr(
+  uploadSession: DatasetRawUploadSessionDto,
+  file: Blob,
+  options?: DatasetRawUploadOptions,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+
+    const cleanup = () => {
+      options?.signal?.removeEventListener('abort', onAbort);
+    };
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onAbort = () => {
+      xhr.abort();
+      settle(() => reject(new DOMException('aborted', 'AbortError')));
+    };
+
+    xhr.upload.onprogress = (event) => {
+      options?.onProgress?.({
+        loadedBytes: event.loaded,
+        totalBytes: event.lengthComputable ? event.total : file.size || null,
+      });
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        options?.onProgress?.({ loadedBytes: file.size, totalBytes: file.size });
+        settle(() => resolve());
+        return;
+      }
+      settle(() => reject(new Error(`dataset_raw_upload_failed:${xhr.status}`)));
+    };
+    xhr.onerror = () => {
+      settle(() => reject(new Error('dataset_raw_upload_failed:network')));
+    };
+
+    if (options?.signal?.aborted) {
+      onAbort();
+      return;
+    }
+    options?.signal?.addEventListener('abort', onAbort, { once: true });
+
+    xhr.open('PUT', uploadSession.url, true);
+    for (const [name, value] of Object.entries(uploadSession.headers ?? {})) {
+      xhr.setRequestHeader(name, value);
+    }
+    xhr.send(file);
+  });
+}
 
 export const datasetImportClient = {
   getDatasetImport: (projectId: string, importId: string) =>
@@ -25,8 +86,12 @@ export const datasetImportClient = {
   uploadRawDatasetFile: async (
     uploadSession: DatasetRawUploadSessionDto,
     file: Blob,
-    options?: { signal?: AbortSignal },
+    options?: DatasetRawUploadOptions,
   ) => {
+    if (typeof XMLHttpRequest !== 'undefined') {
+      return uploadRawDatasetFileWithXhr(uploadSession, file, options);
+    }
+
     const response = await fetch(uploadSession.url, {
       method: 'PUT',
       headers: uploadSession.headers,
@@ -36,6 +101,7 @@ export const datasetImportClient = {
     if (!response.ok) {
       throw new Error(`dataset_raw_upload_failed:${response.status}`);
     }
+    options?.onProgress?.({ loadedBytes: file.size, totalBytes: file.size });
   },
   appendDatasetImportBatch: (projectId: string, importId: string, body: DatasetImportBatchDto) =>
     httpClient.post<DatasetImportBatchResponseDto>(`/dataset-imports/${importId}/batch`, body).then((r) => r.data),

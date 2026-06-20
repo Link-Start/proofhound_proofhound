@@ -9,6 +9,7 @@ type TransferStatus = 'running' | 'success' | 'error';
 
 interface DatasetTransferState {
   title: string;
+  description?: string;
   status: TransferStatus;
   loadedBytes: number;
   totalBytes: number | null;
@@ -52,7 +53,8 @@ function formatTemplate(template: string, values: Record<string, string | number
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
 export function useDatasetTransferProgress() {
@@ -66,11 +68,12 @@ export function useDatasetTransferProgress() {
     return () => window.clearInterval(timer);
   }, [state?.status]);
 
-  const start = useCallback((title: string, totalBytes?: number | null) => {
+  const start = useCallback((title: string, totalBytes?: number | null, description?: string) => {
     const startedAt = now();
     setClock(startedAt);
     setState({
       title,
+      description,
       status: 'running',
       loadedBytes: 0,
       totalBytes: totalBytes ?? null,
@@ -88,6 +91,18 @@ export function useDatasetTransferProgress() {
         ...current,
         loadedBytes: Math.max(current.loadedBytes, progress.loadedBytes),
         totalBytes: progress.totalBytes ?? current.totalBytes,
+        updatedAt: now(),
+      };
+    });
+  }, []);
+
+  const setMessage = useCallback((title: string, description?: string) => {
+    setState((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        title,
+        description,
         updatedAt: now(),
       };
     });
@@ -150,7 +165,7 @@ export function useDatasetTransferProgress() {
     };
   }, [clock, state]);
 
-  return { complete, fail, progress, reset, start, update };
+  return { complete, fail, progress, reset, setMessage, start, update };
 }
 
 export function DatasetTransferProgressPanel({
@@ -200,16 +215,23 @@ export function DatasetTransferProgressPanel({
   return (
     <div className={cn('rounded-lg border bg-card p-3 shadow-sm', className)} role="status" aria-live="polite">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-start gap-2">
           <Icon
             className={cn(
-              'size-4 shrink-0',
+              'mt-0.5 size-4 shrink-0',
               progress.status === 'running' && 'animate-spin text-[var(--status-running-fg)]',
               progress.status === 'success' && 'text-[var(--status-running-fg)]',
               progress.status === 'error' && 'text-destructive',
             )}
           />
-          <span className="truncate text-sm font-semibold">{progress.title}</span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">{progress.title}</div>
+            {progress.description ? (
+              <div className="mt-0.5 truncate text-[11.5px] font-normal text-muted-foreground">
+                {progress.description}
+              </div>
+            ) : null}
+          </div>
         </div>
         <span className="font-mono text-[12px] text-muted-foreground">{statusLabel}</span>
       </div>

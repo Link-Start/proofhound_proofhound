@@ -259,7 +259,7 @@ describe('DatasetImportService raw import', () => {
       fakeImport({
         importMode: 'raw_object',
         status: 'queued',
-        jobId: `dataset-raw-import:${IMPORT_ID}`,
+        jobId: `dataset-raw-import-${IMPORT_ID}`,
         rawUploadSessionId: 'upload-1',
         rawObjectRef: RAW_REF,
       }),
@@ -267,10 +267,10 @@ describe('DatasetImportService raw import', () => {
 
     const result = await service.complete(PROJECT_ID, IMPORT_ID, ACTOR);
 
-    expect(repo.markQueued).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID, `dataset-raw-import:${IMPORT_ID}`);
+    expect(repo.markQueued).toHaveBeenCalledWith(PROJECT_ID, IMPORT_ID, `dataset-raw-import-${IMPORT_ID}`);
     expect(bullmq.enqueueDatasetRawImportJob).toHaveBeenCalledWith(
       { projectId: PROJECT_ID, importId: IMPORT_ID, actorId: ACTOR.sub },
-      `dataset-raw-import:${IMPORT_ID}`,
+      `dataset-raw-import-${IMPORT_ID}`,
     );
     expect(result.status).toBe('queued');
   });
@@ -281,7 +281,7 @@ describe('DatasetImportService raw import', () => {
       fakeImport({
         importMode: 'raw_object',
         status: 'queued',
-        jobId: `dataset-raw-import:${IMPORT_ID}`,
+        jobId: `dataset-raw-import-${IMPORT_ID}`,
         rawObjectRef: RAW_REF,
       }),
     );

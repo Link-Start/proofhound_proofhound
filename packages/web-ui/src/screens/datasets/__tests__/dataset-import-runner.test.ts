@@ -214,6 +214,7 @@ describe('runRawDatasetImport', () => {
       getDatasetImport: vi.fn().mockResolvedValue(importStatus('completed', { receivedRows: 1 })),
     });
     const onUploaded = vi.fn();
+    const onUploadProgress = vi.fn();
     const progress: DatasetImportProgress[] = [];
 
     const result = await runRawDatasetImport({
@@ -226,6 +227,7 @@ describe('runRawDatasetImport', () => {
       file,
       client,
       onUploaded,
+      onUploadProgress,
       onProgress: (event) => progress.push(event),
       pollIntervalMs: 0,
     });
@@ -234,7 +236,7 @@ describe('runRawDatasetImport', () => {
     expect(client.uploadRawDatasetFile).toHaveBeenCalledWith(
       { sessionId: 'up-1', url: 'https://storage.example/upload', expiresAt: expect.any(String) },
       file,
-      { signal: undefined },
+      { signal: undefined, onProgress: onUploadProgress },
     );
     expect(client.completeRawDatasetUpload).toHaveBeenCalledWith(PROJECT_ID, 'imp-raw-1');
     expect(client.completeDatasetImport).toHaveBeenCalledWith(PROJECT_ID, 'imp-raw-1');
@@ -243,6 +245,44 @@ describe('runRawDatasetImport', () => {
     expect(onUploaded).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ status: 'completed', datasetId: 'ds-1' });
     expect(progress.map((event) => event.phase)).toEqual(['queued', 'completed']);
+  });
+
+  it('forwards raw upload byte progress from the client', async () => {
+    const file = new Blob(['sample_id,text\ncase-1,hello\n'], { type: 'text/csv' });
+    const uploadProgress = { loadedBytes: file.size, totalBytes: file.size };
+    const client = fakeClient({
+      createRawDatasetImport: vi.fn().mockResolvedValue({
+        import: { id: 'imp-raw-1' },
+        uploadSession: {
+          sessionId: 'up-1',
+          url: 'https://storage.example/upload',
+          expiresAt: new Date().toISOString(),
+        },
+        maxBytes: 2_147_483_648,
+      }),
+      uploadRawDatasetFile: vi.fn().mockImplementation(async (_session, _file, options) => {
+        options?.onProgress?.(uploadProgress);
+      }),
+      completeRawDatasetUpload: vi.fn().mockResolvedValue(importStatus('uploaded')),
+      completeDatasetImport: vi.fn().mockResolvedValue(importStatus('queued')),
+      getDatasetImport: vi.fn().mockResolvedValue(importStatus('completed', { receivedRows: 1 })),
+    });
+    const onUploadProgress = vi.fn();
+
+    await runRawDatasetImport({
+      projectId: PROJECT_ID,
+      createBody: {
+        ...CREATE_BODY,
+        sourceFile: { fileName: 'train.csv', fileSizeBytes: file.size },
+        sourceFormat: 'csv',
+      },
+      file,
+      client,
+      onUploadProgress,
+      pollIntervalMs: 0,
+    });
+
+    expect(onUploadProgress).toHaveBeenCalledWith(uploadProgress);
   });
 
   it('aborts the raw session when direct upload fails', async () => {
