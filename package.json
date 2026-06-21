@@ -61,7 +61,7 @@
     "deps:check": "madge --circular --extensions ts,tsx --exclude '(^|/)dist/' packages/ apps/",
     "deps:graph": "madge --image deps.svg --extensions ts,tsx packages/ apps/",
     "deps:orphans": "madge --orphans --extensions ts,tsx packages/ apps/",
-    "packages:pack": "node scripts/pack-publishable-packages.mjs .npm-packages",
+    "packages:pack": "node scripts/pack-publishable-packages.mjs",
     "packages:pack:check": "node scripts/check-package-packs.mjs",
     "packages:consumer:registry": "node scripts/test-package-consumer.mjs registry",
     "packages:consumer:tarball": "node scripts/test-package-consumer.mjs tarball",
