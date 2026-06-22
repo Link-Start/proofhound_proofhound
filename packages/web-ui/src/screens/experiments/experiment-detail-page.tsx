@@ -16,7 +16,6 @@ import {
   RefreshCw,
   Search,
   Square,
-  X,
 } from 'lucide-react';
 import type {
   DatasetFieldSchemaDto,
@@ -65,7 +64,11 @@ import { useDelayedLoading } from '../../hooks';
 import { useExperimentRunResults } from '../../hooks';
 import { experimentTone } from './experiment-theme';
 import { buildRepeatExperimentHref } from './experiment-repeat-href';
-import { derivePromptModalityKinds } from './experiment-view-model';
+import {
+  deriveExperimentDisplayStatus,
+  derivePromptModalityKinds,
+  normalizeExperimentStatus,
+} from './experiment-view-model';
 import { ExperimentStatusBadge, formatNumber } from './experiment-ui';
 import {
   compactHumanValue,
@@ -262,7 +265,7 @@ function SpecLine({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 interface ControlButton {
-  action: 'stop' | 'resume' | 'cancel' | 'retry';
+  action: 'stop' | 'resume' | 'retry';
   labelKey: TranslationKey;
   variant: 'outline' | 'default';
   destructive?: boolean;
@@ -270,10 +273,11 @@ interface ControlButton {
 }
 
 function deriveControlButtons(status: ExperimentStatusDto, controlState: string | null): ControlButton[] {
-  if (controlState === 'cancel' || (status === 'running' && controlState === 'stop')) {
+  const normalizedStatus = normalizeExperimentStatus(status);
+  if (normalizedStatus === 'running' && controlState === 'stop') {
     return []; // pending state is expressed by the UI
   }
-  switch (status) {
+  switch (normalizedStatus) {
     case 'running':
       return [
         {
@@ -282,13 +286,6 @@ function deriveControlButtons(status: ExperimentStatusDto, controlState: string 
           variant: 'outline',
           destructive: true,
           icon: <Square className="size-4" />,
-        },
-        {
-          action: 'cancel',
-          labelKey: 'experiments.action.cancel',
-          variant: 'outline',
-          destructive: true,
-          icon: <X className="size-4" />,
         },
       ];
     case 'stopped':
@@ -305,17 +302,9 @@ function deriveControlButtons(status: ExperimentStatusDto, controlState: string 
           variant: 'outline',
           icon: <CopyPlus className="size-4" />,
         },
-        {
-          action: 'cancel',
-          labelKey: 'experiments.action.cancel',
-          variant: 'outline',
-          destructive: true,
-          icon: <X className="size-4" />,
-        },
       ];
     case 'success':
     case 'failed':
-    case 'cancelled':
       return [
         {
           action: 'retry',
@@ -937,6 +926,7 @@ export function ExperimentDetailPage({ projectId, experimentId }: { projectId: s
     );
   }
 
+  const displayStatus = deriveExperimentDisplayStatus(detail.status, detail.controlState);
   const buttons = deriveControlButtons(detail.status, detail.controlState);
   const inProgressAction = controlExperiment.isPending ? controlExperiment.variables?.action : null;
   const inProgressDownload = downloadExperiment.isPending;
@@ -961,7 +951,7 @@ export function ExperimentDetailPage({ projectId, experimentId }: { projectId: s
   const totalTokens = inputTokens + outputTokens;
   const costEstimate = safeNumber(metrics.costEstimate ?? null, 0);
 
-  const handleControl = (action: 'stop' | 'resume' | 'cancel' | 'retry') => {
+  const handleControl = (action: 'stop' | 'resume' | 'retry') => {
     if (action === 'retry') {
       router.push(buildRepeatExperimentHref(projectId, detail));
       return;
@@ -993,7 +983,7 @@ export function ExperimentDetailPage({ projectId, experimentId }: { projectId: s
               <h1 className="flex flex-wrap items-center gap-2 text-[24px] font-semibold tracking-tight">
                 <span className="font-mono">{detail.name}</span>
                 <span data-testid="experiment-detail-status-badge">
-                  <ExperimentStatusBadge status={detail.status} />
+                  <ExperimentStatusBadge status={displayStatus} />
                 </span>
               </h1>
             </div>
@@ -1130,7 +1120,9 @@ export function ExperimentDetailPage({ projectId, experimentId }: { projectId: s
                     </thead>
                     <tbody>
                       <tr className="border-b bg-primary/5">
-                        <td className="px-3 py-2 font-semibold">{t('experiments.detail.classOverall')}</td>
+                        <td className="px-3 py-2 font-mono text-[11.5px]">
+                          {t('experiments.detail.classOverall')}
+                        </td>
                         <td className="px-3 py-2 font-mono text-[12.5px]">{detail.processedSamples}</td>
                         <td className="px-3 py-2 font-mono text-[12.5px] tabular-nums">
                           {Number.isFinite(accuracy) ? accuracy.toFixed(3) : '—'}

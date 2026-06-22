@@ -42,7 +42,13 @@ Experiments are carried by a DBOS workflow:
 - Enqueue LLM calls into the `llm` queue.
 - The worker writes `ph_runs.run_results`.
 - The workflow aggregates progress and metrics and writes them back to `ph_runs.experiments`.
-- `control_state` supports `stop` / `resume` / `cancel`.
+- `control_state` supports `stop` / `resume`; legacy `cancel` experiment actions are normalized to `stop`.
+  When `ExperimentWorkflow` observes `stop` while a batch is in flight, it removes this experiment's not-yet-started
+  `llm` jobs from BullMQ (`waiting` / `delayed` / `prioritized` / `waiting-children` / `paused`) and then waits only
+  for already-started jobs in that batch to reach terminal `ph_runs.run_results` rows before finalizing `stopped`.
+  If BullMQ already reports a job as `completed` / `failed` but the matching `run_results` row is still missing,
+  the workflow records an idempotent failed run result from the queued payload and removes that stale terminal job,
+  so a lost worker finalization event cannot keep the experiment in `running + control_state='stop'` until timeout.
 
 ### 3.2 OptimizationWorkflow
 
@@ -122,7 +128,7 @@ ProofHound does not rely on workflow engine signals. User controls are written t
 
 | User action                              | Landing point                                                 | Who observes it      |
 | ---------------------------------------- | ------------------------------------------------------------- | -------------------- |
-| Stop / resume / cancel an experiment     | `ph_runs.experiments.control_state`                           | ExperimentWorkflow   |
+| Stop / resume an experiment              | `ph_runs.experiments.control_state`                           | ExperimentWorkflow   |
 | Stop / resume / cancel an optimization   | `ph_runs.optimizations.control_state`                         | OptimizationWorkflow |
 | Stop / resume / cancel / extend a canary | `ph_releases.release_line_events.control_state`               | Release runner       |
 | Force-stop production                    | A new `force_stop` event in `ph_releases.release_line_events` | Release runner       |

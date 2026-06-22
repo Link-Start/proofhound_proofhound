@@ -10,7 +10,10 @@ import { MODALITY_KIND_ORDER, type ModalityKind } from '@proofhound/ui';
 import type { TranslationKey } from '../../i18n';
 import { experimentTone } from './experiment-theme';
 
-export type ExperimentStatus = 'running' | 'success' | 'failed' | 'stopped' | 'cancelled';
+export type ExperimentStatus = 'running' | 'success' | 'failed' | 'stopped';
+export type LegacyExperimentStatus = ExperimentStatus | 'cancelled';
+export type ExperimentControlState = 'stop' | 'resume' | null;
+export type ExperimentDisplayStatus = ExperimentStatus | 'stopping';
 export type ExperimentFailureKind = 'rate_limit' | 'parse' | 'timeout' | 'internal';
 export type ExperimentQualityMetricKey = 'accuracy' | 'precision' | 'recall' | 'f1';
 export type ExperimentEngineeringMetricKey =
@@ -40,6 +43,18 @@ export const EXPERIMENT_ENGINEERING_METRIC_KEYS: readonly ExperimentEngineeringM
 export const EXPERIMENT_OVERALL_QUALITY_DIMENSION = '__overall__';
 
 const IMAGE_PROMPT_VARIABLE_TYPES = new Set(['image', 'image_url', 'image_base64']);
+
+export function normalizeExperimentStatus(status: LegacyExperimentStatus): ExperimentStatus {
+  return status === 'cancelled' ? 'stopped' : status;
+}
+
+export function deriveExperimentDisplayStatus(
+  status: LegacyExperimentStatus,
+  controlState: ExperimentControlState | undefined,
+): ExperimentDisplayStatus {
+  const normalized = normalizeExperimentStatus(status);
+  return normalized === 'running' && controlState === 'stop' ? 'stopping' : normalized;
+}
 
 export function derivePromptModalityKinds(types: ReadonlyArray<string>): ModalityKind[] {
   const kinds = new Set<ModalityKind>();
@@ -75,6 +90,8 @@ export interface ExperimentSummary {
   modelName: string;
   modelVariant: string;
   status: ExperimentStatus;
+  controlState?: ExperimentControlState;
+  displayStatus: ExperimentDisplayStatus;
   progressDone: number;
   progressTotal: number;
   elapsedLabel: string;
@@ -156,12 +173,12 @@ export function getExperimentComparisonClassLabels(experiments: ReadonlyArray<Ex
   return labels;
 }
 
-export const EXPERIMENT_STATUS_LABEL_KEYS: Record<ExperimentStatus, TranslationKey> = {
+export const EXPERIMENT_STATUS_LABEL_KEYS: Record<ExperimentDisplayStatus, TranslationKey> = {
   running: 'experiments.status.running',
+  stopping: 'experiments.status.stopping',
   success: 'experiments.status.success',
   failed: 'experiments.status.failed',
   stopped: 'experiments.status.stopped',
-  cancelled: 'experiments.status.cancelled',
 };
 
 export interface ExperimentStatusTone {
@@ -172,13 +189,20 @@ export interface ExperimentStatusTone {
   laneHeader: string;
 }
 
-export const EXPERIMENT_STATUS_TONE: Record<ExperimentStatus, ExperimentStatusTone> = {
+export const EXPERIMENT_STATUS_TONE: Record<ExperimentDisplayStatus, ExperimentStatusTone> = {
   running: {
     pill: experimentTone.info.pill,
     dot: experimentTone.info.dot,
     pulse: true,
     bar: experimentTone.info.fill,
     laneHeader: experimentTone.info.text,
+  },
+  stopping: {
+    pill: experimentTone.warning.pill,
+    dot: experimentTone.warning.dot,
+    pulse: true,
+    bar: experimentTone.warning.fill,
+    laneHeader: experimentTone.warning.text,
   },
   success: {
     pill: experimentTone.positive.pill,
@@ -197,12 +221,6 @@ export const EXPERIMENT_STATUS_TONE: Record<ExperimentStatus, ExperimentStatusTo
     dot: experimentTone.warning.dot,
     bar: experimentTone.warning.fill,
     laneHeader: experimentTone.warning.text,
-  },
-  cancelled: {
-    pill: experimentTone.muted.pill,
-    dot: experimentTone.muted.dot,
-    bar: experimentTone.muted.fill,
-    laneHeader: experimentTone.muted.text,
   },
 };
 
