@@ -17,11 +17,11 @@ function createPayload(sourceFormat: unknown, fileSizeBytes: number) {
 
 describe('createDatasetImportSchema', () => {
   it('accepts the supported import formats only', () => {
-    for (const format of ['csv', 'tsv', 'jsonl', 'zip']) {
+    for (const format of ['csv', 'tsv', 'jsonl', 'json', 'zip']) {
       expect(createDatasetImportSchema.safeParse(createPayload(format, 1024)).success).toBe(true);
     }
 
-    expect(createDatasetImportSchema.safeParse(createPayload('json', 1024)).success).toBe(false);
+    expect(createDatasetImportSchema.safeParse(createPayload('xlsx', 1024)).success).toBe(false);
   });
 
   it('enforces source file size limits by format', () => {
@@ -37,7 +37,7 @@ describe('createDatasetImportSchema', () => {
     ).toBe(false);
   });
 
-  it('keeps historical JSON import rows readable without accepting new JSON uploads', () => {
+  it('keeps JSON import rows readable', () => {
     expect(
       datasetImportItemSchema.safeParse({
         id: '11111111-1111-4111-8111-111111111111',

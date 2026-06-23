@@ -27,7 +27,7 @@ import {
   readExpectedField,
   type ExperimentPlan,
 } from '../experiment.workflow';
-import { ObjectStorageProvider } from '../../../common/contracts/object-storage.provider';
+import type { ObjectStorageProvider } from '../../../common/contracts/object-storage.provider';
 import { DatasetSamplePayloadReader } from '../../dataset/dataset-sample-payload';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -233,8 +233,9 @@ describe('ExperimentWorkflow.pollUntilBatchDoneImpl — stop 清理队列', () =
     terminalCounts: Array<{ terminalCount: number; failedCount: number }>;
     removedJobIds: string[];
     terminalJobs?: Array<Record<string, unknown>>;
+    reconcileTerminalJobs?: Array<Record<string, unknown>>;
     existingTerminalIds?: string[];
-    controlState?: 'stop' | 'cancel';
+    controlState?: 'stop' | 'cancel' | null;
   }) {
     const cleanupStoppedLlmJobs = vi.fn().mockResolvedValue({
       requested: 0,
@@ -251,8 +252,17 @@ describe('ExperimentWorkflow.pollUntilBatchDoneImpl — stop 清理队列', () =
       invalidTerminalJobIds: [],
       states: options.removedJobIds.length > 0 ? { waiting: options.removedJobIds.length } : {},
     });
+    const findTerminalLlmJobs = vi.fn().mockResolvedValue({
+      requested: options.reconcileTerminalJobs?.length ?? 0,
+      missing: 0,
+      skipped: 0,
+      terminalJobs: options.reconcileTerminalJobs ?? [],
+      invalidTerminalPayloads: 0,
+      invalidTerminalJobIds: [],
+      states: options.reconcileTerminalJobs?.length ? { failed: options.reconcileTerminalJobs.length } : {},
+    });
     const db = {} as never;
-    const bullmq = { cleanupStoppedLlmJobs } as never;
+    const bullmq = { cleanupStoppedLlmJobs, findTerminalLlmJobs } as never;
     const runResults = {
       countBatchTerminal: vi.fn(),
       findBatchTerminalIds: vi.fn().mockResolvedValue(options.existingTerminalIds ?? []),
@@ -271,11 +281,14 @@ describe('ExperimentWorkflow.pollUntilBatchDoneImpl — stop 清理队列', () =
       runResultWriter as never,
     );
     const r = registrar as unknown as Record<string, unknown>;
-    r['readControlStateImpl'] = vi.fn().mockResolvedValue(options.controlState ?? 'stop');
+    r['readControlStateImpl'] = vi
+      .fn()
+      .mockResolvedValue(Object.prototype.hasOwnProperty.call(options, 'controlState') ? options.controlState : 'stop');
 
     return {
       registrar,
       cleanupStoppedLlmJobs,
+      findTerminalLlmJobs,
       countBatchTerminal: runResults.countBatchTerminal,
       findBatchTerminalIds: runResults.findBatchTerminalIds,
       writeRunResult: runResultWriter.writeRunResult,
@@ -378,12 +391,77 @@ describe('ExperimentWorkflow.pollUntilBatchDoneImpl — stop 清理队列', () =
     expect(countBatchTerminal).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ terminalCount: 1, failedCount: 1, control: 'stop' });
   });
+
+  it('正常运行时补写 BullMQ 已失败但缺失的 run_result，避免卡在进度百分比', async () => {
+    const terminalJob = {
+      jobId: 'rr1',
+      state: 'failed',
+      failedReason: 'model is not available: m-1',
+      attemptsMade: 5,
+      payload: {
+        projectId: 'prj-1',
+        orgId: 'org-1',
+        source: 'experiment',
+        sourceId: 'exp-1',
+        promptVersionId: 'pv-1',
+        modelId: 'm-1',
+        runResultId: 'rr1',
+        sampleId: 's1',
+        renderedPrompt: { prompt: 'hello' },
+        inputVariables: { text: 'hello' },
+      },
+    };
+    const { registrar, cleanupStoppedLlmJobs, findTerminalLlmJobs, countBatchTerminal, writeRunResult } =
+      buildPollRegistrar({
+        terminalCounts: [
+          { terminalCount: 0, failedCount: 0 },
+          { terminalCount: 1, failedCount: 1 },
+        ],
+        removedJobIds: [],
+        reconcileTerminalJobs: [terminalJob],
+        controlState: null,
+      });
+
+    const result = await (
+      registrar as unknown as {
+        pollUntilBatchDoneImpl: (
+          experimentId: string,
+          runResultIds: string[],
+        ) => Promise<{ terminalCount: number; failedCount: number; control: 'stop' | 'cancel' | null }>;
+      }
+    ).pollUntilBatchDoneImpl('exp-1', ['rr1']);
+
+    expect(findTerminalLlmJobs).toHaveBeenCalledWith(['rr1']);
+    expect(cleanupStoppedLlmJobs).not.toHaveBeenCalled();
+    expect(writeRunResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'rr1',
+        projectId: 'prj-1',
+        orgId: 'org-1',
+        source: 'experiment',
+        sourceId: 'exp-1',
+        status: 'failed',
+        errorClass: 'QueueJobFailed',
+        errorMessage: 'model is not available: m-1',
+        attempt: 5,
+        bullmqJobId: 'rr1',
+      }),
+    );
+    expect(countBatchTerminal).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ terminalCount: 1, failedCount: 1, control: null });
+  });
 });
 
 describe('ExperimentWorkflow.enqueueBatchImpl — orgId 透传', () => {
   // Drive runWorkflow(experimentId, orgId) through the real enqueueBatchImpl (loadRenderContext /
   // loadSampleDataByIds stubbed), capturing the LlmJobPayload handed to bullmq.enqueueLlmJob.
-  function buildEnqueueRegistrar() {
+  function buildEnqueueRegistrar(
+    options: {
+      judgmentRules?: unknown;
+      expectedField?: string;
+      sampleData?: Record<string, unknown>;
+    } = {},
+  ) {
     const enqueueLlmJob = vi.fn().mockResolvedValue(undefined);
     const db = {} as never;
     const bullmq = { enqueueLlmJob } as never;
@@ -417,10 +495,11 @@ describe('ExperimentWorkflow.enqueueBatchImpl — orgId 透传', () => {
       body: 'hello',
       variables: [],
       outputSchema: null,
-      judgmentRules: null,
+      judgmentRules: options.judgmentRules ?? null,
       promptLanguage: 'en-US',
+      expectedField: options.expectedField ?? 'label',
     });
-    r['loadSampleDataByIds'] = vi.fn().mockResolvedValue([{ id: 's1', data: {} }]);
+    r['loadSampleDataByIds'] = vi.fn().mockResolvedValue([{ id: 's1', data: options.sampleData ?? { label: 'bad' } }]);
 
     return { registrar, enqueueLlmJob };
   }
@@ -448,6 +527,58 @@ describe('ExperimentWorkflow.enqueueBatchImpl — orgId 透传', () => {
     expect(enqueueLlmJob).toHaveBeenCalledTimes(1);
     expect(enqueueLlmJob.mock.calls[0]?.[0]?.orgId).toBeUndefined();
   });
+
+  it('空 judgmentRules 时使用数据集 expected 字段名取 expectedOutput', async () => {
+    const { registrar, enqueueLlmJob } = buildEnqueueRegistrar();
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(enqueueLlmJob).toHaveBeenCalledTimes(1);
+    expect(enqueueLlmJob.mock.calls[0]?.[0]?.judgment?.expectedOutput).toBe('bad');
+  });
+
+  it('canonical prompt expectedField 优先于数据集 expected 字段名', async () => {
+    const { registrar, enqueueLlmJob } = buildEnqueueRegistrar({
+      judgmentRules: {
+        rules: [{ decisionField: 'decision', expectedField: 'gold_label', operator: 'exact_match' }],
+      },
+      expectedField: 'label',
+      sampleData: { label: 'dataset-fallback', gold_label: 'prompt-rule-value' },
+    });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(enqueueLlmJob).toHaveBeenCalledTimes(1);
+    expect(enqueueLlmJob.mock.calls[0]?.[0]?.judgment?.expectedOutput).toBe('prompt-rule-value');
+  });
+
+  it('uses dataset expected field when prompt rule omits expectedField', async () => {
+    const { registrar, enqueueLlmJob } = buildEnqueueRegistrar({
+      judgmentRules: {
+        rules: [{ decisionField: 'decision', operator: 'exact_match' }],
+      },
+      expectedField: 'gold',
+      sampleData: { expected_output: 'legacy-default', gold: 'dataset-rule-value' },
+    });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(enqueueLlmJob).toHaveBeenCalledTimes(1);
+    expect(enqueueLlmJob.mock.calls[0]?.[0]?.judgment?.expectedOutput).toBe('dataset-rule-value');
+  });
+
+  it('legacy prompt expected_field 仍会被读取为 expectedOutput 字段来源', async () => {
+    const { registrar, enqueueLlmJob } = buildEnqueueRegistrar({
+      judgmentRules: { mode: 'exact_match', decision_field: 'decision', expected_field: 'legacy_expected' },
+      expectedField: 'label',
+      sampleData: { label: 'dataset-fallback', legacy_expected: 'legacy-rule-value' },
+    });
+
+    await (registrar as unknown as { runWorkflow: (id: string) => Promise<void> }).runWorkflow('exp-1');
+
+    expect(enqueueLlmJob).toHaveBeenCalledTimes(1);
+    expect(enqueueLlmJob.mock.calls[0]?.[0]?.judgment?.expectedOutput).toBe('legacy-rule-value');
+  });
 });
 
 describe('readExpectedField', () => {
@@ -457,6 +588,16 @@ describe('readExpectedField', () => {
         rules: [{ field: 'sentiment', operator: 'exact_match', value: 'gold_label' }],
       }),
     ).toBe('gold_label');
+  });
+
+  it('falls back to the dataset expected field when rules are empty', () => {
+    expect(readExpectedField({ rules: [] }, 'label')).toBe('label');
+    expect(readExpectedField(null, 'label')).toBe('label');
+  });
+
+  it('falls back to the dataset expected field when rules omit expectedField', () => {
+    expect(readExpectedField({ rules: [{ decisionField: 'decision', operator: 'exact_match' }] }, 'gold')).toBe('gold');
+    expect(readExpectedField({ ruleName: 'exact_match' }, 'gold')).toBe('gold');
   });
 });
 

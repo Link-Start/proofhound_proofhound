@@ -38,6 +38,7 @@ export interface OffloadShardManifest {
 export interface OffloadStagingProgress {
   completedShards: number;
   totalShards: number;
+  processedRows: number;
   avgPutMs: number;
   p95PutMs: number;
 }
@@ -64,7 +65,7 @@ export interface OffloadStagingOptions {
   readBatch: (offset: number, limit: number) => Promise<StagingSample[]>;
   putShard: (name: string, body: Buffer) => Promise<StoredObjectRef>;
   insertRows?: (rows: DatasetSampleOffloadRow[]) => Promise<void>;
-  onProgress?: (progress: OffloadStagingProgress) => void;
+  onProgress?: (progress: OffloadStagingProgress) => Promise<void> | void;
 }
 
 export async function offloadStagingToShards(
@@ -92,6 +93,7 @@ export async function offloadStagingToShards(
     p95PutMs: 0,
   };
   let nextShardSeq = 0;
+  let processedRows = 0;
   let failure: unknown;
 
   const claimShardSeq = () => {
@@ -135,12 +137,14 @@ export async function offloadStagingToShards(
 
         manifests[shardSeq] = { shardSeq, rowStart, rowCount: batch.length, shardRef };
         metrics.completedShards += 1;
+        processedRows += batch.length;
         metrics.avgPutMs = average(putDurations);
         metrics.p95PutMs = percentile(putDurations, 0.95);
         if (metrics.completedShards % progressInterval === 0 || metrics.completedShards === totalShards) {
-          opts.onProgress?.({
+          await opts.onProgress?.({
             completedShards: metrics.completedShards,
             totalShards,
+            processedRows,
             avgPutMs: metrics.avgPutMs,
             p95PutMs: metrics.p95PutMs,
           });

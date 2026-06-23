@@ -5,6 +5,7 @@ import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
 import { createLogger } from '@proofhound/logger';
 import type { LlmJobPayload } from '@proofhound/orchestration-shared';
+import { readPromptJudgmentExpectedField } from '@proofhound/shared';
 import type {
   DatasetFieldSchemaDto,
   ExperimentMetricsDto,
@@ -19,9 +20,11 @@ import { DrizzleRunResultWriter } from '../../infrastructure/llm/run-result-writ
 import {
   BullmqService,
   type CleanupStoppedLlmJobsResult,
+  type FindTerminalLlmJobsResult,
   type StoppedLlmTerminalJob,
 } from '../../infrastructure/orchestration/bullmq.service';
-import { type DatasetSamplePayloadRef, DatasetSamplePayloadReader } from '../dataset/dataset-sample-payload';
+import { DatasetSamplePayloadReader } from '../dataset/dataset-sample-payload';
+import { type DatasetSamplePayloadRef } from '../dataset/dataset-sample-payload';
 import { RunResultCompactor } from '../run-result/run-result-compactor';
 import { RunResultService } from '../run-result/run-result.service';
 import { aggregateExperimentMetrics } from './experiment.aggregator';
@@ -56,12 +59,6 @@ export interface ExperimentPlan {
   batchSize: number;
   isFrozen: boolean;
   promptVersionExists: boolean;
-}
-
-interface RenderedPromptForPayload {
-  renderedPrompt: LlmJobPayload['renderedPrompt'];
-  inputVariables: Record<string, unknown>;
-  expectedOutput: unknown;
 }
 
 // DBOS SDK 4.x requires the host class of instance-method workflow / step to extend ConfiguredInstance,
@@ -389,6 +386,30 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
       );
       if (counts.terminalCount >= pendingRunResultIds.length) return { ...counts, control: stopControl };
 
+      const reconciliation = await this.reconcileTerminalBatchJobs(experimentId, pendingRunResultIds);
+      if (
+        reconciliation.reconciledTerminalJobIds.length > 0 ||
+        reconciliation.terminal.invalidTerminalPayloads > 0 ||
+        reconciliation.terminal.missing > 0
+      ) {
+        this.logger.debug(
+          {
+            experimentId,
+            reconciledTerminalJobs: reconciliation.reconciledTerminalJobIds.length,
+            missingJobs: reconciliation.terminal.missing,
+            invalidTerminalPayloads: reconciliation.terminal.invalidTerminalPayloads,
+            states: reconciliation.terminal.states,
+          },
+          'step_poll_batch_terminal_reconciliation',
+        );
+      }
+      if (reconciliation.reconciledTerminalJobIds.length > 0) {
+        const postReconciliationCounts = await this.runResults.countBatchTerminal(experimentId, pendingRunResultIds);
+        if (postReconciliationCounts.terminalCount >= pendingRunResultIds.length) {
+          return { ...postReconciliationCounts, control: stopControl };
+        }
+      }
+
       if (stopControl === null) {
         // Re-read control_state every poll round, so that under large-batch + slow-model scenarios, a user who clicks stop does not have to wait for the whole batch to finish
         const controlState = await this.readControlStateImpl(experimentId);
@@ -447,6 +468,26 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     return { ...finalCounts, control: stopControl };
   }
 
+  private async reconcileTerminalBatchJobs(
+    experimentId: string,
+    pendingRunResultIds: string[],
+  ): Promise<{
+    terminal: FindTerminalLlmJobsResult;
+    reconciledTerminalJobIds: string[];
+  }> {
+    const existingTerminalIds = new Set(await this.runResults.findBatchTerminalIds(experimentId, pendingRunResultIds));
+    const idsWithoutRunResults = pendingRunResultIds.filter((id) => !existingTerminalIds.has(id));
+    const terminal = await this.bullmq.findTerminalLlmJobs(idsWithoutRunResults);
+    const reconciledTerminalJobIds: string[] = [];
+
+    for (const terminalJob of terminal.terminalJobs) {
+      await this.writeMissingTerminalRunResult(terminalJob);
+      reconciledTerminalJobIds.push(terminalJob.jobId);
+    }
+
+    return { terminal, reconciledTerminalJobIds };
+  }
+
   private async cleanupStoppedBatchJobs(
     experimentId: string,
     pendingRunResultIds: string[],
@@ -485,6 +526,7 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     await this.runResultWriter.writeRunResult({
       id: runResultId,
       projectId: payload.projectId,
+      orgId: payload.orgId ?? null,
       source: payload.source,
       sourceId: payload.sourceId,
       releaseVersionId: payload.releaseVersionId ?? null,
@@ -637,23 +679,7 @@ function readExpectedFieldFromDatasetSchema(
 }
 
 export function readExpectedField(rules: unknown, fallback = 'expected_output'): string {
-  if (rules && typeof rules === 'object') {
-    const record = rules as Record<string, unknown>;
-    const topLevel = record['expected_field'] ?? record['expectedField'];
-    if (typeof topLevel === 'string' && topLevel.length > 0) return topLevel;
-    const rawRules = record['rules'];
-    if (Array.isArray(rawRules)) {
-      for (const rule of rawRules) {
-        if (!rule || typeof rule !== 'object' || Array.isArray(rule)) continue;
-        const nested =
-          (rule as Record<string, unknown>)['expected_field'] ??
-          (rule as Record<string, unknown>)['expectedField'] ??
-          (rule as Record<string, unknown>)['value'];
-        if (typeof nested === 'string' && nested.length > 0) return nested;
-      }
-    }
-  }
-  return fallback;
+  return readPromptJudgmentExpectedField(rules, fallback);
 }
 
 function pickInference(runConfig: Record<string, unknown>): LlmJobPayload['inference'] {

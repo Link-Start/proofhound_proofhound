@@ -21,7 +21,7 @@ test('uploads a JSONL dataset and browses its server-paginated detail', async ({
     await expect(page.getByTestId('dataset-upload-image-samples')).toBeVisible();
     await expect(page.getByTestId('dataset-image-sample-proofhound-image-url-fields.csv')).toHaveAttribute(
       'href',
-      '/examples/datasets/images/image-url-fields.csv',
+      /^data:text\/csv;charset=utf-8,/,
     );
     await expect(page.getByTestId('dataset-image-sample-proofhound-image-url-array.csv')).toHaveAttribute(
       'download',
@@ -29,11 +29,11 @@ test('uploads a JSONL dataset and browses its server-paginated detail', async ({
     );
     await expect(page.getByTestId('dataset-image-sample-proofhound-image-base64.jsonl')).toHaveAttribute(
       'href',
-      '/examples/datasets/images/image-base64.jsonl',
+      /^data:application\/x-ndjson;charset=utf-8,/,
     );
     await expect(page.getByTestId('dataset-image-sample-proofhound-image-zip-relative-paths.zip')).toHaveAttribute(
       'href',
-      '/examples/datasets/images/image-zip-relative-paths.zip',
+      /^data:application\/zip;base64,UEs/,
     );
 
     // The file input is hidden; setInputFiles drives the in-browser parse + field-role inference.
@@ -45,25 +45,13 @@ test('uploads a JSONL dataset and browses its server-paginated detail', async ({
     const importButton = page.getByRole('button', { name: /Import/ });
     await expect(importButton).toBeEnabled();
 
-    const createImportResponse = page.waitForResponse(
-      (response) => response.request().method() === 'POST' && response.url().endsWith('/dataset-imports'),
-    );
-    const firstBatchResponse = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'POST' && /\/dataset-imports\/[^/]+\/batch$/u.test(response.url()),
-    );
-    const completeResponse = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'POST' && /\/dataset-imports\/[^/]+\/complete$/u.test(response.url()),
+    const createDatasetResponse = page.waitForResponse(
+      (response) => response.request().method() === 'POST' && response.url().endsWith('/datasets'),
     );
     await importButton.click();
-    const created = await createImportResponse;
+    const created = await createDatasetResponse;
     expect(created.status()).toBe(201);
-    const firstBatch = await firstBatchResponse;
-    expect(firstBatch.status()).toBe(201);
-    const completed = await completeResponse;
-    expect(completed.status()).toBe(201);
-    datasetId = ((await completed.json()) as { datasetId: string | null }).datasetId ?? '';
+    datasetId = ((await created.json()) as { dataset: { id: string } }).dataset.id;
     expect(datasetId).not.toBe('');
 
     // Lands back on the list with the new dataset visible.
@@ -120,7 +108,7 @@ test.describe('large delimited dataset upload', () => {
         await page.getByPlaceholder('risk-eval-v4').fill(name);
 
         const importButton = page.getByRole('button', { name: /Import/ });
-        await expect(importButton).toContainText('Sample count tallied while importing');
+        await expect(importButton).toContainText(/sample count tallied while importing/i);
         await expect(importButton).toBeEnabled();
 
         const createImportResponse = page.waitForResponse(

@@ -23,7 +23,7 @@ import { AlertCircle, Check, ImageIcon, Loader2, Plus, Search } from 'lucide-rea
 import { Main } from '@proofhound/ui/layout';
 import { ModalityIconGroup, Button, Input, Label, cn } from '@proofhound/ui';
 import type { ModalityKind } from '@proofhound/ui';
-import { PromptVersionPickerRow, PromptVersionPickerTag } from '../../components';
+import { PromptVersionPickerRow, PromptVersionPickerTag, RuntimeConcurrencyInfoIcon } from '../../components';
 import { useConnector, useConnectors } from '../../hooks';
 import { useCreateCanaryRelease, useStartCanaryRelease } from '../../hooks';
 import { useDateTimeFormatter } from '../../hooks';
@@ -33,7 +33,8 @@ import { usePrompt, usePrompts } from '../../hooks';
 import { useDelayedLoading } from '../../hooks';
 import { useReleaseLineList } from '../../hooks';
 import { useI18n } from '../../i18n';
-import { getApiErrorMessage, getReleaseLineId } from '../../lib';
+import { getApiErrorMessage, getProviderTypeLabel, getReleaseLineId } from '../../lib';
+import { capConcurrencyValue, resolveEffectiveConcurrencyLimit, useRuntimeLimits } from '../../providers';
 import { composePromptPreview } from '../prompts/prompt-preview';
 import { renderPromptPreviewParts } from '../prompts/prompt-preview-parts';
 import { VARIABLE_TONE_CLASSES } from '../prompts/prompt-ui';
@@ -69,8 +70,28 @@ const DEFAULT_TPM = 120_000;
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_QUEUE_TRAFFIC_PERCENT = 10;
 const TRAFFIC_PERCENT_PRESETS = [1, 5, 20, 50, 100] as const;
+const RELEASE_RETENTION_OPTIONS = ['3', '7', '30', '90', '180', '365', 'forever'] as const;
 type ReleaseTrafficMode = CreateCanaryReleaseInputDto['trafficMode'];
 type CanaryStopConditions = NonNullable<CreateCanaryReleaseInputDto['stopConditions']>;
+type ReleaseRetentionOption = (typeof RELEASE_RETENTION_OPTIONS)[number];
+const RELEASE_RETENTION_LABEL_KEYS: Record<
+  ReleaseRetentionOption,
+  | 'productionReleases.new.retention.3'
+  | 'productionReleases.new.retention.7'
+  | 'productionReleases.new.retention.30'
+  | 'productionReleases.new.retention.90'
+  | 'productionReleases.new.retention.180'
+  | 'productionReleases.new.retention.365'
+  | 'productionReleases.new.retention.forever'
+> = {
+  '3': 'productionReleases.new.retention.3',
+  '7': 'productionReleases.new.retention.7',
+  '30': 'productionReleases.new.retention.30',
+  '90': 'productionReleases.new.retention.90',
+  '180': 'productionReleases.new.retention.180',
+  '365': 'productionReleases.new.retention.365',
+  forever: 'productionReleases.new.retention.forever',
+};
 
 function buildDefaultReleaseName(): string {
   const now = new Date();
@@ -498,22 +519,33 @@ function RuntimeLimitField({
   label,
   value,
   modelLimit,
+  max,
+  info,
   onChange,
 }: {
   label: string;
   value: string;
   modelLimit: string;
+  max?: number | null;
+  info?: ReactNode;
   onChange: (next: string) => void;
 }) {
   const { t } = useI18n();
   return (
     <div className="space-y-1.5">
-      <Label className="text-[12.5px]">
-        {label} <span className="text-destructive">*</span>
-      </Label>
+      <div className="flex items-center gap-1.5">
+        <Label className="text-[12.5px]">
+          {label} <span className="text-destructive">*</span>
+        </Label>
+        {info}
+      </div>
       <div className="flex h-9 items-center rounded-md border bg-background pr-2">
         <input
+          type="number"
           value={value}
+          min={1}
+          max={max ?? undefined}
+          step={1}
           onChange={(event) => onChange(event.target.value)}
           inputMode="numeric"
           aria-label={label}
@@ -707,7 +739,7 @@ function ModelOptionRow({
           <span className="font-mono text-[13px] font-semibold">{model.name}</span>
           {model.status === 'testing' ? <Tag tone="warning">{t('canaryReleases.new.modelTesting')}</Tag> : null}
         </div>
-        <div className="mt-0.5 text-[12px] text-muted-foreground">{model.providerType}</div>
+        <div className="mt-0.5 text-[12px] text-muted-foreground">{getProviderTypeLabel(model.providerType)}</div>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
           {ctx ? <Tag>{ctx}</Tag> : null}
           <ModalityIconGroup kinds={modalityKinds} size="sm" tooltips={modalityLabels} ariaLabels={modalityLabels} />
@@ -1137,6 +1169,7 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t } = useI18n();
+  const runtimeLimits = useRuntimeLimits();
   const { formatDateTime } = useDateTimeFormatter();
   const initialPromptId = searchParams.get('promptId') ?? '';
   const initialPromptVersionId = searchParams.get('promptVersionId') ?? '';
@@ -1211,8 +1244,13 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
   const [recordCategorySelection, setRecordCategorySelection] = useState<string[] | null>(null);
   const [rpm, setRpm] = useState(searchParams.get('rpmLimit') ?? '');
   const [tpm, setTpm] = useState(searchParams.get('tpmLimit') ?? '');
-  const [concurrency, setConcurrency] = useState(searchParams.get('concurrency') ?? '');
+  const [concurrency, setConcurrency] = useState(() => {
+    const fromUrl = searchParams.get('concurrency') ?? '';
+    const value = positiveIntegerFromText(fromUrl);
+    return value === null ? fromUrl : String(capConcurrencyValue(value, runtimeLimits.concurrency?.max));
+  });
   const [temperature, setTemperature] = useState(searchParams.get('temperature') ?? '0.3');
+  const [retentionOption, setRetentionOption] = useState<ReleaseRetentionOption>('30');
   const [runtimeDefaultsModelId, setRuntimeDefaultsModelId] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -1259,6 +1297,7 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
     () => models.find((model) => model.id === effectiveModelId) ?? null,
     [effectiveModelId, models],
   );
+  const effectiveConcurrencyLimit = resolveEffectiveConcurrencyLimit(selectedModel?.concurrency.limit, runtimeLimits);
   if (selectedModel && runtimeDefaultsModelId !== selectedModel.id) {
     setRuntimeDefaultsModelId(selectedModel.id);
     setRpm((current) =>
@@ -1269,8 +1308,16 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
     );
     setConcurrency((current) =>
       current.trim().length > 0
-        ? current
-        : modelLimitDefaultValue(selectedModel.concurrency.limit, DEFAULT_CONCURRENCY),
+        ? String(
+            capConcurrencyValue(positiveIntegerFromText(current) ?? DEFAULT_CONCURRENCY, effectiveConcurrencyLimit),
+          )
+        : String(
+            capConcurrencyValue(
+              positiveIntegerFromText(modelLimitDefaultValue(selectedModel.concurrency.limit, DEFAULT_CONCURRENCY)) ??
+                DEFAULT_CONCURRENCY,
+              effectiveConcurrencyLimit,
+            ),
+          ),
     );
   }
   const lockedInputConnectorId = isAddCanaryToProduction ? (parentProductionEvent?.inputConnectorId ?? '') : '';
@@ -1312,7 +1359,9 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
     const query = modelSearch.trim().toLowerCase();
     if (!query) return models;
     return models.filter((model) =>
-      `${model.name} ${model.providerType} ${model.providerModelId}`.toLowerCase().includes(query),
+      `${model.name} ${getProviderTypeLabel(model.providerType)} ${model.providerType} ${model.providerModelId}`
+        .toLowerCase()
+        .includes(query),
     );
   }, [modelSearch, models]);
 
@@ -1351,7 +1400,10 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
   const rpmValue = positiveIntegerFromText(rpm);
   const tpmValue = positiveIntegerFromText(tpm);
   const concurrencyValue = positiveIntegerFromText(concurrency);
+  const submittedConcurrencyValue =
+    concurrencyValue === null ? null : capConcurrencyValue(concurrencyValue, effectiveConcurrencyLimit);
   const temperatureValue = temperatureFromText(temperature);
+  const retentionDays = retentionOption === 'forever' ? null : Number(retentionOption);
   const stopConditions = stopConditionsFromDraft(
     useStopMaxSamples,
     useStopMaxDurationSeconds,
@@ -1492,7 +1544,7 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
       !canSubmit ||
       !rpmValue ||
       !tpmValue ||
-      !concurrencyValue ||
+      !submittedConcurrencyValue ||
       trafficRatioValue === null ||
       temperatureValue === null ||
       !selectedVersion ||
@@ -1515,13 +1567,13 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
     const productionRunConfig: CreateProductionReleaseInputDto['runConfig'] = {
       rpmLimit: rpmValue,
       tpmLimit: tpmValue,
-      concurrency: concurrencyValue,
+      concurrency: submittedConcurrencyValue,
       temperature: temperatureValue,
     };
     const canaryRunConfig: CreateCanaryReleaseInputDto['runConfig'] = {
       rpmLimit: rpmValue,
       tpmLimit: tpmValue,
-      concurrency: concurrencyValue,
+      concurrency: submittedConcurrencyValue,
       temperature: temperatureValue,
       ...(stopConditions ? { stopConditions } : {}),
     };
@@ -1578,7 +1630,7 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
       recordMode,
       recordCategories,
       externalIdField: effectiveExternalIdField || null,
-      retentionDays: null,
+      retentionDays,
       submitReason,
       sourceExperimentId: initialSourceExperimentId || null,
       sourceCanaryId: null,
@@ -2017,7 +2069,16 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
                     label={t('productionReleases.new.field.concurrency')}
                     value={concurrency}
                     modelLimit={selectedModel ? formatModelLimit(selectedModel.concurrency.limit) : '—'}
-                    onChange={setConcurrency}
+                    max={effectiveConcurrencyLimit}
+                    info={<RuntimeConcurrencyInfoIcon />}
+                    onChange={(next) => {
+                      const value = positiveIntegerFromText(next);
+                      setConcurrency(
+                        value === null || effectiveConcurrencyLimit === null
+                          ? next
+                          : String(capConcurrencyValue(value, effectiveConcurrencyLimit)),
+                      );
+                    }}
                   />
                   <div className="space-y-1.5">
                     <Label className="text-[12.5px]">
@@ -2051,6 +2112,31 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
                       onMaxSamplesChange={setStopMaxSamples}
                       onMaxDurationSecondsChange={setStopMaxDurationSeconds}
                     />
+                  </div>
+                </div>
+              ) : null}
+
+              {!shouldCreateCanaryRelease ? (
+                <div className="border-t border-dashed pt-5">
+                  <Label>{t('productionReleases.new.field.retentionDays')}</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">{t('productionReleases.new.helpRetention')}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {RELEASE_RETENTION_OPTIONS.map((option) => {
+                      const selected = option === retentionOption;
+                      return (
+                        <Button
+                          key={option}
+                          type="button"
+                          variant={selected ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setRetentionOption(option)}
+                          aria-pressed={selected}
+                          className="h-8"
+                        >
+                          {t(RELEASE_RETENTION_LABEL_KEYS[option])}
+                        </Button>
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -2120,13 +2206,27 @@ export function ReleaseNewPage({ projectId }: ReleaseNewPageProps) {
                 <SummaryRow
                   label={t('releases.new.summary.runtime')}
                   value={
-                    rpmValue && tpmValue && concurrencyValue
-                      ? `${rpmValue} RPM / ${tpmValue} TPM / C${concurrencyValue}`
+                    rpmValue && tpmValue && submittedConcurrencyValue
+                      ? `${rpmValue} RPM / ${tpmValue} TPM / C${submittedConcurrencyValue}`
                       : '—'
                   }
                 />
                 {shouldCreateCanaryRelease ? (
                   <SummaryRow label={t('canaryReleases.new.field.termination')} value={stopConditionSummary} />
+                ) : null}
+                {!shouldCreateCanaryRelease ? (
+                  <SummaryRow
+                    label={t('productionReleases.new.field.retentionDays')}
+                    value={
+                      retentionDays === null
+                        ? t('productionReleases.new.retention.forever')
+                        : t(
+                            RELEASE_RETENTION_LABEL_KEYS[
+                              String(retentionDays) as Exclude<ReleaseRetentionOption, 'forever'>
+                            ],
+                          )
+                    }
+                  />
                 ) : null}
               </div>
 

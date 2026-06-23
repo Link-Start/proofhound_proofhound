@@ -1,10 +1,14 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { DatasetRawImportConsumer } from './consumers/dataset-raw-import.consumer';
 import { LlmConsumer, llmConsumerProviders } from './consumers/llm.consumer';
 import { ProbeConsumer } from './consumers/probe.consumer';
 import { DatabaseModule } from '../shared/database/database.module';
+import { LlmAdmissionStore } from '../shared/llm-admission/llm-admission.store';
 import { RedisModule } from '../shared/redis/redis.module';
 import type { ProofHoundRuntimeModuleOptions } from '../shared/runtime-module-options';
+import { DatasetImportRepository } from '../server/modules/dataset/dataset-import.repository';
+import { LlmAdmissionDispatcher } from './llm-admission-dispatcher';
 
 export type ProofHoundWorkerModuleOptions = ProofHoundRuntimeModuleOptions;
 
@@ -26,12 +30,16 @@ export class ProofHoundWorkerModule {
             },
           }),
         }),
-        BullModule.registerQueue({ name: 'llm' }, { name: 'probe' }),
+        BullModule.registerQueue({ name: 'llm' }, { name: 'probe' }, { name: 'dataset-import' }),
       ],
       providers: [
+        DatasetImportRepository,
+        LlmAdmissionStore,
+        LlmAdmissionDispatcher,
         ...llmConsumerProviders,
         LlmConsumer,
         ProbeConsumer,
+        DatasetRawImportConsumer,
       ],
     };
   }

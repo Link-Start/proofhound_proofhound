@@ -12,7 +12,7 @@ import { DatasetImportService } from '../dataset-import.service';
 const ACTOR_ID = '11111111-1111-4111-8111-111111111111';
 const IMPORT_ID = '22222222-2222-4222-8222-222222222222';
 
-const importBody = {
+const rawImportBody = {
   name: 'Large CSV',
   description: null,
   fieldMappings: [
@@ -33,25 +33,35 @@ function importItem(overrides: Record<string, unknown> = {}) {
     id: IMPORT_ID,
     projectId: LOCAL_PROJECT_CONTEXT.projectId,
     datasetId: null,
-    name: importBody.name,
+    importMode: 'raw_object',
+    name: rawImportBody.name,
     description: null,
-    fileName: importBody.sourceFile.fileName,
-    fileSizeBytes: importBody.sourceFile.fileSizeBytes,
-    sourceFormat: importBody.sourceFormat,
+    fileName: rawImportBody.sourceFile.fileName,
+    fileSizeBytes: rawImportBody.sourceFile.fileSizeBytes,
+    sourceFormat: rawImportBody.sourceFormat,
     declaredTotalRows: null,
     receivedRows: 0,
-    status: 'uploading',
-    state: 'uploading',
+    status: 'uploaded',
+    state: 'uploaded',
     progress: {
-      state: 'uploading',
+      state: 'uploaded',
+      phase: 'uploaded',
+      uploadedBytes: rawImportBody.sourceFile.fileSizeBytes,
       parsedRows: 0,
       importedRows: 0,
       totalRows: null,
-      totalBytes: importBody.sourceFile.fileSizeBytes,
-      percentage: null,
+      totalBytes: rawImportBody.sourceFile.fileSizeBytes,
+      totalShards: null,
+      completedShards: null,
+      committedRows: 0,
+      percentage: 75,
     },
     errorCode: null,
     errorMessage: null,
+    jobId: null,
+    rawUploadCompletedAt: null,
+    queuedAt: null,
+    startedAt: null,
     completedAt: null,
     failedAt: null,
     abortedAt: null,
@@ -63,10 +73,22 @@ function importItem(overrides: Record<string, unknown> = {}) {
 
 function createServiceMock() {
   return {
-    createImport: vi.fn().mockResolvedValue(importItem()),
+    createImport: vi.fn().mockResolvedValue(importItem({ importMode: 'batch' })),
+    getRawImportCapabilities: vi.fn().mockResolvedValue({ supported: true, maxBytes: 2_147_483_648 }),
+    createRawImport: vi.fn().mockResolvedValue({
+      import: importItem(),
+      uploadSession: {
+        sessionId: 'upload-1',
+        url: 'https://storage.example.test/upload-1',
+        headers: { 'content-type': 'text/csv' },
+        expiresAt: '2026-06-20T01:00:00.000Z',
+      },
+      maxBytes: 2_147_483_648,
+    }),
     getImport: vi.fn().mockResolvedValue(importItem()),
     appendBatch: vi.fn().mockResolvedValue({ importId: IMPORT_ID, receivedRows: 1 }),
-    complete: vi.fn().mockResolvedValue(importItem({ status: 'completed', state: 'completed', receivedRows: 1 })),
+    completeRawUpload: vi.fn().mockResolvedValue(importItem()),
+    complete: vi.fn().mockResolvedValue(importItem({ status: 'queued', state: 'queued' })),
     abort: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -101,33 +123,47 @@ describe('DatasetImportController', () => {
     await app.close();
   });
 
-  it('validates and delegates import session creation', async () => {
+  it('routes raw capabilities before the :importId path and scopes through the guard', async () => {
     await request(app.getHttpServer())
-      .post('/dataset-imports')
-      .send(importBody)
+      .get('/dataset-imports/raw/capabilities')
+      .expect(200, { supported: true, maxBytes: 2_147_483_648 });
+
+    expect(resolveFromHttp).toHaveBeenCalledTimes(1);
+    expect(resolveProject).toHaveBeenCalledTimes(1);
+    expect(service.getRawImportCapabilities).toHaveBeenCalledWith(
+      LOCAL_PROJECT_CONTEXT.projectId,
+      expect.objectContaining({ sub: ACTOR_ID, actorKind: 'local_user' }),
+    );
+    expect(service.getImport).not.toHaveBeenCalled();
+  });
+
+  it('validates and delegates raw upload session creation', async () => {
+    await request(app.getHttpServer())
+      .post('/dataset-imports/raw')
+      .send(rawImportBody)
       .expect(201)
       .expect(({ body }) => {
-        expect(body.id).toBe(IMPORT_ID);
-        expect(body.status).toBe('uploading');
+        expect(body.import.importMode).toBe('raw_object');
+        expect(body.uploadSession.url).toBe('https://storage.example.test/upload-1');
       });
 
-    expect(service.createImport).toHaveBeenCalledWith(
+    expect(service.createRawImport).toHaveBeenCalledWith(
       LOCAL_PROJECT_CONTEXT.projectId,
-      importBody,
+      rawImportBody,
       expect.objectContaining({ sub: ACTOR_ID, actorKind: 'local_user' }),
     );
   });
 
-  it('rejects invalid import DTOs before calling the service', async () => {
+  it('rejects invalid raw import DTOs before calling the service', async () => {
     await request(app.getHttpServer())
-      .post('/dataset-imports')
-      .send({ ...importBody, fieldMappings: [] })
+      .post('/dataset-imports/raw')
+      .send({ ...rawImportBody, fieldMappings: [] })
       .expect(400);
 
-    expect(service.createImport).not.toHaveBeenCalled();
+    expect(service.createRawImport).not.toHaveBeenCalled();
   });
 
-  it('delegates batch append through the service boundary', async () => {
+  it('keeps raw object sessions out of the batch append path at the service boundary', async () => {
     await request(app.getHttpServer())
       .post(`/dataset-imports/${IMPORT_ID}/batch`)
       .send({ batchStartIndex: 0, samples: [{ sample_id: 'case-1' }] })
@@ -141,13 +177,14 @@ describe('DatasetImportController', () => {
     );
   });
 
-  it('delegates complete through the service boundary', async () => {
-    await request(app.getHttpServer()).post(`/dataset-imports/${IMPORT_ID}/complete`).expect(201);
+  it('delegates raw upload completion before queueing the import job', async () => {
+    await request(app.getHttpServer()).post(`/dataset-imports/${IMPORT_ID}/upload-complete`).expect(201);
 
-    expect(service.complete).toHaveBeenCalledWith(
+    expect(service.completeRawUpload).toHaveBeenCalledWith(
       LOCAL_PROJECT_CONTEXT.projectId,
       IMPORT_ID,
       expect.objectContaining({ sub: ACTOR_ID, actorKind: 'local_user' }),
     );
+    expect(service.complete).not.toHaveBeenCalled();
   });
 });

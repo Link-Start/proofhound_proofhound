@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { RedisModule } from '../../../shared/redis/redis.module';
+import { LlmAdmissionStore } from '../../../shared/llm-admission/llm-admission.store';
 import { BullmqService } from './bullmq.service';
 
 @Module({
@@ -15,9 +17,10 @@ import { BullmqService } from './bullmq.service';
         },
       }),
     }),
-    BullModule.registerQueue({ name: 'llm' }, { name: 'probe' }),
+    BullModule.registerQueue({ name: 'llm' }, { name: 'probe' }, { name: 'dataset-import' }),
+    RedisModule,
   ],
-  providers: [BullmqService],
+  providers: [LlmAdmissionStore, BullmqService],
   exports: [BullmqService],
 })
 export class BullmqOrchestrationModule {}

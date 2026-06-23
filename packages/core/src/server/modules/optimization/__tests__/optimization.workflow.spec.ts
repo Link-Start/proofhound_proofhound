@@ -107,8 +107,8 @@ describe('readExpectedField', () => {
     expect(readExpectedField({ expectedField: 'gold' })).toBe('gold');
   });
 
-  it('prefers snake_case when both are present', () => {
-    expect(readExpectedField({ expected_field: 'a', expectedField: 'b' })).toBe('a');
+  it('prefers canonical camelCase when both are present', () => {
+    expect(readExpectedField({ expected_field: 'a', expectedField: 'b' })).toBe('b');
   });
 
   it('falls back to default when field value is empty string or non-string', () => {
@@ -126,15 +126,13 @@ describe('readExpectedField', () => {
 });
 
 describe('deriveJudgmentRulesFromOutputSchema', () => {
-  it('uses the generated isJudgment field as decision_field for first versions', () => {
+  it('uses the generated isJudgment field as decisionField for first versions', () => {
     expect(
       deriveJudgmentRulesFromOutputSchema({
         fields: [{ key: 'sentiment', value: 'positive | negative', isJudgment: true }],
       }),
     ).toEqual({
-      mode: 'exact_match',
-      expected_field: 'expected_output',
-      decision_field: 'sentiment',
+      rules: [{ decisionField: 'sentiment', expectedField: 'expected_output', operator: 'exact_match' }],
     });
   });
 
@@ -147,8 +145,7 @@ describe('deriveJudgmentRulesFromOutputSchema', () => {
         'gold_category',
       ),
     ).toMatchObject({
-      expected_field: 'gold_category',
-      decision_field: 'category',
+      rules: [{ decisionField: 'category', expectedField: 'gold_category', operator: 'exact_match' }],
     });
   });
 });
@@ -825,6 +822,43 @@ describe('OptimizationWorkflow.runImpl — child experiment inherits snapshot.or
     const childLaunch = startWorkflowCalls.find((c) => c.fn === experimentRunWorkflow);
     expect(childLaunch).toBeDefined();
     expect(childLaunch?.args).toEqual(['child-exp-1', '00000000-0000-4000-8000-000000000888']);
+  });
+
+  it('reloads the prompt-baseline snapshot with snapshot.orgId after baseline finalization', async () => {
+    const registrar = buildRegistrar();
+    const r = registrar as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    const snapshot = {
+      ok: true,
+      projectId: 'prj-1',
+      orgId: '00000000-0000-4000-8000-000000000888',
+      startingMode: 'from_prompt_version',
+      sourceExperimentId: 'baseline-exp-1',
+    };
+    const reloaded = {
+      ...snapshot,
+      baseVersionId: 'pv-1',
+      bestVersion: null,
+      bestMetrics: {},
+      nextRound: 1,
+      maxRounds: 1,
+      goals: [],
+      resumeChildExpId: null,
+    };
+    r['preparePromptBaselineStep'] = vi.fn().mockResolvedValue({ kind: 'ready', experimentId: 'baseline-exp-1' });
+    r['finalizePromptBaselineStep'] = vi.fn().mockResolvedValue({ kind: 'ready' });
+    r['loadConfigStep'] = vi.fn().mockResolvedValue(reloaded);
+
+    const result = await (
+      registrar as unknown as {
+        ensurePromptBaseline: (
+          optimizationId: string,
+          inputSnapshot: typeof snapshot,
+        ) => Promise<{ kind: 'ready'; snapshot: typeof reloaded }>;
+      }
+    ).ensurePromptBaseline('opt-1', snapshot);
+
+    expect(result).toEqual({ kind: 'ready', snapshot: reloaded });
+    expect(r['loadConfigStep']).toHaveBeenCalledWith('opt-1', '00000000-0000-4000-8000-000000000888');
   });
 
   it('OSS default (snapshot.orgId undefined) → child experiment launched with orgId=undefined', async () => {

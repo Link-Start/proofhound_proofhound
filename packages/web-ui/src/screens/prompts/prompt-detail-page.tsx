@@ -11,7 +11,6 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useRouter } from '../../hooks/use-router';
 import {
   ArrowLeft,
-  BarChart3,
   CheckCircle2,
   Copy,
   Database,
@@ -39,9 +38,7 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
-  PlatformLoaderOverlay,
   DetailPageSkeleton,
-  Skeleton,
   TableActionRow,
   Tooltip,
   TooltipContent,
@@ -61,7 +58,6 @@ import {
   useDeletePromptDraftVersion,
   useDateTimeFormatter,
   usePrompt,
-  usePromptMetrics,
   usePromptVersionDeleteImpact,
   useUpdatePrompt,
   useUpdatePromptDraftVersion,
@@ -74,9 +70,12 @@ import { DATASET_MODALITY_LABEL_KEYS, type DatasetModality, type ProjectDataset 
 import { toProjectDataset } from '../datasets/dataset-mappers';
 import {
   deriveJudgmentField,
+  serializeJudgmentRules,
+  syncJudgmentRulesWithBinding,
   toProjectPrompt,
   upsertJudgmentField,
   type ProjectPrompt,
+  type PromptJudgmentRule,
   type PromptOutputField,
   type PromptVariable,
   type PromptVersion,
@@ -109,6 +108,7 @@ const TAB_LABEL_KEYS: Record<DetailTab, TranslationKey> = {
   versions: 'prompts.detail.tab.versions',
   metrics: 'prompts.detail.tab.metrics',
 };
+const VISIBLE_DETAIL_TABS = ['versions'] as const satisfies readonly DetailTab[];
 
 const PROMPT_MAIN_TAB_LABEL_KEYS: Record<PromptMainTab, TranslationKey> = {
   prompt: 'prompts.detail.subtab.prompt',
@@ -116,7 +116,8 @@ const PROMPT_MAIN_TAB_LABEL_KEYS: Record<PromptMainTab, TranslationKey> = {
 };
 
 function resolveDetailTab(value: string | null): DetailTab {
-  return value === 'metrics' ? 'metrics' : 'versions';
+  void value;
+  return 'versions';
 }
 
 function resolvePromptMainTab(value: string | null): PromptMainTab {
@@ -921,12 +922,35 @@ function serializeOutputFields(fields: PromptOutputField[]) {
   );
 }
 
+function serializePromptJudgmentRules(rules: PromptJudgmentRule[]) {
+  return JSON.stringify(serializeJudgmentRules(rules));
+}
+
+function getDatasetExpectedFieldName(dataset: ProjectDataset | null): string | null {
+  return dataset?.fields.find((field) => field.role === 'expected')?.name ?? null;
+}
+
 function getDatasetJudgmentField(dataset: ProjectDataset | null): PromptOutputField {
-  const expectedField = dataset?.fields.find((field) => field.role === 'expected');
   const labels = dataset?.categoryProfile.slices.map((slice) => slice.label) ?? [];
   return deriveJudgmentField({
-    expectedOutputFieldName: expectedField?.name ?? null,
+    expectedOutputFieldName: getDatasetExpectedFieldName(dataset),
     categoryLabels: labels,
+  });
+}
+
+function getJudgmentRulesForBinding({
+  rules,
+  dataset,
+  outputFields,
+}: {
+  rules: PromptJudgmentRule[];
+  dataset: ProjectDataset | null;
+  outputFields: PromptOutputField[];
+}) {
+  const decisionField = outputFields.find((field) => field.isJudgment)?.key ?? null;
+  return syncJudgmentRulesWithBinding(rules, {
+    decisionField,
+    expectedField: getDatasetExpectedFieldName(dataset),
   });
 }
 
@@ -937,6 +961,7 @@ function getPromptVersionSyncKey({
   promptLanguage,
   variables,
   outputFields,
+  judgmentRules,
 }: {
   promptId: string;
   versionId: string;
@@ -944,10 +969,11 @@ function getPromptVersionSyncKey({
   promptLanguage: PromptLanguage;
   variables: PromptVariable[];
   outputFields: PromptOutputField[];
+  judgmentRules: PromptJudgmentRule[];
 }) {
   return `${promptId}:${versionId}:${body}:${promptLanguage}:${serializePromptVariables(variables)}:${serializeOutputFields(
     outputFields,
-  )}`;
+  )}:${serializePromptJudgmentRules(judgmentRules)}`;
 }
 
 function VersionLabelPill({ label, onRemove }: { label: PromptVersion['labels'][number]; onRemove?: () => void }) {
@@ -1364,153 +1390,6 @@ function ActiveVersionLabels({
   );
 }
 
-function formatMetricNumber(value: number) {
-  return value.toLocaleString();
-}
-
-function formatMetricMs(value: number | null) {
-  if (value === null) return '-';
-  return `${Math.round(value).toLocaleString()} ms`;
-}
-
-function formatMetricCost(value: number) {
-  return `$${value.toFixed(4)}`;
-}
-
-function formatMetricPercent(value: number | null) {
-  if (value === null) return '-';
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function MetricSummaryCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-lg border bg-card px-4 py-3">
-      <div className="text-[11.5px] font-medium text-muted-foreground">{label}</div>
-      <div className="mt-2 font-mono text-xl font-semibold leading-none">{value}</div>
-      {sub && <div className="mt-2 text-[11px] text-muted-foreground">{sub}</div>}
-    </div>
-  );
-}
-
-function PromptMetricsTab({ projectId, promptId }: { projectId: string; promptId: string }) {
-  const { t } = useI18n();
-  const { formatDateTime } = useDateTimeFormatter();
-  const metricsQuery = usePromptMetrics(projectId, promptId);
-  const metrics = metricsQuery.data;
-
-  const metricsLoading = useDelayedLoading(metricsQuery.isLoading);
-  if (metricsLoading) {
-    return (
-      <div className="relative min-h-[420px]" data-testid="prompt-metrics-tab" aria-busy="true">
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <Skeleton key={index} className="h-24 rounded-lg" />
-            ))}
-          </div>
-          <Skeleton className="h-64 rounded-lg" />
-        </div>
-        <PlatformLoaderOverlay placement="container" />
-      </div>
-    );
-  }
-
-  if (!metrics) {
-    return (
-      <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
-        {t('prompts.metrics.empty')}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4" data-testid="prompt-metrics-tab">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <BarChart3 className="size-4 text-muted-foreground" />
-        {t('prompts.detail.tab.metrics')}
-      </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricSummaryCard
-          label={t('prompts.metrics.totalRuns')}
-          value={formatMetricNumber(metrics.totals.runCount)}
-          sub={`${t('prompts.metrics.success')} ${formatMetricNumber(metrics.totals.successCount)} · ${t(
-            'prompts.metrics.errors',
-          )} ${formatMetricNumber(metrics.totals.errorCount)}`}
-        />
-        <MetricSummaryCard
-          label={t('prompts.metrics.totalTokens')}
-          value={formatMetricNumber(metrics.totals.totalInputTokens + metrics.totals.totalOutputTokens)}
-          sub={`${t('prompts.metrics.inputTokens')} ${formatMetricNumber(
-            metrics.totals.totalInputTokens,
-          )} · ${t('prompts.metrics.outputTokens')} ${formatMetricNumber(metrics.totals.totalOutputTokens)}`}
-        />
-        <MetricSummaryCard
-          label={t('prompts.metrics.totalCost')}
-          value={formatMetricCost(metrics.totals.totalCostEstimate)}
-        />
-        <MetricSummaryCard
-          label={t('prompts.metrics.versionsWithRuns')}
-          value={formatMetricNumber(metrics.versions.filter((version) => version.runCount > 0).length)}
-          sub={`${formatMetricNumber(metrics.versions.length)} ${t('prompts.detail.versionTotalSuffix')}`}
-        />
-      </div>
-
-      <section className="overflow-hidden rounded-lg border bg-card" aria-label={t('prompts.detail.tab.metrics')}>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1040px] text-sm">
-            <thead>
-              <tr className="border-b bg-muted/60 text-left text-xs font-medium text-muted-foreground">
-                <th className="px-3 py-3">{t('prompts.detail.version')}</th>
-                <th className="w-44 px-3 py-3">{t('prompts.detail.labels')}</th>
-                <th className="w-28 px-3 py-3">{t('prompts.table.status')}</th>
-                <th className="w-24 px-3 py-3 text-right">{t('prompts.metrics.runs')}</th>
-                <th className="w-24 px-3 py-3 text-right">{t('prompts.metrics.accuracy')}</th>
-                <th className="w-32 px-3 py-3 text-right">{t('prompts.metrics.medianLatency')}</th>
-                <th className="w-32 px-3 py-3 text-right">{t('prompts.metrics.medianTokens')}</th>
-                <th className="w-28 px-3 py-3 text-right">{t('prompts.metrics.cost')}</th>
-                <th className="w-36 px-3 py-3">{t('prompts.metrics.lastRun')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {metrics.versions.map((version) => (
-                <tr key={version.promptVersionId} className="border-b last:border-b-0">
-                  <td className="px-3 py-3 font-mono font-semibold">v{version.versionNumber}</td>
-                  <td className="px-3 py-3">
-                    <div className="flex flex-wrap items-center gap-1">
-                      {version.labels.length > 0 ? (
-                        version.labels.map((label) => <VersionLabelPill key={label.name} label={label} />)
-                      ) : (
-                        <span className="text-xs text-muted-foreground">-</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <StatusBadge status={version.status} compact />
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono">{formatMetricNumber(version.runCount)}</td>
-                  <td className="px-3 py-3 text-right font-mono">{formatMetricPercent(version.accuracy)}</td>
-                  <td className="px-3 py-3 text-right font-mono">{formatMetricMs(version.medianLatencyMs)}</td>
-                  <td className="px-3 py-3 text-right font-mono">
-                    {version.medianInputTokens === null && version.medianOutputTokens === null
-                      ? '-'
-                      : `${Math.round(version.medianInputTokens ?? 0)} / ${Math.round(
-                          version.medianOutputTokens ?? 0,
-                        )}`}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono">{formatMetricCost(version.totalCostEstimate)}</td>
-                  <td className="px-3 py-3 font-mono text-[11.5px] text-muted-foreground">
-                    {formatDateTime(version.lastRunAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 export function PromptDetailPage({ projectId, promptId }: { projectId: string; promptId: string }) {
   const { t } = useI18n();
   const { formatDateTime } = useDateTimeFormatter();
@@ -1581,6 +1460,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
           promptLanguage: activeVersion.promptLanguage,
           variables: activeVersion.variables ?? [],
           outputFields: activeVersion.outputFields ?? [],
+          judgmentRules: activeVersion.judgmentRules ?? [],
         })
       : '';
   if (prompt && activeVersion && activeSyncKey !== activeVersionSyncKey) {
@@ -1773,6 +1653,11 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
     }
 
     try {
+      const nextJudgmentRules = getJudgmentRulesForBinding({
+        rules: activeVersion.judgmentRules,
+        dataset: selectedDataset,
+        outputFields,
+      });
       const nextPrompt = await updateDraftVersionMutation.mutateAsync({
         promptId: prompt.id,
         versionId: activeVersion.id,
@@ -1787,7 +1672,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
               isJudgment: field.isJudgment,
             })),
           },
-          judgmentRules: { rules: activeVersion.judgmentRules },
+          judgmentRules: serializeJudgmentRules(nextJudgmentRules),
           changeReason: activeVersion.changeReason || null,
         },
       });
@@ -1798,6 +1683,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
       const nextPromptLanguage = nextActive?.promptLanguage ?? promptLanguage;
       const nextVariables = nextActive?.variables ?? nextProjectPrompt.variables;
       const nextOutputFields = nextActive?.outputFields ?? nextProjectPrompt.outputFields;
+      const nextRules = nextActive?.judgmentRules ?? nextJudgmentRules;
       const nextCustomFields = nextOutputFields.filter((field) => !field.isJudgment);
       setBody(nextBody);
       setSavedBody(nextBody);
@@ -1815,6 +1701,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
           promptLanguage: nextPromptLanguage,
           variables: nextVariables,
           outputFields: nextOutputFields,
+          judgmentRules: nextRules,
         }),
       );
       setSaveError(null);
@@ -1827,7 +1714,18 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
       setSaveError(String(message));
       return false;
     }
-  }, [activeVersion, body, isReadOnly, outputFields, prompt, promptLanguage, t, updateDraftVersionMutation, variables]);
+  }, [
+    activeVersion,
+    body,
+    isReadOnly,
+    outputFields,
+    prompt,
+    promptLanguage,
+    selectedDataset,
+    t,
+    updateDraftVersionMutation,
+    variables,
+  ]);
 
   const autoSaveConfigVersion = useCallback(
     async ({
@@ -1842,6 +1740,11 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
       if (!prompt || !activeVersion || isReadOnly) return false;
 
       const nextOutputFields = upsertJudgmentField(savedCustomOutputFields, getDatasetJudgmentField(nextDataset));
+      const nextJudgmentRules = getJudgmentRulesForBinding({
+        rules: activeVersion.judgmentRules,
+        dataset: nextDataset,
+        outputFields: nextOutputFields,
+      });
 
       try {
         const nextPrompt = await updateDraftVersionMutation.mutateAsync({
@@ -1858,7 +1761,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
                 isJudgment: field.isJudgment,
               })),
             },
-            judgmentRules: { rules: activeVersion.judgmentRules },
+            judgmentRules: serializeJudgmentRules(nextJudgmentRules),
             changeReason: activeVersion.changeReason || null,
           },
         });
@@ -1869,6 +1772,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
         const persistedPromptLanguage = nextActive?.promptLanguage ?? nextPromptLanguage;
         const persistedVariables = nextActive?.variables ?? nextVariables;
         const persistedOutputFields = nextActive?.outputFields ?? nextOutputFields;
+        const persistedRules = nextActive?.judgmentRules ?? nextJudgmentRules;
         const persistedCustomFields = persistedOutputFields.filter((field) => !field.isJudgment);
 
         setSavedBody(persistedBody);
@@ -1885,6 +1789,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
             promptLanguage: persistedPromptLanguage,
             variables: persistedVariables,
             outputFields: persistedOutputFields,
+            judgmentRules: persistedRules,
           }),
         );
         setSaveError(null);
@@ -2053,6 +1958,11 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
         const createdVersionId = created.id;
         const inheritedVariables = toPromptVariablesFromDataset(inheritedDataset);
         const inheritedOutputFields = upsertJudgmentField([], getDatasetJudgmentField(inheritedDataset));
+        const inheritedJudgmentRules = getJudgmentRulesForBinding({
+          rules: created.judgmentRules,
+          dataset: inheritedDataset,
+          outputFields: inheritedOutputFields,
+        });
         const updated = await updateDraftVersionMutation.mutateAsync({
           promptId: prompt.id,
           versionId: createdVersionId,
@@ -2067,7 +1977,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
                 isJudgment: field.isJudgment,
               })),
             },
-            judgmentRules: { rules: created.judgmentRules },
+            judgmentRules: serializeJudgmentRules(inheritedJudgmentRules),
             changeReason: created.changeReason || null,
           },
         });
@@ -2273,7 +2183,7 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
         </div>
 
         <div className="mb-5 mt-3 flex items-end gap-1 border-b">
-          {(Object.keys(TAB_LABEL_KEYS) as DetailTab[]).map((tab) => (
+          {VISIBLE_DETAIL_TABS.map((tab) => (
             <button
               key={tab}
               type="button"
@@ -2444,7 +2354,6 @@ export function PromptDetailPage({ projectId, promptId }: { projectId: string; p
             </section>
           </div>
         )}
-        {activeTab === 'metrics' && <PromptMetricsTab projectId={projectId} promptId={prompt.id} />}
       </div>
       <Dialog open={unsavedDialogOpen} onOpenChange={(open) => !open && closeUnsavedDialog()}>
         <DialogContent>

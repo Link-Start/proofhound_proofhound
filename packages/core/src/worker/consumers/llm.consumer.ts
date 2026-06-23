@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import type { DbClient } from '@proofhound/db';
 import { RateLimitExceededError, type RateLimiter } from '@proofhound/limiter';
@@ -19,8 +19,10 @@ import type Redis from 'ioredis';
 import { LimiterKeyStrategy } from '../../server/common/contracts/limiter-key.strategy';
 import { QuotaPolicyHook } from '../../server/common/contracts/quota-policy.hook';
 import { RuntimeLimitsProvider } from '../../server/common/contracts/runtime-limits.provider';
-import { safeRecordUsageEvent, UsageMeteringHook } from '../../server/common/contracts/usage-metering.hook';
+import { UsageMeteringHook } from '../../server/common/contracts/usage-metering.hook';
+import { safeRecordUsageEvent } from '../../server/common/contracts/usage-metering.hook';
 import { DATABASE_CLIENT } from '../../shared/database/database.constants';
+import { LlmAdmissionStore } from '../../shared/llm-admission/llm-admission.store';
 import { MODEL_SECRET_RESOLVER, modelSecretResolverFactory } from '../infrastructure/llm/model-secret.provider';
 import { REDIS_CLIENT, REDIS_LIMITER } from '../../shared/redis/redis.constants';
 import { resolveWorkerConcurrency } from '../config/worker-concurrency';
@@ -46,6 +48,7 @@ export class LlmConsumer extends WorkerHost {
     quotaPolicy: QuotaPolicyHook,
     runtimeLimitsProvider: RuntimeLimitsProvider,
     private readonly usageMetering: UsageMeteringHook,
+    @Optional() private readonly admissionStore?: LlmAdmissionStore,
   ) {
     super();
     this.runLlmJob = createLlmRunner({
@@ -63,6 +66,7 @@ export class LlmConsumer extends WorkerHost {
 
   async process(job: Job<unknown>, token?: string): Promise<LlmRunnerResult> {
     const payload = llmJobPayloadSchema.parse(job.data) satisfies LlmJobPayload;
+    const stopAdmissionHeartbeat = this.startAdmissionHeartbeat(payload.admission);
     try {
       const result = await this.runLlmJob(payload, {
         bullmqJobId: String(job.id),
@@ -87,6 +91,7 @@ export class LlmConsumer extends WorkerHost {
       if (error instanceof RateLimitExceededError) {
         // Rate-limit hit: defer to the next time window, do NOT consume an attempt — SPEC 03 §4.2's attempts=5 is reserved for real errors
         const delayMs = Math.max(error.retryAfterMs, 1_000);
+        await this.stripAdmissionForDelayedRetry(job, payload);
         await this.recordJobEvent(payload, job, 'job.rate_limited', {
           status: 'rate_limited',
           errorKind: error.reason,
@@ -107,6 +112,9 @@ export class LlmConsumer extends WorkerHost {
         throw new DelayedError();
       }
       throw error;
+    } finally {
+      stopAdmissionHeartbeat();
+      await this.releaseAdmission(payload.admission);
     }
   }
 
@@ -135,6 +143,7 @@ export class LlmConsumer extends WorkerHost {
       await this.runResultWriter.writeRunResult({
         id: runResultId,
         projectId: payload.projectId,
+        orgId: payload.orgId ?? null,
         source: payload.source,
         sourceId: payload.sourceId,
         releaseVersionId: payload.releaseVersionId ?? null,
@@ -285,6 +294,61 @@ export class LlmConsumer extends WorkerHost {
       },
       this.logger,
     );
+  }
+
+  private async stripAdmissionForDelayedRetry(job: Job<unknown>, payload: LlmJobPayload): Promise<void> {
+    if (!payload.admission) return;
+    const retryPayload = { ...payload };
+    delete retryPayload.admission;
+    try {
+      await job.updateData(retryPayload);
+    } catch (error) {
+      this.logger.warn(
+        {
+          bullmqJobId: String(job.id),
+          fairnessKey: payload.admission.fairnessKey,
+          reservationId: payload.admission.reservationId,
+          error: (error as Error).message,
+        },
+        'llm_admission_delay_payload_update_failed',
+      );
+      throw error;
+    }
+  }
+
+  private startAdmissionHeartbeat(admission: LlmJobPayload['admission']): () => void {
+    if (!admission || !this.admissionStore) return () => undefined;
+    const intervalMs = Math.max(1_000, Math.floor(this.admissionStore.defaultLeaseTtlMs / 3));
+    const timer = setInterval(() => {
+      this.admissionStore
+        ?.extendConcurrencyReservation({
+          fairnessKey: admission.fairnessKey,
+          reservationId: admission.reservationId,
+        })
+        .catch((error) => {
+          this.logger.warn(
+            { fairnessKey: admission.fairnessKey, reservationId: admission.reservationId, error: error.message },
+            'llm_admission_heartbeat_failed',
+          );
+        });
+    }, intervalMs);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
+  private async releaseAdmission(admission: LlmJobPayload['admission']): Promise<void> {
+    if (!admission || !this.admissionStore) return;
+    await this.admissionStore
+      .releaseConcurrencyReservation({
+        fairnessKey: admission.fairnessKey,
+        reservationId: admission.reservationId,
+      })
+      .catch((error) => {
+        this.logger.warn(
+          { fairnessKey: admission.fairnessKey, reservationId: admission.reservationId, error: error.message },
+          'llm_admission_release_failed',
+        );
+      });
   }
 }
 

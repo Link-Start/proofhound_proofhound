@@ -1,5 +1,14 @@
 import { Buffer } from 'node:buffer';
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Readable } from 'node:stream';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
+import { createLogger } from '@proofhound/logger';
 import {
   createExperimentSchema,
   datasetFieldSchema,
@@ -20,6 +29,8 @@ import {
   type ExperimentRunConfigDto,
   type ExperimentStatusDto,
   type PromptVariableTypeDto,
+  type RunResultExportFormatDto,
+  type RunResultListQueryDto,
 } from '@proofhound/shared';
 import { z } from 'zod';
 import { and, eq, sql } from 'drizzle-orm';
@@ -27,6 +38,9 @@ import type { DbClient } from '@proofhound/db';
 import { schema } from '@proofhound/db';
 import { toActorContext } from '../../common/access-control';
 import { AccessControlService } from '../../common/contracts/access-control.service';
+import { ObjectStorageProvider } from '../../common/contracts/object-storage.provider';
+import { type StoredObjectRef } from '../../common/contracts/object-storage.provider';
+import { createZipStream } from '../../common/zip-stream';
 import { WorkflowAuthorizationHook } from '../../common/contracts/workflow-authorization.hook';
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { isUniqueViolation } from '../../common/errors/db-error';
@@ -35,7 +49,8 @@ import { ModelService } from '../model/model.service';
 import { RunResultService } from '../run-result/run-result.service';
 import { aggregateExperimentMetrics } from './experiment.aggregator';
 import { ExperimentLauncher } from './experiment.launcher';
-import { ExperimentRepository, type ExperimentProjectAccessRow, type ExperimentRow } from './experiment.repository';
+import { ExperimentRepository } from './experiment.repository';
+import { type ExperimentProjectAccessRow, type ExperimentRow } from './experiment.repository';
 
 const { datasets, promptVersions, prompts } = schema;
 
@@ -49,10 +64,19 @@ export interface ExperimentExportFile {
   format: ExperimentExportFormatDto;
 }
 
+export interface ExperimentExportPackageFile {
+  fileName: string;
+  contentType: string;
+  stream: Readable;
+  detailFormat: RunResultExportFormatDto;
+}
+
 type AuditSource = 'api' | 'mcp' | 'system';
 
 @Injectable()
 export class ExperimentService {
+  private readonly logger = createLogger('experiment.service', { service: 'server' });
+
   constructor(
     private readonly repo: ExperimentRepository,
     private readonly launcher: ExperimentLauncher,
@@ -61,6 +85,7 @@ export class ExperimentService {
     @Inject(DATABASE_CLIENT) private readonly db: DbClient,
     private readonly accessControl: AccessControlService,
     private readonly workflowAuth: WorkflowAuthorizationHook,
+    @Optional() private readonly objectStorage?: ObjectStorageProvider,
   ) {}
 
   async createExperiment(
@@ -70,6 +95,7 @@ export class ExperimentService {
     source: AuditSource = 'api',
     orgId?: string,
   ): Promise<ExperimentListItemDto> {
+    void source;
     await this.getWritableProject(projectId, actor);
     const parsed = createExperimentSchema.parse(dto);
     const existing = await this.repo.findExperimentByProjectAndName(projectId, parsed.name);
@@ -95,9 +121,8 @@ export class ExperimentService {
       createdBy: actor.sub,
     });
 
-    let workflowId: string | null = null;
     try {
-      workflowId = await this.launcher.launch(experimentId, orgId);
+      await this.launcher.launch(experimentId, orgId);
     } catch (error) {
       await this.repo.updateExperiment(projectId, experimentId, {
         status: 'failed',
@@ -157,6 +182,7 @@ export class ExperimentService {
     source: AuditSource = 'api',
     orgId?: string,
   ): Promise<ExperimentListItemDto> {
+    void source;
     await this.getWritableProject(projectId, actor);
     const parsedAction = experimentControlActionSchema.parse(action);
     const current = await this.repo.findExperimentById(projectId, experimentId);
@@ -168,7 +194,11 @@ export class ExperimentService {
     await this.repo.updateExperiment(projectId, experimentId, nextValues);
 
     if (parsedAction === 'resume' || parsedAction === 'retry') {
-      await this.workflowAuth.assertCanStart(toActorContext(actor), { projectId, orgId, source: 'local' }, 'experiment');
+      await this.workflowAuth.assertCanStart(
+        toActorContext(actor),
+        { projectId, orgId, source: 'local' },
+        'experiment',
+      );
       try {
         if (parsedAction === 'resume') await this.launcher.resume(experimentId, orgId);
         else await this.launcher.retry(experimentId, orgId);
@@ -207,7 +237,11 @@ export class ExperimentService {
       throw new NotFoundException(`Experiment ${experimentId} not found`);
     }
 
-    await this.repo.hardDeleteExperiment(projectId, experimentId);
+    const result = await this.repo.hardDeleteExperiment(projectId, experimentId);
+    if (result.deleted === 0) {
+      throw new NotFoundException(`Experiment ${experimentId} not found`);
+    }
+    await this.cleanupPayloadRefs(result.payloadRefs, { projectId, experimentId, operation: 'experiment.delete' });
   }
 
   async exportExperiments(
@@ -231,6 +265,34 @@ export class ExperimentService {
     };
   }
 
+  async exportExperimentPackage(
+    projectId: string,
+    experimentId: string,
+    detailFormat: RunResultExportFormatDto,
+    actor: CurrentUserPayload,
+    query: RunResultListQueryDto,
+  ): Promise<ExperimentExportPackageFile> {
+    const summaryFile = await this.exportExperiments(projectId, 'csv', actor, experimentId);
+    const detailFile = await this.runResults.exportExperimentRunResults(
+      projectId,
+      experimentId,
+      actor,
+      detailFormat,
+      query,
+    );
+    const baseName = summaryFile.fileName.replace(/\.csv$/u, '') || `experiment-${experimentId}`;
+
+    return {
+      fileName: `${baseName}-${detailFormat}.zip`,
+      contentType: 'application/zip',
+      detailFormat,
+      stream: createZipStream([
+        { name: 'summary.csv', source: summaryFile.buffer },
+        { name: `run-results.${detailFormat}`, source: detailFile.stream },
+      ]),
+    };
+  }
+
   private async getAccessibleProject(
     projectId: string,
     actor: CurrentUserPayload,
@@ -246,6 +308,15 @@ export class ExperimentService {
   private async getWritableProject(projectId: string, actor: CurrentUserPayload): Promise<ExperimentProjectAccessRow> {
     await this.accessControl.assertCan(toActorContext(actor), { projectId, source: 'local' }, 'project_write');
     return this.getAccessibleProject(projectId, actor);
+  }
+
+  private async cleanupPayloadRefs(refs: StoredObjectRef[], context: Record<string, unknown>): Promise<void> {
+    if (refs.length === 0 || !this.objectStorage?.isEnabled()) return;
+    try {
+      await this.objectStorage.deleteObjects(refs);
+    } catch (err) {
+      this.logger.warn({ ...context, refs: refs.length, err }, 'object_storage_payload_cleanup_failed');
+    }
   }
 
   private async createExperimentOrThrowNameConflict(args: {

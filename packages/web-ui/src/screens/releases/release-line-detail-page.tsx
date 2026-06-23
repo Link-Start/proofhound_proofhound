@@ -12,11 +12,14 @@ import {
   Check,
   ChevronDown,
   CircleDollarSign,
+  Download,
+  FileDown,
   Gauge,
   MoreHorizontal,
   Play,
   Plus,
   RotateCcw,
+  Save,
   ScrollText,
   Search,
   SlidersHorizontal,
@@ -44,9 +47,13 @@ import type {
   ProjectMonitoringFilterDto,
   ProjectMonitoringStatsDto,
   ProjectMonitoringTimeseriesDto,
+  ReleaseRunResultCleanupFilterDto,
+  ReleaseRunResultCleanupImpactDto,
   ReleaseLineDeletionImpactDto,
   ReleaseLineEventDto,
   ReleaseVersionKindDto,
+  RunResultExportFormatDto,
+  RunResultReleaseListQueryDto,
   ReleaseRunResultListItemDto,
   SourceBucket,
 } from '@proofhound/shared';
@@ -102,13 +109,23 @@ import {
   useUnarchiveReleaseLine,
   useUpdateReleaseLineInputRoute,
   useUpdateReleaseLineOutputRoute,
+  useUpdateReleaseLineRetention,
   useUpdateReleaseLineRunConfig,
   useUpdateReleaseLineTrafficRatio,
 } from '../../hooks';
-import { useReleaseRunResults } from '../../hooks';
+import {
+  useDownloadReleaseRunResults,
+  useReleaseRunResultCleanup,
+  useReleaseRunResultCleanupPreview,
+  useReleaseRunResults,
+} from '../../hooks';
 import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh, useDateTimeFormatter } from '../../hooks';
 import { useI18n, type TranslationKey } from '../../i18n';
-import { getApiErrorMessage, getReleaseLineId, getReleaseStopConfirmationName } from '../../lib';
+import {
+  getApiErrorMessage,
+  getReleaseLineId,
+  getReleaseStopConfirmationName,
+} from '../../lib';
 import type { ReleaseLineLatestEvent, ReleaseLineView } from '../../lib';
 import { BigChartCard, type DeltaTone } from '../monitoring/big-chart-card';
 import { formatCount, formatPercent } from './release-line-ui';
@@ -140,6 +157,26 @@ const RESULT_COLUMNS: TableColumn[] = [
 const RESULT_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const HISTORY_INITIAL_GROUP_LIMIT = 8;
 const HISTORY_GROUP_PAGE_SIZE = 8;
+const RELEASE_RETENTION_OPTIONS = ['3', '7', '30', '90', '180', '365', 'forever'] as const;
+type ReleaseRetentionOption = (typeof RELEASE_RETENTION_OPTIONS)[number];
+const RELEASE_RETENTION_LABEL_KEYS: Record<
+  ReleaseRetentionOption,
+  | 'productionReleases.new.retention.3'
+  | 'productionReleases.new.retention.7'
+  | 'productionReleases.new.retention.30'
+  | 'productionReleases.new.retention.90'
+  | 'productionReleases.new.retention.180'
+  | 'productionReleases.new.retention.365'
+  | 'productionReleases.new.retention.forever'
+> = {
+  '3': 'productionReleases.new.retention.3',
+  '7': 'productionReleases.new.retention.7',
+  '30': 'productionReleases.new.retention.30',
+  '90': 'productionReleases.new.retention.90',
+  '180': 'productionReleases.new.retention.180',
+  '365': 'productionReleases.new.retention.365',
+  forever: 'productionReleases.new.retention.forever',
+};
 type ResultReleaseVersionFilterOption = {
   id: string;
   label: string;
@@ -159,6 +196,18 @@ function useDateTimeOrDash() {
     (value: string | null | undefined) => (value ? formatDateTime(value, { fallback: '—' }) : '—'),
     [formatDateTime],
   );
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  if (typeof window === 'undefined') return;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 type ReleaseTimeseriesMetric =
@@ -946,6 +995,7 @@ export function ReleaseLineDetailPage({ projectId, releaseLineId }: { projectId:
   const updateRunConfigMutation = useUpdateReleaseLineRunConfig(projectId);
   const updateOutputRouteMutation = useUpdateReleaseLineOutputRoute(projectId);
   const updateInputRouteMutation = useUpdateReleaseLineInputRoute(projectId);
+  const updateRetentionMutation = useUpdateReleaseLineRetention(projectId);
   const modelQuery = useProjectModels(projectId);
   const outputConnectorsQuery = useConnectors(projectId, { direction: 'output' });
   const tab = resolveTab(searchParams.get('tab'));
@@ -964,6 +1014,13 @@ export function ReleaseLineDetailPage({ projectId, releaseLineId }: { projectId:
   const deleteError = deleteState.lineId === activeDeleteLineId ? deleteState.error : null;
   const deleteImpactQuery = useReleaseLineDeleteImpact(projectId, deleteDialogOpen ? activeDeleteLineId : '');
   const productionReleaseName = useMemo(() => getReleaseStopConfirmationName(line), [line]);
+  const currentRetentionOption = retentionOptionFromDays(line?.production?.currentEvent?.retentionDays ?? null);
+  const [retentionDraft, setRetentionDraft] = useState<ReleaseRetentionOption>(currentRetentionOption);
+  const retentionDirty = retentionDraft !== currentRetentionOption;
+  const canEditRetention = Boolean(
+    line?.production?.currentEvent &&
+      (line.production.currentEvent.status === 'running' || line.production.currentEvent.status === 'stopped'),
+  );
   const canConfirmStopProduction = stopConfirmationText === productionReleaseName && productionReleaseName.length > 0;
   const canConfirmDelete = Boolean(line && deleteConfirmationText === line.label);
   const canAddCanary = Boolean(line && line.production?.currentEvent?.status === 'running');
@@ -998,6 +1055,10 @@ export function ReleaseLineDetailPage({ projectId, releaseLineId }: { projectId:
     params.set('tab', normalizedTab);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [pathname, router, searchParams]);
+
+  useEffect(() => {
+    setRetentionDraft(currentRetentionOption);
+  }, [currentRetentionOption, line?.id]);
 
   const selectTab = useCallback(
     (next: DetailTab) => {
@@ -1140,6 +1201,14 @@ export function ReleaseLineDetailPage({ projectId, releaseLineId }: { projectId:
   function openAddCanaryPage() {
     if (!line || !canAddCanary) return;
     router.push(`/releases/new?mode=canary&line=${encodeURIComponent(line.id)}`);
+  }
+
+  function saveRetention() {
+    if (!line || !canEditRetention || !retentionDirty) return;
+    updateRetentionMutation.mutate({
+      releaseLineId: line.id,
+      body: { retentionDays: retentionDaysFromOption(retentionDraft) },
+    });
   }
 
   return (
@@ -1295,32 +1364,96 @@ export function ReleaseLineDetailPage({ projectId, releaseLineId }: { projectId:
           />
         ) : null}
         {tab === 'settings' ? (
-          <section className="rounded-lg border bg-card" data-testid="release-line-settings-tab">
+          <section className="mx-auto max-w-4xl rounded-lg border bg-card" data-testid="release-line-settings-tab">
             <div className="border-b px-4 py-3">
               <div className="text-[13px] font-semibold">{t('releases.detail.settings.title')}</div>
               <p className="mt-1 text-[12px] text-muted-foreground">{t('releases.detail.settings.description')}</p>
             </div>
-            <div className="p-4">
-              <div className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-[13px] font-semibold text-destructive">
-                    <AlertTriangle className="size-4" />
-                    {t('releases.detail.delete.dangerTitle')}
-                  </div>
-                  <p className="mt-1 max-w-3xl text-[12px] text-muted-foreground">
-                    {t('releases.detail.delete.description')}
-                  </p>
+            <div className="space-y-4 p-4">
+              <ReleaseSettingsCard
+                dataTestId="release-line-retention-settings"
+                icon={<Timer className="size-4" />}
+                title={t('releases.detail.retention.title')}
+                description={t('releases.detail.retention.description')}
+                footer={{
+                  note: updateRetentionMutation.isError ? (
+                    <span className="text-destructive">
+                      {getApiErrorMessage(updateRetentionMutation.error) ??
+                        t('releases.detail.retention.updateFailed')}
+                    </span>
+                  ) : canEditRetention ? (
+                    formatTemplate(t('releases.detail.retention.current'), {
+                      value: t(RELEASE_RETENTION_LABEL_KEYS[currentRetentionOption]),
+                    })
+                  ) : (
+                    t('releases.detail.retention.noProduction')
+                  ),
+                  action: (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={saveRetention}
+                      disabled={!canEditRetention || !retentionDirty || updateRetentionMutation.isPending}
+                      data-testid="release-line-retention-save"
+                    >
+                      <Save className="size-3.5" aria-hidden="true" />
+                      {updateRetentionMutation.isPending
+                        ? t('releases.detail.retention.saving')
+                        : t('releases.detail.retention.save')}
+                    </Button>
+                  ),
+                }}
+              >
+                <div className="flex flex-wrap gap-2" role="group" aria-label={t('releases.detail.retention.title')}>
+                  {RELEASE_RETENTION_OPTIONS.map((option) => {
+                    const selected = option === retentionDraft;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        className={cn(
+                          'inline-flex min-h-9 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium transition-colors',
+                          selected
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border bg-card text-muted-foreground hover:text-foreground',
+                          !canEditRetention && 'cursor-not-allowed opacity-60',
+                        )}
+                        disabled={!canEditRetention || updateRetentionMutation.isPending}
+                        onClick={() => setRetentionDraft(option)}
+                        data-testid={`release-line-retention-${option}`}
+                      >
+                        {selected ? <Check className="size-3.5" /> : null}
+                        {t(RELEASE_RETENTION_LABEL_KEYS[option])}
+                      </button>
+                    );
+                  })}
                 </div>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={openDeleteDialog}
-                  data-testid="release-line-delete-open"
-                >
-                  <Trash2 className="size-4" />
-                  {t('releases.detail.delete.open')}
-                </Button>
-              </div>
+              </ReleaseSettingsCard>
+              <ReleaseRunResultCleanupSettings
+                projectId={projectId}
+                line={line}
+                releaseEvents={releaseLineEventsQuery.data?.data ?? []}
+              />
+              <ReleaseSettingsCard
+                tone="danger"
+                icon={<AlertTriangle className="size-4" />}
+                title={t('releases.detail.delete.dangerTitle')}
+                description={t('releases.detail.delete.description')}
+                footer={{
+                  action: (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={openDeleteDialog}
+                      data-testid="release-line-delete-open"
+                    >
+                      <Trash2 className="size-3.5" />
+                      {t('releases.detail.delete.open')}
+                    </Button>
+                  ),
+                }}
+              />
             </div>
           </section>
         ) : null}
@@ -1872,8 +2005,12 @@ function ResultsPane({
     releaseVersionFilter === 'all' || releaseVersionOptions.some((option) => option.id === releaseVersionFilter)
       ? releaseVersionFilter
       : 'all';
-  const releaseVersionIds = activeReleaseVersionFilter === 'all' ? undefined : [activeReleaseVersionFilter];
+  const releaseVersionIds = useMemo(
+    () => (activeReleaseVersionFilter === 'all' ? undefined : [activeReleaseVersionFilter]),
+    [activeReleaseVersionFilter],
+  );
   const applyDateRange = isResultDateRangeApplied(dateRange);
+  const downloadReleaseRunResults = useDownloadReleaseRunResults(projectId);
   const handleDateRangeChange = useCallback((next: DateRangeValue) => {
     setDateRange(next);
     setPageIndex(0);
@@ -1919,9 +2056,8 @@ function ResultsPane({
     }),
     [t],
   );
-  const resultsQuery = useReleaseRunResults(
-    projectId,
-    {
+  const resultQuery = useMemo<RunResultReleaseListQueryDto>(
+    () => ({
       page: pageIndex + 1,
       pageSize,
       sort: 'created_desc',
@@ -1933,8 +2069,20 @@ function ResultsPane({
       releaseVersionScope: 'exact',
       from: applyDateRange ? dateRange.from : undefined,
       to: applyDateRange ? dateRange.to : undefined,
+    }),
+    [applyDateRange, dateRange.from, dateRange.to, pageIndex, pageSize, releaseVersionIds, sourceIds],
+  );
+  const resultsQuery = useReleaseRunResults(projectId, resultQuery, sourceIds.length > 0);
+  const handleExportResults = useCallback(
+    (format: RunResultExportFormatDto) => {
+      downloadReleaseRunResults.mutate(
+        { format, query: resultQuery },
+        {
+          onSuccess: (result) => downloadBlob(result.blob, result.fileName),
+        },
+      );
     },
-    sourceIds.length > 0,
+    [downloadReleaseRunResults, resultQuery],
   );
   const rows = resultsQuery.data?.data ?? [];
   const resultsLoading = useDelayedLoading(resultsQuery.isLoading);
@@ -1970,6 +2118,39 @@ function ResultsPane({
             }}
             disabled={releaseVersionOptions.length === 0}
           />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-10 gap-1.5"
+                disabled={sourceIds.length === 0 || downloadReleaseRunResults.isPending}
+              >
+                <Download className="size-3.5" aria-hidden="true" />
+                {downloadReleaseRunResults.isPending
+                  ? t('releases.detail.results.exporting')
+                  : t('releases.detail.results.export')}
+                <ChevronDown className="size-3.5" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={sourceIds.length === 0 || downloadReleaseRunResults.isPending}
+                onClick={() => handleExportResults('csv')}
+              >
+                <Download className="size-4" aria-hidden="true" />
+                {t('releases.detail.results.exportCsv')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={sourceIds.length === 0 || downloadReleaseRunResults.isPending}
+                onClick={() => handleExportResults('jsonl')}
+              >
+                <FileDown className="size-4" aria-hidden="true" />
+                {t('releases.detail.results.exportJsonl')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       <Table columns={RESULT_COLUMNS}>
@@ -2050,28 +2231,356 @@ function ResultsPane({
   );
 }
 
+function ReleaseRunResultCleanupSettings({
+  projectId,
+  line,
+  releaseEvents,
+}: {
+  projectId: string;
+  line: ReleaseLineView;
+  releaseEvents: ReleaseLineEventDto[];
+}) {
+  const { t } = useI18n();
+  const [releaseVersionFilter, setReleaseVersionFilter] = useState('all');
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [cleanupPreview, setCleanupPreview] = useState<ReleaseRunResultCleanupImpactDto | null>(null);
+  const [previewedFilterKey, setPreviewedFilterKey] = useState<string | null>(null);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+  const sourceIds = useMemo(() => getReleaseResultSourceIds(line, releaseEvents), [line, releaseEvents]);
+  const releaseVersionOptions = useMemo(
+    () => getReleaseResultVersionOptions(line, releaseEvents),
+    [line, releaseEvents],
+  );
+  const activeReleaseVersionFilter =
+    releaseVersionFilter !== 'all' && releaseVersionOptions.some((option) => option.id === releaseVersionFilter)
+      ? releaseVersionFilter
+      : 'all';
+  const selectedReleaseVersion = useMemo(
+    () => releaseVersionOptions.find((option) => option.id === activeReleaseVersionFilter) ?? null,
+    [activeReleaseVersionFilter, releaseVersionOptions],
+  );
+  const releaseVersionIds = useMemo(
+    () => (selectedReleaseVersion ? [selectedReleaseVersion.id] : undefined),
+    [selectedReleaseVersion],
+  );
+  const cleanupFilter = useMemo<ReleaseRunResultCleanupFilterDto | null>(() => {
+    if (!releaseVersionIds) return null;
+    return {
+      sourceIds: sourceIds.length > 0 ? sourceIds : undefined,
+      releaseVersionIds,
+      releaseVersionScope: 'exact',
+    };
+  }, [releaseVersionIds, sourceIds]);
+  const cleanupFilterKey = useMemo(
+    () =>
+      cleanupFilter
+        ? JSON.stringify({
+            releaseVersionIds: cleanupFilter.releaseVersionIds ?? [],
+            sourceIds: cleanupFilter.sourceIds ?? [],
+          })
+        : null,
+    [cleanupFilter],
+  );
+  const cleanupPreviewMutation = useReleaseRunResultCleanupPreview(projectId);
+  const cleanupMutation = useReleaseRunResultCleanup(projectId);
+  const previewReleaseCleanup = cleanupPreviewMutation.mutateAsync;
+  const cleanupPreviewReady =
+    cleanupPreview !== null && cleanupFilterKey !== null && previewedFilterKey === cleanupFilterKey;
+  const cleanupActionDisabled =
+    cleanupFilter === null ||
+    cleanupPreviewMutation.isPending ||
+    cleanupMutation.isPending ||
+    cleanupPreview === null ||
+    !cleanupPreviewReady ||
+    cleanupPreview.runResults === 0;
+
+  useEffect(() => {
+    if (!cleanupFilter || !cleanupFilterKey) {
+      return;
+    }
+
+    let canceled = false;
+    void previewReleaseCleanup(cleanupFilter)
+      .then((preview) => {
+        if (canceled) return;
+        setCleanupPreview(preview);
+        setPreviewedFilterKey(cleanupFilterKey);
+      })
+      .catch((error) => {
+        if (canceled) return;
+        setCleanupError(getApiErrorMessage(error) ?? t('releases.detail.cleanup.loadFailed'));
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [cleanupFilter, cleanupFilterKey, previewReleaseCleanup, t]);
+
+  const handleVersionFilterChange = useCallback((next: string) => {
+    setReleaseVersionFilter(next);
+    setCleanupPreview(null);
+    setPreviewedFilterKey(null);
+    setCleanupError(null);
+  }, []);
+
+  const handleOpenCleanupDialog = useCallback(() => {
+    if (cleanupActionDisabled) return;
+    setCleanupDialogOpen(true);
+  }, [cleanupActionDisabled]);
+
+  const handleCleanup = useCallback(async () => {
+    if (!cleanupFilter || !cleanupPreviewReady) return;
+    setCleanupError(null);
+    try {
+      await cleanupMutation.mutateAsync({
+        ...cleanupFilter,
+        confirmation: 'delete_release_run_results',
+      });
+      setCleanupDialogOpen(false);
+      setReleaseVersionFilter('all');
+      setCleanupPreview(null);
+      setPreviewedFilterKey(null);
+    } catch (error) {
+      setCleanupError(getApiErrorMessage(error) ?? t('releases.detail.cleanup.deleteFailed'));
+    }
+  }, [cleanupFilter, cleanupMutation, cleanupPreviewReady, t]);
+
+  const cleanupHint =
+    releaseVersionOptions.length === 0
+      ? t('releases.detail.cleanup.noVersions')
+      : selectedReleaseVersion
+        ? formatTemplate(t('releases.detail.cleanup.versionSummary'), { version: selectedReleaseVersion.label })
+        : t('releases.detail.cleanup.versionHelp');
+
+  return (
+    <>
+      <ReleaseSettingsCard
+        dataTestId="release-run-result-cleanup-settings"
+        icon={<Trash2 className="size-4" />}
+        title={t('releases.detail.cleanup.title')}
+        description={t('releases.detail.cleanup.description')}
+        footer={{
+          note: cleanupError ? (
+            <span className="text-destructive">{cleanupError}</span>
+          ) : cleanupPreviewReady && cleanupPreview?.runResults === 0 ? (
+            t('releases.detail.cleanup.empty')
+          ) : selectedReleaseVersion && cleanupPreviewReady ? (
+            formatTemplate(t('releases.detail.cleanup.versionSummary'), { version: selectedReleaseVersion.label })
+          ) : null,
+          action: (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              onClick={handleOpenCleanupDialog}
+              disabled={cleanupActionDisabled}
+              title={
+                selectedReleaseVersion
+                  ? t('releases.detail.cleanup.delete')
+                  : t('releases.detail.cleanup.versionRequired')
+              }
+              data-testid="release-run-result-delete-records"
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              {t('releases.detail.cleanup.delete')}
+            </Button>
+          ),
+        }}
+      >
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <label htmlFor="release-cleanup-version-filter" className="text-[12.5px] font-medium">
+              {t('releases.detail.cleanup.versionLabel')}
+            </label>
+            <ResultReleaseVersionSelect
+              id="release-cleanup-version-filter"
+              options={releaseVersionOptions}
+              value={activeReleaseVersionFilter}
+              onChange={handleVersionFilterChange}
+              disabled={releaseVersionOptions.length === 0 || cleanupPreviewMutation.isPending || cleanupMutation.isPending}
+              allowAll={false}
+              placeholderLabel={t('releases.detail.cleanup.versionPlaceholder')}
+              triggerWidth="full"
+              dataTestId="release-cleanup-version-filter"
+            />
+          </div>
+
+          <div className="rounded-md border bg-muted/35 px-3 py-2.5">
+            <div className="text-[11px] font-medium text-muted-foreground">
+              {t('releases.detail.cleanup.estimateTitle')}
+            </div>
+            {cleanupPreviewMutation.isPending ? (
+              <div className="mt-1 text-[12px] text-muted-foreground">{t('releases.detail.cleanup.previewing')}</div>
+            ) : cleanupPreviewReady && cleanupPreview ? (
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <CleanupMetric
+                  label={t('releases.detail.cleanup.runResults')}
+                  value={formatCount(cleanupPreview.runResults)}
+                />
+                <CleanupMetric
+                  label={t('releases.detail.cleanup.matched')}
+                  value={formatResultBytes(cleanupPreview.estimatedMatchedBytes)}
+                />
+              </div>
+            ) : (
+              <div className="mt-1 text-[12px] text-muted-foreground">{cleanupHint}</div>
+            )}
+          </div>
+        </div>
+      </ReleaseSettingsCard>
+
+      <Dialog open={cleanupDialogOpen} onOpenChange={setCleanupDialogOpen}>
+        <DialogContent data-testid="release-run-result-cleanup-dialog">
+          <DialogHeader>
+            <DialogTitle>{t('releases.detail.cleanup.dialogTitle')}</DialogTitle>
+            <DialogDescription>
+              {formatTemplate(t('releases.detail.cleanup.dialogDescription'), {
+                version: selectedReleaseVersion?.label ?? '',
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          {cleanupPreviewReady && cleanupPreview ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CleanupMetric
+                label={t('releases.detail.cleanup.runResults')}
+                value={formatCount(cleanupPreview.runResults)}
+              />
+              <CleanupMetric
+                label={t('releases.detail.cleanup.annotations')}
+                value={formatCount(cleanupPreview.annotations)}
+              />
+              <CleanupMetric
+                label={t('releases.detail.cleanup.matched')}
+                value={formatResultBytes(cleanupPreview.estimatedMatchedBytes)}
+              />
+              <CleanupMetric
+                label={t('releases.detail.cleanup.deferred')}
+                value={formatResultBytes(cleanupPreview.deferredObjectBytes)}
+              />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCleanupDialogOpen(false)}
+              disabled={cleanupMutation.isPending}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleCleanup}
+              disabled={cleanupActionDisabled}
+            >
+              {cleanupMutation.isPending ? t('releases.detail.cleanup.deleting') : t('releases.detail.cleanup.confirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function ReleaseSettingsCard({
+  icon,
+  title,
+  description,
+  tone = 'default',
+  dataTestId,
+  children,
+  footer,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  tone?: 'default' | 'danger';
+  dataTestId?: string;
+  children?: ReactNode;
+  footer?: { note?: ReactNode; action: ReactNode };
+}) {
+  const danger = tone === 'danger';
+  return (
+    <div
+      className={cn(
+        'overflow-hidden rounded-md border bg-background',
+        danger && 'border-destructive/30 bg-destructive/5',
+      )}
+      data-testid={dataTestId}
+    >
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          <div
+            className={cn(
+              'mt-0.5 shrink-0 rounded-md border bg-muted/50 p-2 text-muted-foreground',
+              danger && 'border-destructive/30 bg-destructive/10 text-destructive',
+            )}
+          >
+            {icon}
+          </div>
+          <div className="min-w-0">
+            <div className={cn('text-[13px] font-semibold', danger && 'text-destructive')}>{title}</div>
+            <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">{description}</p>
+          </div>
+        </div>
+        {children ? <div className="mt-4">{children}</div> : null}
+      </div>
+      {footer ? (
+        <div
+          className={cn(
+            'flex items-center justify-between gap-4 border-t bg-muted/20 px-4 py-3',
+            danger && 'border-destructive/30 bg-destructive/10',
+          )}
+        >
+          <div className="min-w-0 flex-1 text-[12px] leading-relaxed text-muted-foreground">{footer.note}</div>
+          <div className="shrink-0">{footer.action}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CleanupMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-background px-3 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-[13px] font-semibold">{value}</div>
+    </div>
+  );
+}
+
 function ResultReleaseVersionSelect({
   id,
   options,
   value,
   onChange,
   disabled,
+  allowAll = true,
+  placeholderLabel,
+  triggerWidth = 'fixed',
+  dataTestId = 'release-result-version-filter',
 }: {
   id: string;
   options: ResultReleaseVersionFilterOption[];
   value: string;
   onChange: (next: string) => void;
   disabled?: boolean;
+  allowAll?: boolean;
+  placeholderLabel?: string;
+  triggerWidth?: 'fixed' | 'full';
+  dataTestId?: string;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const selectedOption = value === 'all' ? null : (options.find((option) => option.id === value) ?? null);
   const allLabel = t('releases.detail.results.versionFilter.all');
-  const triggerLabel = selectedOption?.label ?? allLabel;
+  const triggerLabel = selectedOption?.label ?? placeholderLabel ?? allLabel;
   const triggerDetail = selectedOption?.detail ?? null;
   const normalizedQuery = normalizeResultVersionSearch(query);
-  const allOptionVisible = !normalizedQuery || resultVersionSearchIncludes(normalizedQuery, [allLabel, 'all']);
+  const allOptionVisible =
+    allowAll && (!normalizedQuery || resultVersionSearchIncludes(normalizedQuery, [allLabel, 'all']));
   const filteredOptions = useMemo(() => {
     if (!normalizedQuery) return options;
     return options.filter((option) =>
@@ -2105,8 +2614,11 @@ function ResultReleaseVersionSelect({
           type="button"
           variant="outline"
           disabled={disabled}
-          data-testid="release-result-version-filter"
-          className="h-auto min-h-10 w-full justify-between px-3 py-2 text-left sm:w-[340px]"
+          data-testid={dataTestId}
+          className={cn(
+            'h-auto min-h-10 w-full justify-between px-3 py-2 text-left',
+            triggerWidth === 'fixed' ? 'sm:w-[340px]' : 'sm:w-full',
+          )}
         >
           <span className="min-w-0">
             <span className="block truncate font-mono text-[13px] font-semibold">{triggerLabel}</span>
@@ -2398,6 +2910,19 @@ function formatResultTokens(row: ReleaseRunResultListItemDto): string {
   const output = row.outputTokens ?? 0;
   const total = input + output;
   return total > 0 ? formatCount(total) : '—';
+}
+
+function formatResultBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
 }
 
 function formatShortId(value: string | null | undefined) {
@@ -3308,6 +3833,20 @@ type Translate = ReturnType<typeof useI18n>['t'];
 
 function formatTemplate(template: string, values: Record<string, string | number>) {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''));
+}
+
+function retentionOptionFromDays(days: number | null | undefined): ReleaseRetentionOption {
+  if (days === 3) return '3';
+  if (days === 7) return '7';
+  if (days === 30) return '30';
+  if (days === 90) return '90';
+  if (days === 180) return '180';
+  if (days === 365) return '365';
+  return 'forever';
+}
+
+function retentionDaysFromOption(option: ReleaseRetentionOption): number | null {
+  return option === 'forever' ? null : Number(option);
 }
 
 type HistoryVersionKind = ReleaseLineEventDto['releaseVersionKind'];

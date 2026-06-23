@@ -5,7 +5,8 @@ import type { DbClient } from '@proofhound/db';
 import type { LLMRunResultRecord, LLMRunResultWriter } from '@proofhound/llm-client';
 import { createLogger } from '@proofhound/logger';
 import { QuotaPolicyHook } from '../../common/contracts/quota-policy.hook';
-import { safeRecordUsageEvent, UsageMeteringHook } from '../../common/contracts/usage-metering.hook';
+import { UsageMeteringHook } from '../../common/contracts/usage-metering.hook';
+import { safeRecordUsageEvent } from '../../common/contracts/usage-metering.hook';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 
 // ph_runs.run_results is monthly-partitioned by created_at, so UNIQUE(id) cannot live on that table.
@@ -43,9 +44,12 @@ export class DrizzleRunResultWriter implements LLMRunResultWriter {
     const bullmqJobId = record.bullmqJobId ?? null;
     const roundIndex = record.roundIndex ?? null;
     const releaseVersionId = record.releaseVersionId ?? null;
+    const project = record.orgId
+      ? { projectId: record.projectId, orgId: record.orgId, source: 'local' as const }
+      : { projectId: record.projectId, source: 'local' as const };
     await this.quotaPolicy.assertCanStore({
       bytes: estimateRunResultBytes(record),
-      project: { projectId: record.projectId, source: 'local' },
+      project,
       source: 'run_result',
     });
 
