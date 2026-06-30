@@ -19,11 +19,6 @@ import type {
 } from '@proofhound/shared';
 import { sql, type SQL } from 'drizzle-orm';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
-import type { StoredObjectRef } from '../../common/contracts/object-storage.provider';
-import { DatasetSamplePayloadReader, type DatasetSamplePayloadRef } from '../dataset/dataset-sample-payload';
-import type { RunResultPayloadRef } from './run-result-payload';
-import { collectStoredObjectRefs, sumStoredObjectBytes } from './run-result-payload-ref';
-import { RunResultPayloadReader } from './run-result-payload.reader';
 
 export interface BatchTerminalCounts {
   terminalCount: number;
@@ -35,9 +30,7 @@ export interface ExperimentAccessRow {
   projectId: string;
 }
 
-export interface ReleaseRunResultCleanupDeleteResult extends ReleaseRunResultCleanupImpactDto {
-  payloadRefs: StoredObjectRef[];
-}
+export type ReleaseRunResultCleanupDeleteResult = ReleaseRunResultCleanupImpactDto;
 
 export interface ReleaseRunResultRetentionTarget {
   projectId: string;
@@ -49,7 +42,6 @@ export interface ReleaseRunResultRetentionTarget {
 export interface ReleaseRunResultRetentionCleanup {
   target: ReleaseRunResultRetentionTarget;
   impact: ReleaseRunResultCleanupImpactDto;
-  payloadRefs: StoredObjectRef[];
 }
 
 export interface ReleaseRunResultRetentionCleanupBatch {
@@ -74,11 +66,7 @@ export interface ReleaseRunResultExportItem extends ReleaseRunResultListItemDto 
 
 @Injectable()
 export class RunResultRepository {
-  constructor(
-    @Inject(DATABASE_CLIENT) private readonly db: DbClient,
-    private readonly payloadReader: RunResultPayloadReader,
-    private readonly samplePayloadReader: DatasetSamplePayloadReader,
-  ) {}
+  constructor(@Inject(DATABASE_CLIENT) private readonly db: DbClient) {}
 
   async aggregateExperimentLatency(experimentId: string): Promise<{
     averageMs: number | null;
@@ -267,12 +255,9 @@ export class RunResultRepository {
           rr.external_id ILIKE ${pattern}
           OR ds.external_id ILIKE ${pattern}
           OR ds.data::text ILIKE ${pattern}
-          OR ds.index_values::text ILIKE ${pattern}
           OR rr.raw_response ILIKE ${pattern}
           OR rr.input_variables::text ILIKE ${pattern}
           OR rr.decision_output ILIKE ${pattern}
-          OR rr.input_preview ILIKE ${pattern}
-          OR rr.output_preview ILIKE ${pattern}
           OR rr.expected_output ILIKE ${pattern}
           OR rr.error_message ILIKE ${pattern}
         )`,
@@ -303,15 +288,10 @@ export class RunResultRepository {
         rr.decision_output,
         rr.expected_output,
         ds.data AS sample_data,
-        ds.index_values AS sample_index_values,
-        ds.payload_ref AS sample_payload_ref,
         d.field_schema AS dataset_field_schema,
-        rr.input_preview,
-        rr.output_preview,
         rr.input_variables,
         rr.raw_response,
         rr.parsed_output,
-        rr.payload_ref,
         rr.error_class,
         rr.error_message,
         rr.latency_ms,
@@ -400,12 +380,9 @@ export class RunResultRepository {
         rr.judgment_status,
         rr.is_correct,
         rr.decision_output,
-        rr.input_preview,
-        rr.output_preview,
         rr.input_variables,
         rr.raw_response,
         rr.parsed_output,
-        rr.payload_ref,
         rr.error_class,
         rr.error_message,
         rr.latency_ms,
@@ -441,25 +418,7 @@ export class RunResultRepository {
     const totalList = unwrapRows<{ total: number | string }>(totalResult);
     const total = Number(totalList[0]?.total ?? 0);
 
-    // Release run_results offload input_variables / rendered_prompt (SPEC 30 §9.4); hydrate the page
-    // (bounded by pageSize) so the release list keeps showing input. Pass-through when not offloaded.
     const releaseRows = unwrapRows<ReleaseRunResultRowShape>(dataRowsResult);
-    const releaseFields = await this.payloadReader.hydrateMany(
-      releaseRows.map((r) => ({
-        renderedPrompt: null,
-        inputVariables: r.input_variables,
-        rawResponse: r.raw_response,
-        parsedOutput: r.parsed_output,
-        payloadRef: r.payload_ref,
-      })),
-    );
-    releaseRows.forEach((r, i) => {
-      const f = releaseFields[i];
-      if (!f) return;
-      r.input_variables = f.inputVariables;
-      r.raw_response = f.rawResponse;
-      r.parsed_output = f.parsedOutput;
-    });
 
     return {
       data: releaseRows.map(toReleaseListItem),
@@ -489,11 +448,7 @@ export class RunResultRepository {
           rr.decision_output,
           rr.expected_output,
           ds.data AS sample_data,
-          ds.index_values AS sample_index_values,
-          ds.payload_ref AS sample_payload_ref,
           d.field_schema AS dataset_field_schema,
-          rr.input_preview,
-          rr.output_preview,
           rr.error_class,
           rr.error_message,
           rr.latency_ms,
@@ -509,7 +464,6 @@ export class RunResultRepository {
           rr.input_variables,
           rr.raw_response,
           rr.parsed_output,
-          rr.payload_ref,
           rr.dbos_workflow_id,
           rr.bullmq_job_id
         FROM ph_runs.run_results rr
@@ -521,25 +475,6 @@ export class RunResultRepository {
         LIMIT ${options.limit}
       `),
     );
-
-    const fields = await this.payloadReader.hydrateMany(
-      rows.map((r) => ({
-        renderedPrompt: r.rendered_prompt,
-        inputVariables: r.input_variables,
-        rawResponse: r.raw_response,
-        parsedOutput: r.parsed_output,
-        payloadRef: r.payload_ref,
-      })),
-    );
-    rows.forEach((r, i) => {
-      const f = fields[i];
-      if (!f) return;
-      r.rendered_prompt = f.renderedPrompt;
-      r.input_variables = f.inputVariables;
-      r.raw_response = f.rawResponse;
-      r.parsed_output = f.parsedOutput;
-    });
-    await this.hydrateSampleDataForRows(rows);
 
     return {
       rows: rows.map(toDetail),
@@ -588,13 +523,10 @@ export class RunResultRepository {
           rr.judgment_status,
           rr.is_correct,
           rr.decision_output,
-          rr.input_preview,
-          rr.output_preview,
           rr.rendered_prompt,
           rr.input_variables,
           rr.raw_response,
           rr.parsed_output,
-          rr.payload_ref,
           rr.error_class,
           rr.error_message,
           rr.latency_ms,
@@ -617,24 +549,6 @@ export class RunResultRepository {
         LIMIT ${options.limit}
       `),
     );
-
-    const fields = await this.payloadReader.hydrateMany(
-      rows.map((r) => ({
-        renderedPrompt: r.rendered_prompt,
-        inputVariables: r.input_variables,
-        rawResponse: r.raw_response,
-        parsedOutput: r.parsed_output,
-        payloadRef: r.payload_ref,
-      })),
-    );
-    rows.forEach((r, i) => {
-      const f = fields[i];
-      if (!f) return;
-      r.rendered_prompt = f.renderedPrompt;
-      r.input_variables = f.inputVariables;
-      r.raw_response = f.rawResponse;
-      r.parsed_output = f.parsedOutput;
-    });
 
     return {
       rows: rows.map(toReleaseExportItem),
@@ -672,12 +586,12 @@ export class RunResultRepository {
       const cleanups: ReleaseRunResultRetentionCleanup[] = [];
 
       for (const target of targets) {
-        const { payloadRefs, ...impact } = await this.deleteReleaseCleanupWithExecutor(execute, target.projectId, {
+        const impact = await this.deleteReleaseCleanupWithExecutor(execute, target.projectId, {
           sourceIds: [target.sourceId],
           releaseVersionScope: 'exact',
           to: target.cutoff,
         });
-        cleanups.push({ target, impact, payloadRefs });
+        cleanups.push({ target, impact });
       }
 
       return { lockAcquired: true, targets: targets.length, cleanups };
@@ -730,10 +644,10 @@ export class RunResultRepository {
     projectId: string,
     filter: ReleaseRunResultCleanupFilterDto,
   ): Promise<ReleaseRunResultCleanupDeleteResult> {
-    const { impact, reclaimablePayloadRefs } = await this.describeReleaseCleanup(execute, projectId, filter);
+    const { impact } = await this.describeReleaseCleanup(execute, projectId, filter);
 
     if (impact.runResults === 0) {
-      return { ...impact, payloadRefs: [] };
+      return impact;
     }
 
     const whereSql = releaseRunResultWhereSql(projectId, filter);
@@ -771,14 +685,14 @@ export class RunResultRepository {
         AND rr.created_at = target.created_at
     `);
 
-    return { ...impact, payloadRefs: reclaimablePayloadRefs };
+    return impact;
   }
 
   private async describeReleaseCleanup(
     execute: (query: SQL) => Promise<unknown>,
     projectId: string,
     filter: ReleaseRunResultCleanupFilterDto,
-  ): Promise<{ impact: ReleaseRunResultCleanupImpactDto; reclaimablePayloadRefs: StoredObjectRef[] }> {
+  ): Promise<{ impact: ReleaseRunResultCleanupImpactDto }> {
     const whereSql = releaseRunResultWhereSql(projectId, filter);
     const impactRows = unwrapRows<{
       run_results: number | string;
@@ -815,55 +729,6 @@ export class RunResultRepository {
       `),
     );
 
-    const allPayloadRows = unwrapRows<{ payload_ref: unknown }>(
-      await execute(sql`
-        WITH target_run_results AS (
-          SELECT rr.payload_ref
-          FROM ph_runs.run_results rr
-          JOIN ph_releases.release_line_events release_event
-            ON release_event.id = rr.source_id
-           AND release_event.project_id = rr.project_id
-          LEFT JOIN ph_releases.release_versions release_version
-            ON release_version.id = COALESCE(rr.release_version_id, release_event.release_version_id)
-          WHERE ${whereSql}
-        )
-        SELECT payload_ref
-        FROM target_run_results
-        WHERE payload_ref IS NOT NULL
-      `),
-    );
-
-    const reclaimablePayloadRows = unwrapRows<{ payload_ref: unknown }>(
-      await execute(sql`
-        WITH target_run_results AS (
-          SELECT rr.id, rr.created_at, rr.payload_ref
-          FROM ph_runs.run_results rr
-          JOIN ph_releases.release_line_events release_event
-            ON release_event.id = rr.source_id
-           AND release_event.project_id = rr.project_id
-          LEFT JOIN ph_releases.release_versions release_version
-            ON release_version.id = COALESCE(rr.release_version_id, release_event.release_version_id)
-          WHERE ${whereSql}
-        )
-        SELECT DISTINCT target.payload_ref
-        FROM target_run_results target
-        WHERE target.payload_ref IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1
-            FROM ph_runs.run_results other
-            WHERE other.payload_ref IS NOT NULL
-              AND COALESCE(other.payload_ref->'shard'->>'key', other.payload_ref->>'key')
-                = COALESCE(target.payload_ref->'shard'->>'key', target.payload_ref->>'key')
-              AND NOT EXISTS (
-                SELECT 1
-                FROM target_run_results same_target
-                WHERE same_target.id = other.id
-                  AND same_target.created_at = other.created_at
-              )
-          )
-      `),
-    );
-
     const first = impactRows[0] ?? {
       run_results: 0,
       annotations: 0,
@@ -873,11 +738,11 @@ export class RunResultRepository {
     const runResultRowBytes = nonnegativeInteger(first.run_result_row_bytes);
     const annotationBytes = nonnegativeInteger(first.annotation_bytes);
     const dbBytes = runResultRowBytes + annotationBytes;
-    const allPayloadRefs = collectStoredObjectRefs(allPayloadRows.map((row) => row.payload_ref));
-    const reclaimablePayloadRefs = collectStoredObjectRefs(reclaimablePayloadRows.map((row) => row.payload_ref));
-    const objectBytes = sumStoredObjectBytes(allPayloadRefs);
-    const reclaimableObjectBytes = sumStoredObjectBytes(reclaimablePayloadRefs);
-    const deferredObjectBytes = Math.max(0, objectBytes - reclaimableObjectBytes);
+    // OSS stores run-result payloads inline in PostgreSQL; there is no object-storage tier to reclaim,
+    // so the object byte accounting is always zero and only the DB bytes are real.
+    const objectBytes = 0;
+    const reclaimableObjectBytes = 0;
+    const deferredObjectBytes = 0;
 
     return {
       impact: {
@@ -892,7 +757,6 @@ export class RunResultRepository {
         estimatedMatchedBytes: dbBytes + objectBytes,
         estimatedReclaimableBytes: dbBytes + reclaimableObjectBytes,
       },
-      reclaimablePayloadRefs,
     };
   }
 
@@ -910,8 +774,6 @@ export class RunResultRepository {
         rr.decision_output,
         rr.expected_output,
         ds.data AS sample_data,
-        ds.index_values AS sample_index_values,
-        ds.payload_ref AS sample_payload_ref,
         d.field_schema AS dataset_field_schema,
         rr.error_class,
         rr.error_message,
@@ -927,7 +789,6 @@ export class RunResultRepository {
         rr.input_variables,
         rr.raw_response,
         rr.parsed_output,
-        rr.payload_ref,
         rr.dbos_workflow_id,
         rr.bullmq_job_id
       FROM ph_runs.run_results rr
@@ -944,42 +805,7 @@ export class RunResultRepository {
     const list = unwrapRows<RunResultDetailRowShape>(rows);
     const first = list[0];
     if (!first) return null;
-    // Resolve the large fields through the seam: inline when present, else read the offload shard
-    // (SPEC 30 §9.2). A no-op pass-through when the row was never compacted / storage is disabled.
-    const [fields, sampleData] = await Promise.all([
-      this.payloadReader.hydrate({
-        renderedPrompt: first.rendered_prompt,
-        inputVariables: first.input_variables,
-        rawResponse: first.raw_response,
-        parsedOutput: first.parsed_output,
-        payloadRef: first.payload_ref,
-      }),
-      this.samplePayloadReader.hydrate({
-        data: first.sample_data,
-        payloadRef: first.sample_payload_ref,
-      }),
-    ]);
-    return toDetail({
-      ...first,
-      sample_data: sampleData ?? first.sample_data,
-      rendered_prompt: fields.renderedPrompt,
-      input_variables: fields.inputVariables,
-      raw_response: fields.rawResponse,
-      parsed_output: fields.parsedOutput,
-    });
-  }
-
-  private async hydrateSampleDataForRows(rows: RunResultDetailRowShape[]): Promise<void> {
-    const hydrated = await this.samplePayloadReader.hydrateMany(
-      rows.map((row) => ({
-        data: row.sample_data,
-        payloadRef: row.sample_payload_ref,
-      })),
-    );
-    rows.forEach((row, index) => {
-      const data = hydrated[index];
-      if (data !== null && data !== undefined) row.sample_data = data;
-    });
+    return toDetail(first);
   }
 }
 
@@ -995,15 +821,10 @@ interface RunResultRowShape {
   decision_output: string | null;
   expected_output: string | null;
   sample_data: unknown;
-  sample_index_values: unknown;
-  sample_payload_ref: DatasetSamplePayloadRef | null;
   dataset_field_schema: unknown;
-  input_preview: string | null;
-  output_preview: string | null;
   input_variables: unknown;
   raw_response: string | null;
   parsed_output: unknown;
-  payload_ref: RunResultPayloadRef | null;
   error_class: string | null;
   error_message: string | null;
   latency_ms: number | string | null;
@@ -1022,7 +843,6 @@ interface RunResultDetailRowShape extends RunResultRowShape {
   input_variables: unknown;
   raw_response: string | null;
   parsed_output: unknown;
-  payload_ref: RunResultPayloadRef | null;
   dbos_workflow_id: string | null;
   bullmq_job_id: string | null;
 }
@@ -1053,7 +873,6 @@ interface ReleaseRunResultRowShape {
   input_variables: unknown;
   raw_response: string | null;
   parsed_output: unknown;
-  payload_ref: RunResultPayloadRef | null;
   error_class: string | null;
   error_message: string | null;
   latency_ms: number | string | null;
@@ -1079,12 +898,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function getDatasetFieldValues(
   fieldSchema: unknown,
   sampleData: unknown,
-  sampleIndexValues: unknown,
   inputVariables: unknown,
   roles: Set<DatasetFieldSchemaRole>,
 ): RunResultDatasetFieldValueDto[] {
   const data = isRecord(sampleData) ? sampleData : {};
-  const indexValues = isRecord(sampleIndexValues) ? sampleIndexValues : {};
   const inputs = isRecord(inputVariables) ? inputVariables : {};
   const fields = Array.isArray(fieldSchema) ? fieldSchema : [];
   const out: RunResultDatasetFieldValueDto[] = [];
@@ -1097,11 +914,9 @@ function getDatasetFieldValues(
     if (!roles.has(role as DatasetFieldSchemaRole)) continue;
     const value = Object.prototype.hasOwnProperty.call(data, name)
       ? (data[name] ?? null)
-      : Object.prototype.hasOwnProperty.call(indexValues, name)
-        ? (indexValues[name] ?? null)
-        : Object.prototype.hasOwnProperty.call(inputs, name)
-          ? (inputs[name] ?? null)
-          : null;
+      : Object.prototype.hasOwnProperty.call(inputs, name)
+        ? (inputs[name] ?? null)
+        : null;
     out.push({
       name,
       role: role as DatasetFieldSchemaRole,
@@ -1212,12 +1027,9 @@ function experimentRunResultWhereSql(
         rr.external_id ILIKE ${pattern}
         OR ds.external_id ILIKE ${pattern}
         OR ds.data::text ILIKE ${pattern}
-        OR ds.index_values::text ILIKE ${pattern}
         OR rr.raw_response ILIKE ${pattern}
         OR rr.input_variables::text ILIKE ${pattern}
         OR rr.decision_output ILIKE ${pattern}
-        OR rr.input_preview ILIKE ${pattern}
-        OR rr.output_preview ILIKE ${pattern}
         OR rr.expected_output ILIKE ${pattern}
         OR rr.error_message ILIKE ${pattern}
       )`,
@@ -1290,8 +1102,6 @@ function releaseRunResultWhereSql(
         OR rr.raw_response ILIKE ${pattern}
         OR rr.input_variables::text ILIKE ${pattern}
         OR rr.decision_output ILIKE ${pattern}
-        OR rr.input_preview ILIKE ${pattern}
-        OR rr.output_preview ILIKE ${pattern}
         OR rr.expected_output ILIKE ${pattern}
         OR rr.error_message ILIKE ${pattern}
       )`,
@@ -1349,21 +1159,18 @@ function toListItem(row: RunResultRowShape): RunResultListItemDto {
     datasetTextFields: getDatasetFieldValues(
       row.dataset_field_schema,
       row.sample_data,
-      row.sample_index_values,
       row.input_variables,
       TEXT_FIELD_ROLES,
     ),
     datasetImageFields: getDatasetFieldValues(
       row.dataset_field_schema,
       row.sample_data,
-      row.sample_index_values,
       row.input_variables,
       IMAGE_FIELD_ROLES,
     ),
-    // List previews come from the persisted preview columns once compacted, else are computed from the
-    // still-inline fields (SPEC 30 §9). The full fields below are null after compaction (detail rehydrates).
-    inputPreview: row.input_preview ?? previewOfValue(row.input_variables),
-    outputPreview: row.output_preview ?? row.decision_output ?? previewOfValue(row.parsed_output) ?? row.raw_response,
+    // List previews are computed on read from the inline fields (SPEC 30 §9).
+    inputPreview: previewOfValue(row.input_variables),
+    outputPreview: row.decision_output ?? previewOfValue(row.parsed_output) ?? row.raw_response,
     inputVariables: row.input_variables ?? null,
     rawResponse: row.raw_response,
     parsedOutput: row.parsed_output ?? null,

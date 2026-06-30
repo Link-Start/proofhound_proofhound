@@ -1,16 +1,11 @@
 import type { DbClient } from '@proofhound/db';
 import type { Query, SQL } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import type { ObjectStorageProvider } from '../../../common/contracts/object-storage.provider';
-import { RunResultPayloadReader } from '../../run-result/run-result-payload.reader';
 import { AnnotationRepository } from '../annotation.repository';
 
-// With object storage disabled the payload reader is a pure inline pass-through, so these
-// query-shape tests keep their existing behaviour.
-const passThroughReader = new RunResultPayloadReader({ isEnabled: () => false } as unknown as ObjectStorageProvider);
-
+// OSS stores every run-result field inline, so the repository reads them directly from the row.
 function makeAnnotationRepo(db: DbClient): AnnotationRepository {
-  return new AnnotationRepository(db, passThroughReader);
+  return new AnnotationRepository(db);
 }
 
 const taskId = '11111111-1111-4111-8111-111111111111';

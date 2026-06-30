@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { schema, type DbClient } from '@proofhound/db';
 import { eq, inArray, sql } from 'drizzle-orm';
-import { ObjectStorageProvider } from '../../src/server/common/contracts/object-storage.provider';
-import { DatasetSamplePayloadReader } from '../../src/server/modules/dataset/dataset-sample-payload';
 import { DatasetRepository } from '../../src/server/modules/dataset/dataset.repository';
 import { PromptRepository } from '../../src/server/modules/prompt/prompt.repository';
 import { LocalReleaseLineDeletionHook } from '../../src/server/modules/release-line/release-line-deletion.hook';
@@ -120,8 +118,7 @@ describeDbosIntegration('Resource deletion policy integration', (getCtx) => {
   it('dataset permanent delete reports impact and removes dependent experiments and optimizations', async () => {
     const ctx = getCtx();
     const graph = await seedDeletionGraph(ctx.db, ctx.testUserId, 'dataset-delete');
-    const disabledStorage = { isEnabled: () => false } as unknown as ObjectStorageProvider;
-    const repository = new DatasetRepository(ctx.db, new DatasetSamplePayloadReader(disabledStorage), disabledStorage);
+    const repository = new DatasetRepository(ctx.db);
 
     try {
       const impact = await repository.listDeletionImpact(graph.projectId, graph.datasetId);

@@ -40,7 +40,7 @@ Unified resource lifecycle and deletion semantics:
 | Project                  | `ph_core.projects.status`                                            | `active` / `archived`                                                                                                                                                                            | OSS ships one default local project; archive is retained for lifecycle symmetry and future external control-plane integration.                                                                                                                                                                                    |
 | Model                    | `models.is_active` plus probe DTO                                    | `enabled` / `testing` / `disabled`; probe `success` / `failed` / `pending`                                                                                                                       | Only enabled models are selectable for new experiments, optimizations, and releases.                                                                                                                                                                                                                              |
 | Dataset                  | `ph_assets.datasets.status`                                          | `active` / `archived`                                                                                                                                                                            | Active datasets can be selected for new experiments and optimizations, and can support prompt-bound release alignment. Archived datasets remain readable for existing history but cannot be selected for new work.                                                                                                |
-| Dataset import           | `ph_assets.dataset_imports.status`                                   | `created` / `uploading` / `uploaded` / `queued` / `parsing` / `importing` / `completed` / `failed` / `aborted`                                                                                   | Import sessions are staging-only and never selectable as datasets. Failed / aborted sessions retain readable status while staging rows and temporary raw upload objects are cleaned up.                                                                                                                           |
+| Dataset import           | `ph_assets.dataset_imports.status`                                   | `created` / `uploading` / `uploaded` / `queued` / `parsing` / `importing` / `completed` / `failed` / `aborted`                                                                                   | Import sessions are staging-only and never selectable as datasets. OSS uses a synchronous subset (`created`→`importing`→`completed`/`failed`); the `uploading`/`uploaded`/`queued`/`parsing` states are reserved for a non-OSS async importer (OSS never enters them).                                                                                                                           |
 | Prompt shell             | `ph_assets.prompts.status`                                           | `active` / `archived`                                                                                                                                                                            | Active prompts can create experiments, optimizations, and releases. Archived prompts stay readable for existing history but cannot create new downstream work.                                                                                                                                                    |
 | Prompt version           | `prompt_versions.is_frozen`                                          | DTO `editable` / `frozen`                                                                                                                                                                        | Freeze only controls whether the execution contract can still be edited; it is not the prompt shell existence state.                                                                                                                                                                                              |
 | Connector                | `connectors.health_status`                                           | `healthy` / `degraded` / `unhealthy` / `unknown`                                                                                                                                                 | Health describes connectivity; deletion / archival policy is connector-specific and not part of the prompt / dataset lifecycle rule.                                                                                                                                                                              |
@@ -59,8 +59,8 @@ Deletion and archival policy:
 
 | Resource     | Archive behavior                                                                                                                                                                                                                                                      | Permanent delete behavior                                                                                                                                                                                                                                                                                      | Required pre-delete hook                                                                                                                                                                                                                                                                                                                                                |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Prompt shell | `active -> archived` removes the prompt from new experiment, optimization, and release creation. Existing experiments, optimizations, release lines, and run results continue from their prompt version / release snapshots.                                          | Deletes the prompt shell and versions, deletes affected experiments / optimizations and their owned descendants, and stops any running production or canary release lanes that depend on the prompt. Stopped releases keep their event snapshots for history unless the release itself is permanently deleted. | The deletion hook returns an impact plan. OSS must list affected release lines first, then experiments and optimizations before confirmation; release impact is listed only at release-line granularity, not as individual canary / production events. SaaS may extend the same hook with releasable storage estimates without adding OSS-only billing or plan modules. |
-| Dataset      | `active -> archived` removes the dataset from new experiment / optimization creation and from release creation paths that depend on that dataset through a prompt binding. Existing experiments and optimizations keep running from the data they already referenced. | Deletes the dataset and samples, clears prompt default-dataset bindings where needed, and deletes affected experiments / optimizations and their owned descendants. Releases are not dataset children and are not directly stopped by dataset deletion.                                                        | The deletion hook returns an impact plan. OSS must list affected experiments, optimizations, prompt bindings, and sample counts before confirmation. SaaS may extend the same hook with releasable storage estimates.                                                                                                                                                   |
+| Prompt shell | `active -> archived` removes the prompt from new experiment, optimization, and release creation. Existing experiments, optimizations, release lines, and run results continue from their prompt version / release snapshots.                                          | Deletes the prompt shell and versions, deletes affected experiments / optimizations and their owned descendants, and stops any running production or canary release lanes that depend on the prompt. Stopped releases keep their event snapshots for history unless the release itself is permanently deleted. | The deletion hook returns an impact plan. OSS must list affected release lines first, then experiments and optimizations before confirmation; release impact is listed only at release-line granularity, not as individual canary / production events. An override may extend the same hook with releasable storage estimates without adding billing or plan modules to OSS. |
+| Dataset      | `active -> archived` removes the dataset from new experiment / optimization creation and from release creation paths that depend on that dataset through a prompt binding. Existing experiments and optimizations keep running from the data they already referenced. | Deletes the dataset and samples, clears prompt default-dataset bindings where needed, and deletes affected experiments / optimizations and their owned descendants. Releases are not dataset children and are not directly stopped by dataset deletion.                                                        | The deletion hook returns an impact plan. OSS must list affected experiments, optimizations, prompt bindings, and sample counts before confirmation. An override may extend the same hook with releasable storage estimates.                                                                                                                                                   |
 | Experiment   | No archive state; use stop for runtime control. Legacy cancel actions are accepted as a stop alias and land in `stopped`.                                                                                                                                                          | Deletes the experiment as a child work item and deletes its owned run results / annotations. Release attribution snapshots continue to display from release event snapshots.                                                                                                                                   | The hook may return a small owned-descendant count for confirmation, but does not block on prompt / dataset / release references.                                                                                                                                                                                                                                       |
 | Optimization | No archive state; use stop / cancel for runtime control.                                                                                                                                                                                                              | Deletes the optimization as a child work item, including optimization round steps, optimization LLM run results, and generated sub-experiments owned by the optimization.                                                                                                                                      | The hook may return owned-descendant counts for confirmation, but does not block on prompt / dataset references.                                                                                                                                                                                                                                                        |
 | Release line | `archive_line` is the non-destructive "hide from active operation" state after lanes are no longer running; `unarchive_line` restores the line to `stopped`, never directly to `running`.                                                                             | Deletes the release line aggregate, variants, events, release run results, and annotation tasks owned by that release. This is a direct release-management action exposed from the release detail settings tab danger area; prompt permanent delete only stops running lanes.                                  | The user must type the release name before confirmation. The deletion hook may provide an impact plan for backend-side delete preparation and future extended presentations.                                                                                                                                                                                            |
@@ -107,9 +107,9 @@ CREATE INDEX idx_projects_active
 
 ### 3.2 `ph_core.tokens`
 
-`tokens` carries two kinds of credentials at once: the local admin app user token, and per-connector webhook tokens. The two are distinguished by `scope` and map to different entry resolvers (see [08 §3](08-saas-adapter-boundary.md#3-extension-point-list)).
+`tokens` carries two kinds of credentials at once: the local admin app user token, and per-connector webhook tokens. The two are distinguished by `scope` and map to different entry resolvers (see [08 §3](08-adapter-extension-points.md#3-extension-point-list)).
 
-- `scope='user'`: local admin app user credential, **a single token can be used at both the HTTP API and MCP entries simultaneously**; in OSS `project_id` is always NULL (single workspace, no business meaning) and `connector_id` must be empty. The SaaS form may attach `project_id` for a per-token-per-project association, but OSS does not write it.
+- `scope='user'`: local admin app user credential, **a single token can be used at both the HTTP API and MCP entries simultaneously**; in OSS `project_id` is always NULL (single workspace, no business meaning) and `connector_id` must be empty. An override may attach `project_id` for a per-token-per-project association, but OSS does not write it.
 - `scope='webhook'`: per-connector inbound credential, must be bound to `project_id` and `connector_id`; **the same connector supports multiple valid tokens coexisting in steady state**, used for per-consumer distribution (one webhook may issue different tokens to multiple consumers, with call statistics and auditing tracked per token).
 
 ```sql
@@ -156,7 +156,7 @@ Key invariants:
 
 Lifecycle ownership:
 
-- CRUD of `scope='user'` rows is owned by `TokenService` ([08 §3.5](08-saas-adapter-boundary.md#35-tokenservice)), overridden by `RemoteTokenService` in the SaaS form.
+- CRUD of `scope='user'` rows is owned by `TokenService` ([08 §3.5](08-adapter-extension-points.md#35-tokenservice)), replaceable by an override in a non-OSS deployment.
 - CRUD of `scope='webhook'` rows is owned by connector resource management ([26 Connectors](26-connectors.md)), created / rotated / deleted along with the connector; `TokenService` does not read or write such rows.
 - Cross-scope unified constraints (such as `token_hash UNIQUE` and `prefix` display rules) are guaranteed by table-level constraints, independent of lifecycle ownership.
 
@@ -233,7 +233,6 @@ CREATE TABLE ph_assets.datasets (
   sample_count   INTEGER NOT NULL DEFAULT 0,
   field_schema   JSONB NOT NULL DEFAULT '[]'::jsonb,
   has_images     BOOLEAN NOT NULL DEFAULT FALSE,
-  storage_prefix TEXT,
   created_by     UUID NOT NULL,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -257,11 +256,13 @@ CREATE TABLE ph_assets.dataset_samples (
 
 `dataset_samples` is one of the few tables that allow physical deletion, to support re-upload and bulk clearing of samples.
 
-`datasets.storage_prefix` is no longer written on the import path without object storage; the column is retained only for backward compatibility, and new datasets do not depend on it (see [04 §4](04-postgresql.md#4-storage)). `datasets.status` is the formal dataset existence state (`active` / `archived`) and is independent from import progress. During import, samples only land in the staging table below, and the formal tables always contain only complete datasets.
+`datasets.status` is the formal dataset existence state (`active` / `archived`) and is independent from import progress. During import, samples only land in the staging table below, and the formal tables always contain only complete datasets.
 
 #### 4.3.1 `ph_assets.dataset_imports` / `dataset_import_samples`
 
-These support raw-upload asynchronous import and the legacy client-streamed fallback (see [22 §3.1.2](22-datasets.md#312-raw-upload--asynchronous-backend-import) and [22 §3.1.3](22-datasets.md#313-legacy-client-streamed-batched-import)): `dataset_imports` is the import session, and `dataset_import_samples` is the temporary staging before all rows are collected. On successful promotion, the staged samples are atomically promoted to `dataset_samples` and a `datasets` row is created within a single transaction.
+`dataset_imports` anchors a dataset upload's staging rows and `dataset_import_samples` is the temporary staging before all rows are promoted. On successful promotion, the staged samples are atomically promoted to `dataset_samples` and a `datasets` row is created within a single transaction (see [22 §3.1.1](22-datasets.md#311-the-oss-upload-path-single-synchronous)).
+
+**OSS uses this synchronously and transiently**: a single multipart upload request creates the import row, stream-parses the Multer temp file into staging, promotes, and resolves the row — all within the request. There is no async / browser-direct / raw-object import path in the OSS trunk; a consumer that needs one carries its own transfer columns and states in its own schema rather than reserving dormant slots here.
 
 ```sql
 CREATE TABLE ph_assets.dataset_imports (
@@ -275,14 +276,7 @@ CREATE TABLE ph_assets.dataset_imports (
   file_size_bytes     BIGINT NOT NULL,
   content_type        TEXT,
   source_format       TEXT NOT NULL CHECK (source_format IN ('jsonl', 'csv', 'tsv', 'json', 'zip')),
-  import_mode         TEXT NOT NULL DEFAULT 'batch'
-                      CHECK (import_mode IN ('batch', 'raw_object')),
-  raw_upload_session_id TEXT,
-  raw_upload_expires_at TIMESTAMPTZ,
-  raw_object_ref      JSONB,
-  raw_upload_completed_at TIMESTAMPTZ,
   progress            JSONB NOT NULL DEFAULT '{}'::jsonb,
-  job_id              TEXT,
   error_code          TEXT,
   error_message       TEXT,
   queued_at           TIMESTAMPTZ,
@@ -294,8 +288,7 @@ CREATE TABLE ph_assets.dataset_imports (
   received_rows       INTEGER NOT NULL DEFAULT 0,
   status              TEXT NOT NULL DEFAULT 'created'
                       CHECK (status IN (
-                        'created', 'uploading', 'uploaded', 'queued',
-                        'parsing', 'importing', 'completed', 'failed', 'aborted'
+                        'created', 'importing', 'completed', 'failed', 'aborted'
                       )),
   created_by          UUID NOT NULL,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -305,14 +298,10 @@ CREATE TABLE ph_assets.dataset_imports (
 CREATE INDEX idx_dataset_imports_project_status
   ON ph_assets.dataset_imports (project_id, status);
 
-CREATE INDEX idx_dataset_imports_job_id
-  ON ph_assets.dataset_imports (job_id)
-  WHERE job_id IS NOT NULL;
-
--- sweep scans pre-worker sessions that have had no heartbeat for a long time
+-- sweep scans importing sessions that have had no heartbeat for a long time
 CREATE INDEX idx_dataset_imports_stale
   ON ph_assets.dataset_imports (status, updated_at)
-  WHERE status IN ('created', 'uploading', 'uploaded');
+  WHERE status = 'importing';
 
 CREATE TABLE ph_assets.dataset_import_samples (
   import_id   UUID NOT NULL REFERENCES ph_assets.dataset_imports(id) ON DELETE CASCADE,
@@ -325,15 +314,14 @@ CREATE TABLE ph_assets.dataset_import_samples (
 
 Fields and lifecycle:
 
-- `import_mode='batch'` is the legacy client-streamed JSONL / CSV / TSV path where the frontend pushes parsed samples to `POST /dataset-imports/:id/batch`.
-- `import_mode='raw_object'` is the browser-direct raw object path. `raw_upload_session_id` stores the provider-issued pending upload session id until upload-complete/abort/sweep; `raw_upload_expires_at` mirrors the provider expiry for cleanup; `raw_object_ref` stores the finalized object reference after `completeUpload` and before the worker finishes parsing/promoting it. The raw object is temporary and may be deleted after successful promotion.
-- `status` follows the state machine in [22 §3.1](22-datasets.md#31-uploading-data). `failed` / `aborted` rows are retained for readable status and error reporting, but staging rows and temporary raw upload resources are removed best-effort.
-- `progress` is a user-facing progress snapshot for long server-side work after byte transfer: it stores visible `phase`, `totalShards`, `completedShards`, and `committedRows` counters so the upload page can poll the session during promotion. It is informational for rendering, but `phase='finalizing' | 'offloading' | 'committing'` also tells abort cleanup to request cancellation instead of deleting staging under an active promotion transaction; `status` remains the authoritative lifecycle state.
+- The OSS import path is server-side and synchronous: the stream parser writes staging rows from the Multer temp file within the upload request (there is no client batch endpoint, async worker, or raw-object transfer in OSS).
+- `status`: OSS uses `importing` → `completed` / `failed` (and `aborted` on cancel). `failed` rows are short-lived for error reporting; staging rows are cleared best-effort.
+- `progress` is a user-facing progress snapshot for long server-side work after parsing: it stores a visible `phase` and `committedRows` counter so the upload page can poll the session during promotion. It is informational for rendering, but a `finalizing` / `committing` `phase` also tells abort cleanup to request cancellation instead of deleting staging under an active promotion transaction; `status` remains the authoritative lifecycle state.
 - `dataset_id` is NULL during import and is backfilled to point to the newly created dataset after a successful `complete` promotion.
-- `received_rows` is the count of staged parsed rows and also serves as progress; `updated_at` is the heartbeat advanced on batch writes and state transitions. `job_id` links a raw import to its BullMQ job for idempotent queueing/debugging. Lifecycle timestamps support status display without scanning worker logs.
+- `received_rows` is the count of staged parsed rows and also serves as progress; `updated_at` is the heartbeat advanced on batch writes and state transitions. Lifecycle timestamps support status display without scanning worker logs.
 - `field_mappings` is submitted by the frontend field wizard when the session is created, and `complete` finalizes `datasets.field_schema` based on it.
 - `dataset_import_samples` is temporary staging: the primary key `(import_id, row_index)` provides idempotency for single-batch resends; it hangs under the session via `ON DELETE CASCADE`, so deleting the session clears the staged samples. After successful promotion, failure, or abort, staged samples are explicitly cleared.
-- Stale import cleanup must also abort the pending upload session and/or delete the finalized raw object for `raw_object` sessions, best-effort. Provider-level `sweepPendingUploads(olderThan)` catches pending objects whose database session was never created or was lost before abort could run.
+- OSS cleanup: a cancelled / failed upload rolls back staging and deletes the Multer temp file in `finally`; orphaned temp files from a crashed request are removed by a startup temp-file sweep. There is no object-storage `sweepPendingUploads` in OSS (no object storage).
 
 ### 4.4 `ph_assets.prompts` / `prompt_versions`
 
@@ -600,7 +588,7 @@ Run results produced by a release record release routing through the release eve
 Run results from the webhook entry additionally record `webhook_token_id`:
 
 - `webhook_token_id`: the UUID of the webhook token that triggered this call (FK → `ph_core.tokens.id` ON DELETE SET NULL); written only at the webhook entry, and NULL at the HTTP / MCP entries.
-- Used for per-consumer usage aggregation by token (see [08 §3.4](08-saas-adapter-boundary.md#34-connectorcontextresolver)).
+- Used for per-consumer usage aggregation by token (see [08 §3.4](08-adapter-extension-points.md#34-connectorcontextresolver)).
 - When a webhook token is deleted, the run_results row is **retained**, and `webhook_token_id` is automatically set to NULL, ensuring audit integrity.
 
 ### 5.4 `ph_runs.annotations`
@@ -719,7 +707,7 @@ Annotation tasks bind `release_version_id` first; for backward compatibility wit
 
 The OSS edition does not rely on external Auth / RLS for business authentication. The Web UI runs as the local admin app by default; the HTTP API and MCP share the `scope='user'` user token; Webhook uses the per-connector `scope='webhook'` token.
 
-Business tables do not create foreign keys to an external user table. Fields like `created_by` / `updated_by` / `submitted_by` / `locked_by` store an opaque actor UUID, used for local source tracking. Request entries are uniformly converted to an `ActorContext`, parsed by each entry resolver (`ActorContextResolver` / `McpAuthResolver` / `ConnectorContextResolver`); `ProjectContextResolver` performs the actor → project access check at the HTTP / MCP entries, while the webhook entry does not go through this resolver. Access control is abstracted by `AccessControlService`, which passes everything by default in OSS and is replaced with an RBAC check in SaaS. See [08 Control-plane Adapter Boundary](08-saas-adapter-boundary.md).
+Business tables do not create foreign keys to an external user table. Fields like `created_by` / `updated_by` / `submitted_by` / `locked_by` store an opaque actor UUID, used for local source tracking. Request entries are uniformly converted to an `ActorContext`, parsed by each entry resolver (`ActorContextResolver` / `McpAuthResolver` / `ConnectorContextResolver`); `ProjectContextResolver` performs the actor → project access check at the HTTP / MCP entries, while the webhook entry does not go through this resolver. Access control is abstracted by `AccessControlService`, which passes everything by default in OSS and can be replaced with a membership / role check by an override. See [08 Adapter extension points](08-adapter-extension-points.md).
 
 ## 9. Indexes and migrations
 

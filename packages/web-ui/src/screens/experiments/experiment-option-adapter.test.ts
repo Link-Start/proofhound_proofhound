@@ -41,7 +41,6 @@ function makeDataset(overrides: Partial<DatasetListItemDto> = {}): DatasetListIt
     categoryDistribution: { field: 'risk_level', total: 0, categories: [] },
     references: { experiments: 0, optimizations: 0 },
     hasImages: false,
-    storagePrefix: null,
     createdBy: 'u-1',
     createdByDisplayName: 'Alice',
     createdAt: '2026-05-19T00:00:00.000Z',
@@ -268,9 +267,9 @@ describe('mapPromptVersionToOption', () => {
     expect(option.promptPreview).not.toContain('## 输出格式');
   });
 
-  it('falls back to @unknown when createdByDisplayName is null', () => {
+  it('falls back to a short owner id when createdByDisplayName is null', () => {
     const option = mapPromptVersionToOption(makePrompt(), makeVersion({ createdByDisplayName: null }));
-    expect(option.ownerHandle).toBe('@unknown');
+    expect(option.ownerHandle).toBe('@u-1');
   });
 
   it('uses empty string for defaultDatasetId when prompt has none', () => {

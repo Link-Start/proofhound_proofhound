@@ -13,6 +13,7 @@ import {
   type LLMMessage,
   type ModelImageCapability,
   type ModelInvocationConfig,
+  type LLMRunResultWriter,
 } from '@proofhound/llm-client';
 import type { LlmJobPayload } from '@proofhound/orchestration-shared';
 import type { LimiterKeyStrategy } from '../../server/common/contracts/limiter-key.strategy';
@@ -21,7 +22,6 @@ import type { RuntimeLimitsProvider } from '../../server/common/contracts/runtim
 import { safeRecordUsageEvent, type UsageMeteringHook } from '../../server/common/contracts/usage-metering.hook';
 import { applyRuntimeLimits } from '../../shared/llm/runtime-limits';
 import type { ModelSecretResolver } from './model-secret';
-import { DrizzleRunResultWriter } from './run-result-writer';
 
 export interface LlmRunnerDependencies {
   db: DbClient;
@@ -32,6 +32,7 @@ export interface LlmRunnerDependencies {
   usageMetering: UsageMeteringHook;
   logger: LLMCallLogger;
   modelSecretResolver: ModelSecretResolver;
+  runResultWriter: LLMRunResultWriter;
 }
 
 export interface LlmRunnerJobContext {
@@ -55,7 +56,7 @@ export interface LlmRunnerResult {
 }
 
 export function createLlmRunner(deps: LlmRunnerDependencies) {
-  const runResultWriter = new DrizzleRunResultWriter(deps.db, deps.quotaPolicy, deps.usageMetering);
+  const runResultWriter = deps.runResultWriter;
 
   return async function runLlmJob(input: LlmJobPayload, jobContext: LlmRunnerJobContext): Promise<LlmRunnerResult> {
     const runResultId = input.runResultId ?? randomUUID();
@@ -82,7 +83,7 @@ export function createLlmRunner(deps: LlmRunnerDependencies) {
         deps.logger,
       );
     const model = await loadModelInvocationConfig(deps, input.modelId);
-    // Fold any deployment-level runtime caps (a SaaS org plan's ceiling, SPEC 08 §3.10) into the per-call limits at the
+    // Fold any deployment-level runtime caps (a replacement implementation's org plan ceiling, SPEC 08 §3.10) into the per-call limits at the
     // single worker enforcement point, so every job source (experiment / optimization child / release / webhook) is
     // capped uniformly. OSS LocalRuntimeLimitsProvider is a pass-through → mergedLimits === input.limits.
     const mergedLimits = await deps.runtimeLimitsProvider.mergeLlmLimits({

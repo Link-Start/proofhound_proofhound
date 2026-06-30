@@ -13,24 +13,21 @@ import type {
   PromptOutputSchemaDto,
   PromptVariableDto,
 } from '@proofhound/shared';
-import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
-import type { PgColumn } from 'drizzle-orm/pg-core';
+import { and, eq, isNull } from 'drizzle-orm';
 import { DATABASE_CLIENT } from '../../../shared/database/database.constants';
 import { DrizzleRunResultWriter } from '../../infrastructure/llm/run-result-writer';
+import { DatasetSampleRepository } from '../dataset/dataset-sample.repository.contract';
 import {
   BullmqService,
   type CleanupStoppedLlmJobsResult,
   type FindTerminalLlmJobsResult,
   type StoppedLlmTerminalJob,
 } from '../../infrastructure/orchestration/bullmq.service';
-import { DatasetSamplePayloadReader } from '../dataset/dataset-sample-payload';
-import { type DatasetSamplePayloadRef } from '../dataset/dataset-sample-payload';
-import { RunResultCompactor } from '../run-result/run-result-compactor';
 import { RunResultService } from '../run-result/run-result.service';
 import { aggregateExperimentMetrics } from './experiment.aggregator';
 import { renderPromptForSample } from './experiment.renderer';
 
-const { experiments, datasetSamples, promptVersions, models, datasets } = schema;
+const { experiments, promptVersions, models, datasets } = schema;
 
 const DEFAULT_BATCH_SIZE = 500;
 const MAX_BATCH_SIZE = 500;
@@ -86,7 +83,6 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     runResultIds: string[],
   ) => Promise<{ terminalCount: number; failedCount: number; control: 'stop' | 'cancel' | null }>;
   private readonly aggregateMetricsStep: (experimentId: string) => Promise<void>;
-  private readonly compactRunResultsStep: (experimentId: string, projectId: string) => Promise<void>;
   private readonly finalizeStep: (
     experimentId: string,
     kind: 'success' | 'failed' | 'stopped',
@@ -97,9 +93,8 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     @Inject(DATABASE_CLIENT) private readonly db: DbClient,
     private readonly bullmq: BullmqService,
     private readonly runResults: RunResultService,
-    private readonly compactor: RunResultCompactor,
-    private readonly datasetSampleReader: DatasetSamplePayloadReader,
     private readonly runResultWriter: DrizzleRunResultWriter,
+    private readonly sampleRepo: DatasetSampleRepository,
   ) {
     super('experiment-workflow');
     this.loadPlanStep = DBOS.registerStep(this.loadPlanImpl.bind(this), { name: 'experiment.loadPlan' });
@@ -117,9 +112,6 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     });
     this.aggregateMetricsStep = DBOS.registerStep(this.aggregateMetricsImpl.bind(this), {
       name: 'experiment.aggregateMetrics',
-    });
-    this.compactRunResultsStep = DBOS.registerStep(this.compactRunResultsImpl.bind(this), {
-      name: 'experiment.compactRunResults',
     });
     this.finalizeStep = DBOS.registerStep(this.finalizeImpl.bind(this), { name: 'experiment.finalize' });
 
@@ -161,7 +153,6 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
         );
         const control = await this.readControlStateStep(experimentId);
         if (control === 'stop' || control === 'cancel') {
-          await this.compactRunResultsStep(experimentId, plan.projectId);
           await this.finalizeStep(experimentId, 'stopped');
           return;
         }
@@ -192,7 +183,6 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
         // Control signals observed inside poll remove queued-but-not-started LLM jobs and then wait for already-started
         // jobs in the batch to write terminal run_results before stopping at the batch boundary.
         if (counts.control === 'stop' || counts.control === 'cancel') {
-          await this.compactRunResultsStep(experimentId, plan.projectId);
           await this.finalizeStep(experimentId, 'stopped');
           return;
         }
@@ -202,12 +192,10 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
 
       // All samples failed → the experiment as a whole is failed; partial failures still count as success (failed_samples is already reflected in metrics)
       if (totalTerminal > 0 && totalFailed === totalTerminal) {
-        await this.compactRunResultsStep(experimentId, plan.projectId);
         await this.finalizeStep(experimentId, 'failed', 'all_samples_failed');
         return;
       }
 
-      await this.compactRunResultsStep(experimentId, plan.projectId);
       await this.finalizeStep(experimentId, 'success');
     } catch (error) {
       this.logger.error({ experimentId, error: (error as Error).message }, 'experiment_workflow_failed');
@@ -301,25 +289,14 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     cursorId: string | null,
     batchSize: number,
   ): Promise<string[]> {
-    // Keyset pagination by id: a dataset's samples share created_at (NOW() at insert/promote time), so id alone is a
-    // complete, stable total order. Avoids OFFSET's O(n^2) rescans on large datasets.
-    const condition =
-      cursorId === null
-        ? eq(datasetSamples.datasetId, datasetId)
-        : and(eq(datasetSamples.datasetId, datasetId), gt(datasetSamples.id, cursorId));
-    const rows = await this.db
-      .select({ id: datasetSamples.id })
-      .from(datasetSamples)
-      .where(condition)
-      .orderBy(asc(datasetSamples.id))
-      .limit(batchSize);
-    this.logger.debug({ datasetId, cursorId, batchSize, sampleCount: rows.length }, 'step_load_sample_batch_done');
-    return rows.map((r) => r.id);
+    const ids = await this.sampleRepo.loadSampleIdBatch(datasetId, cursorId, batchSize);
+    this.logger.debug({ datasetId, cursorId, batchSize, sampleCount: ids.length }, 'step_load_sample_batch_done');
+    return ids;
   }
 
   private async enqueueBatchImpl(experimentId: string, sampleIds: string[], orgId?: string): Promise<string[]> {
     const renderContext = await this.loadRenderContext(experimentId);
-    const samples = await this.loadSampleDataByIds(sampleIds);
+    const samples = await this.sampleRepo.readSamplesByIds(sampleIds);
     const expectedField = readExpectedField(renderContext.judgmentRules, renderContext.expectedField);
     // Inside the step we call DBOS.workflowID to capture the current workflow id, and pass it along in the payload to the worker,
     // so that LLM call logs and ph_runs.run_results.dbos_workflow_id can be threaded by workflow (SPEC 05 §5.6)
@@ -579,24 +556,6 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     );
   }
 
-  // Tier this experiment's run-result large fields into object-storage shards (SPEC 30 §9.3). The run
-  // is the natural batch boundary; all rows are terminal here. A no-op when object storage is disabled.
-  // Best-effort: a compaction failure must not fail an otherwise-successful experiment — rows stay
-  // inline and the periodic compactor retries later — so it is caught and logged, never rethrown.
-  private async compactRunResultsImpl(experimentId: string, projectId: string): Promise<void> {
-    try {
-      const result = await this.compactor.compact({ projectId, source: 'experiment', sourceId: experimentId });
-      if (result.compactedRows > 0) {
-        this.logger.info(
-          { experimentId, compactedRows: result.compactedRows, shards: result.shards, generation: result.generation },
-          'step_compact_run_results_done',
-        );
-      }
-    } catch (error) {
-      this.logger.error({ experimentId, error: (error as Error).message }, 'step_compact_run_results_failed');
-    }
-  }
-
   private async finalizeImpl(
     experimentId: string,
     kind: 'success' | 'failed' | 'stopped',
@@ -657,21 +616,6 @@ export class ExperimentWorkflowRegistrar extends ConfiguredInstance {
     };
   }
 
-  private async loadSampleDataByIds(
-    sampleIds: string[],
-  ): Promise<Array<{ id: string; data: Record<string, unknown> | null }>> {
-    if (sampleIds.length === 0) return [];
-    const rows = await this.db
-      .select({ id: datasetSamples.id, data: datasetSamples.data, payloadRef: datasetSamples.payloadRef })
-      .from(datasetSamples)
-      .where(inArrayUuids(datasetSamples.id, sampleIds));
-    // Sample data may be offloaded to a shard once promote tiers it out (SPEC 22 §7.3); resolve it
-    // through the seam (inline when present, else batched shard read). Pass-through when disabled.
-    const hydrated = await this.datasetSampleReader.hydrateMany(
-      rows.map((r) => ({ data: r.data, payloadRef: (r.payloadRef as DatasetSamplePayloadRef | null) ?? null })),
-    );
-    return rows.map((r, i) => ({ id: r.id, data: (hydrated[i] as Record<string, unknown> | null) ?? null }));
-  }
 }
 
 function readExpectedFieldFromDatasetSchema(
@@ -724,15 +668,6 @@ function uuidV5FromSample(experimentId: string, sampleId: string): string {
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // RFC 4122 variant
   const hex = bytes.toString('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-}
-
-// drizzle-orm does not expose inArray for raw uuid arrays; manually compose a safe IN clause
-function inArrayUuids(column: PgColumn, ids: string[]) {
-  const params = sql.join(
-    ids.map((id) => sql`${id}::uuid`),
-    sql`, `,
-  );
-  return sql`${column} IN (${params})`;
 }
 
 // For external e2e / mcp callers: expose a stable runResultId computation

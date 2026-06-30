@@ -534,9 +534,9 @@ describe('pickRandomSamples (SPEC 25 §2.1 first-version sampling)', () => {
   });
 });
 
-// orgId (SaaS-only; undefined in OSS) is threaded runWorkflow(optimizationId, orgId) → loadConfigStep(optimizationId, orgId)
+// orgId (override-only; undefined in OSS) is threaded runWorkflow(optimizationId, orgId) → loadConfigStep(optimizationId, orgId)
 // → loadConfigImpl, which composes the analysis rate-limit key via limiterKeyStrategy.buildModelKey. The key must carry
-// orgId so a SaaS LimiterKeyStrategy can isolate the per-tenant counting space; OSS passes undefined and the local
+// orgId so a replacement implementation's LimiterKeyStrategy can isolate the per-tenant counting space; OSS passes undefined and the local
 // strategy ignores it (key behavior unchanged). Driven through the real loadConfigImpl with repo / model loads stubbed.
 describe('OptimizationWorkflow.loadConfigImpl — orgId 透传 analysisLimiterKey', () => {
   function buildRegistrar() {
@@ -559,6 +559,7 @@ describe('OptimizationWorkflow.loadConfigImpl — orgId 透传 analysisLimiterKe
       limiterKeyStrategy,
       { mergeLlmLimits: vi.fn().mockImplementation(async (input) => input.limits) } as never,
       new LocalQuotaPolicyHook(),
+      { loadDatasetSamples: vi.fn().mockResolvedValue([]) } as never,
     );
 
     const r = registrar as unknown as Record<string, unknown>;
@@ -726,6 +727,7 @@ describe('OptimizationWorkflow.runImpl — orgId survives internal config reload
       { buildModelKey } as never,
       { mergeLlmLimits: vi.fn().mockImplementation(async (input) => input.limits) } as never,
       new LocalQuotaPolicyHook(),
+      { loadDatasetSamples: vi.fn().mockResolvedValue([]) } as never,
     );
 
     const r = registrar as unknown as Record<string, unknown>;
@@ -905,6 +907,7 @@ describe('OptimizationWorkflow.applySynchronousRuntimeLimits — plan cap', () =
       {} as never,
       runtimeLimitsProvider as never,
       new LocalQuotaPolicyHook(),
+      { loadDatasetSamples: vi.fn().mockResolvedValue([]) } as never,
     );
 
     const model = {
@@ -963,6 +966,7 @@ describe('OptimizationWorkflow.withOptimizationExecutionSlot — quota hook', ()
       {} as never,
       { mergeLlmLimits: vi.fn().mockImplementation(async (input) => input.limits) } as never,
       quotaPolicy,
+      { loadDatasetSamples: vi.fn().mockResolvedValue([]) } as never,
     );
 
     const result = await (
@@ -996,7 +1000,7 @@ describe('OptimizationWorkflow.withOptimizationExecutionSlot — quota hook', ()
   });
 });
 
-// orgId (SaaS-only; undefined in OSS) threads runWorkflow(optimizationId, orgId) → loadConfigStep → snapshot.orgId,
+// orgId (override-only; undefined in OSS) threads runWorkflow(optimizationId, orgId) → loadConfigStep → snapshot.orgId,
 // and runImpl must forward that snapshot.orgId as the 2nd arg of the child experiment launch
 // DBOS.startWorkflow(this.experimentWorkflow.runWorkflow, { workflowID })(experimentId, snapshot.orgId).
 // This proves the per-project (org) rate-limit bucket (SPEC 08 §3.7) reaches the child experiment workflow.
@@ -1023,6 +1027,7 @@ describe('OptimizationWorkflow.runImpl — child experiment inherits snapshot.or
       {} as never, // limiterKeyStrategy
       { mergeLlmLimits: vi.fn().mockImplementation(async (input) => input.limits) } as never,
       new LocalQuotaPolicyHook(),
+      { loadDatasetSamples: vi.fn().mockResolvedValue([]) } as never,
     );
 
     // Stub the internal DBOS steps on the instance (registerStep was identity, so these props hold the bound impls).

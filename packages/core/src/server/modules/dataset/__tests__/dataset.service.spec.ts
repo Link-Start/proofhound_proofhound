@@ -2,10 +2,10 @@ import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { DatasetDeletionHook, LocalDatasetDeletionHook } from '../dataset-deletion.hook';
 import { DatasetRepository, type DatasetProjectAccessRow, type DatasetRow } from '../dataset.repository';
+import { DatasetSampleRepository } from '../dataset-sample.repository.contract';
 import { DatasetService } from '../dataset.service';
 import { AccessControlService } from '../../../common/contracts/access-control.service';
 import { LocalAccessControlService } from '../../../common/contracts/local-access-control.service';
-import { ObjectStorageProvider, type StoredObjectRef } from '../../../common/contracts/object-storage.provider';
 import { LocalQuotaPolicyHook, QuotaPolicyHook } from '../../../common/contracts/quota-policy.hook';
 import { UsageMeteringHook } from '../../../common/contracts/usage-metering.hook';
 import type { ProjectContext } from '@proofhound/shared';
@@ -35,8 +35,6 @@ const datasetRow = (overrides: Partial<DatasetRow> = {}): DatasetRow => ({
     { name: 'label', role: 'expected_output', type: 'string' },
   ],
   hasImages: false,
-  storagePrefix:
-    'datasets/77777777-7777-4777-8777-777777777777/source/22222222-2222-4222-8222-222222222222/risk.csv',
   createdBy: actor.sub,
   createdByDisplayName: 'Alice',
   createdAt: new Date('2026-05-16T00:00:00Z'),
@@ -46,30 +44,17 @@ const datasetRow = (overrides: Partial<DatasetRow> = {}): DatasetRow => ({
   ...overrides,
 });
 
-const storedObjectRef = (key: string): StoredObjectRef => ({
-  provider: 'r2',
-  bucket: 'proofhound-dev',
-  key,
-  bytes: 128,
-  resourceType: 'dataset_normalized',
-  resourceId: '22222222-2222-4222-8222-222222222222',
-});
-
 function makeRepo(): Mocked<DatasetRepository> {
   return {
     findProjectAccess: vi.fn(),
     findDatasetByProjectAndName: vi.fn(),
     findDatasetById: vi.fn(),
     listDatasets: vi.fn(),
-    listDatasetSamples: vi.fn(),
-    listDatasetSamplesBatch: vi.fn().mockResolvedValue({ rows: [], nextCursor: null }),
-    listDatasetSamplesPage: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
-    aggregateCategoryDistribution: vi.fn().mockResolvedValue([]),
     countDatasetReferences: vi.fn().mockResolvedValue(new Map()),
     listDeletionImpact: vi.fn().mockResolvedValue({ experiments: [], optimizations: [] }),
     archiveDataset: vi.fn().mockResolvedValue(undefined),
     restoreDataset: vi.fn().mockResolvedValue(undefined),
-    hardDeleteSamples: vi.fn().mockResolvedValue({ deleted: 0, payloadRefs: [] }),
+    hardDeleteSamples: vi.fn().mockResolvedValue({ deleted: 0 }),
     decrementDatasetSampleCount: vi.fn().mockResolvedValue(undefined),
     hardDeleteDataset: vi.fn(),
     updateDatasetMetadata: vi.fn(),
@@ -77,18 +62,32 @@ function makeRepo(): Mocked<DatasetRepository> {
   } as unknown as Mocked<DatasetRepository>;
 }
 
+function makeSampleRepo(): Mocked<DatasetSampleRepository> {
+  return {
+    loadSampleIdBatch: vi.fn().mockResolvedValue([]),
+    readSamplesByIds: vi.fn().mockResolvedValue([]),
+    loadDatasetSamples: vi.fn().mockResolvedValue([]),
+    listDatasetSamplesPage: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+    listDatasetSamplesBatch: vi.fn().mockResolvedValue({ rows: [], nextCursor: null }),
+    aggregateCategoryDistribution: vi.fn().mockResolvedValue([]),
+  } as unknown as Mocked<DatasetSampleRepository>;
+}
+
 describe('DatasetService', () => {
   let service: DatasetService;
   let repo: Mocked<DatasetRepository>;
+  let sampleRepo: Mocked<DatasetSampleRepository>;
   let usageMetering: UsageMeteringHook & { record: Mock };
 
   beforeEach(async () => {
     repo = makeRepo();
+    sampleRepo = makeSampleRepo();
     usageMetering = { record: vi.fn(async () => undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         { provide: DatasetRepository, useValue: repo },
+        { provide: DatasetSampleRepository, useValue: sampleRepo },
         { provide: AccessControlService, useClass: LocalAccessControlService },
         { provide: QuotaPolicyHook, useClass: LocalQuotaPolicyHook },
         { provide: DatasetDeletionHook, useClass: LocalDatasetDeletionHook },
@@ -99,21 +98,6 @@ describe('DatasetService', () => {
 
     service = module.get(DatasetService);
   });
-
-  async function buildServiceWithObjectStorage(objectStorage: Partial<ObjectStorageProvider>): Promise<DatasetService> {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        { provide: DatasetRepository, useValue: repo },
-        { provide: AccessControlService, useClass: LocalAccessControlService },
-        { provide: QuotaPolicyHook, useClass: LocalQuotaPolicyHook },
-        { provide: DatasetDeletionHook, useClass: LocalDatasetDeletionHook },
-        { provide: UsageMeteringHook, useValue: usageMetering },
-        { provide: ObjectStorageProvider, useValue: objectStorage },
-        DatasetService,
-      ],
-    }).compile();
-    return module.get(DatasetService);
-  }
 
   async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
     let out = '';
@@ -287,14 +271,14 @@ describe('DatasetService', () => {
     repo.findProjectAccess.mockResolvedValue(projectAccess());
     repo.listDatasets.mockResolvedValue([datasetRow({ sampleCount: 4 })]);
     // SQL GROUP BY already filters out non-scalar labels (e.g. object-valued) server-side.
-    repo.aggregateCategoryDistribution.mockResolvedValue([
+    sampleRepo.aggregateCategoryDistribution.mockResolvedValue([
       { label: 'block', count: 2 },
       { label: 'allow', count: 1 },
     ]);
 
     const result = await service.listDatasets('77777777-7777-4777-8777-777777777777', actor);
 
-    expect(repo.aggregateCategoryDistribution).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222', 'label');
+    expect(sampleRepo.aggregateCategoryDistribution).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222', 'label');
     expect(result.data[0]?.categoryDistribution).toEqual({
       field: 'label',
       total: 3,
@@ -308,7 +292,7 @@ describe('DatasetService', () => {
   it('returns a dataset and its persisted samples for the detail page', async () => {
     repo.findProjectAccess.mockResolvedValue(projectAccess());
     repo.findDatasetById.mockResolvedValue(datasetRow());
-    repo.listDatasetSamplesPage.mockResolvedValue({
+    sampleRepo.listDatasetSamplesPage.mockResolvedValue({
       rows: [
         {
           id: '33333333-3333-4333-8333-333333333333',
@@ -363,7 +347,7 @@ describe('DatasetService', () => {
       createdAt: new Date('2026-05-16T00:00:00Z'),
       updatedAt: new Date('2026-05-16T00:00:00Z'),
     };
-    repo.listDatasetSamplesBatch
+    sampleRepo.listDatasetSamplesBatch
       .mockResolvedValueOnce({ rows: [row], nextCursor: null })
       .mockResolvedValueOnce({ rows: [row], nextCursor: null });
 
@@ -384,7 +368,7 @@ describe('DatasetService', () => {
   it('exports dataset samples as JSONL', async () => {
     repo.findProjectAccess.mockResolvedValue(projectAccess());
     repo.findDatasetById.mockResolvedValue(datasetRow());
-    repo.listDatasetSamplesBatch.mockResolvedValueOnce({
+    sampleRepo.listDatasetSamplesBatch.mockResolvedValueOnce({
       nextCursor: null,
       rows: [
         {
@@ -419,7 +403,7 @@ describe('DatasetService', () => {
     function primeExport() {
       repo.findProjectAccess.mockResolvedValue(projectAccess());
       repo.findDatasetById.mockResolvedValue(datasetRow());
-      repo.listDatasetSamplesBatch.mockResolvedValue({
+      sampleRepo.listDatasetSamplesBatch.mockResolvedValue({
         nextCursor: null,
         rows: [
           {
@@ -434,113 +418,14 @@ describe('DatasetService', () => {
       });
     }
 
-    async function buildServiceWith(objectStorage: Partial<ObjectStorageProvider>): Promise<DatasetService> {
-      const module: TestingModule = await Test.createTestingModule({
-        providers: [
-          { provide: DatasetRepository, useValue: repo },
-          { provide: AccessControlService, useClass: LocalAccessControlService },
-          { provide: QuotaPolicyHook, useClass: LocalQuotaPolicyHook },
-          { provide: DatasetDeletionHook, useClass: LocalDatasetDeletionHook },
-          { provide: UsageMeteringHook, useValue: usageMetering },
-          { provide: ObjectStorageProvider, useValue: objectStorage },
-          DatasetService,
-        ],
-      }).compile();
-      return module.get(DatasetService);
-    }
-
-    it('streams when no object storage is configured', async () => {
+    // OSS keeps every sample inline in PostgreSQL, so exports are always served as a fresh DB-backed stream.
+    it('streams the export', async () => {
       primeExport();
       const delivery = await service.exportDatasetForDownload(project, datasetId, 'csv', actor);
       expect(delivery.kind).toBe('stream');
       if (delivery.kind === 'stream') {
         expect(delivery.file.fileName).toBe('risk-eval-v4.csv');
       }
-    });
-
-    it('streams without touching storage when the provider is disabled', async () => {
-      primeExport();
-      const putObject = vi.fn();
-      const withStorage = await buildServiceWith({
-        isEnabled: () => false,
-        putObject,
-      } as unknown as ObjectStorageProvider);
-
-      const delivery = await withStorage.exportDatasetForDownload(project, datasetId, 'csv', actor);
-
-      expect(delivery.kind).toBe('stream');
-      expect(putObject).not.toHaveBeenCalled();
-    });
-
-    it('writes the artifact and redirects to a signed URL when storage is enabled', async () => {
-      primeExport();
-      const putObject = vi.fn(async () => ({
-        provider: 'r2',
-        key: 'orgs/o1/projects/p1/export/x/risk-eval-v4.csv',
-        bytes: 64,
-        resourceType: 'export' as const,
-        resourceId: 'x',
-      }));
-      const createSignedDownloadUrl = vi.fn(async () => ({
-        url: 'https://r2.example/signed',
-        expiresAt: '2026-06-18T01:00:00.000Z',
-      }));
-      const withStorage = await buildServiceWith({
-        isEnabled: () => true,
-        putObject,
-        createSignedDownloadUrl,
-      } as unknown as ObjectStorageProvider);
-
-      const delivery = await withStorage.exportDatasetForDownload(project, datasetId, 'csv', actor);
-
-      expect(delivery).toEqual({
-        kind: 'redirect',
-        url: 'https://r2.example/signed',
-        expiresAt: '2026-06-18T01:00:00.000Z',
-      });
-      expect(putObject).toHaveBeenCalledWith(
-        expect.objectContaining({
-          project,
-          resourceType: 'export',
-          resourceId: expect.any(String),
-          name: 'risk-eval-v4.csv',
-        }),
-        expect.objectContaining({
-          readable: true,
-        }),
-        expect.objectContaining({
-          contentType: 'text/csv; charset=utf-8',
-          contentDisposition: expect.stringContaining('risk-eval-v4.csv'),
-        }),
-      );
-    });
-
-    it('falls back to streaming when the provider cannot mint a URL (e.g. LocalFs)', async () => {
-      primeExport();
-      const putObject = vi.fn(async () => ({
-        provider: 'localfs',
-        key: 'export/x/risk-eval-v4.csv',
-        bytes: 64,
-        resourceType: 'export' as const,
-        resourceId: 'x',
-      }));
-      const createSignedDownloadUrl = vi.fn(async () => null);
-      const deleteObjects = vi.fn(async () => undefined);
-      const withStorage = await buildServiceWith({
-        isEnabled: () => true,
-        putObject,
-        createSignedDownloadUrl,
-        deleteObjects,
-      } as unknown as ObjectStorageProvider);
-
-      const delivery = await withStorage.exportDatasetForDownload(project, datasetId, 'csv', actor);
-
-      expect(delivery.kind).toBe('stream');
-      expect(putObject).toHaveBeenCalledTimes(1);
-      expect(createSignedDownloadUrl).toHaveBeenCalledTimes(1);
-      // The orphaned artifact must be cleaned up, not left behind.
-      expect(deleteObjects).toHaveBeenCalledTimes(1);
-      expect(deleteObjects).toHaveBeenCalledWith([expect.objectContaining({ key: 'export/x/risk-eval-v4.csv' })]);
     });
   });
 
@@ -553,7 +438,7 @@ describe('DatasetService', () => {
     repo.countDatasetReferences.mockResolvedValue(
       new Map([['22222222-2222-4222-8222-222222222222', { experiments: 0, optimizations: 0 }]]),
     );
-    repo.hardDeleteDataset.mockResolvedValue({ deleted: 1, payloadRefs: [] });
+    repo.hardDeleteDataset.mockResolvedValue({ deleted: 1 });
 
     try {
       await service.deleteDataset(
@@ -597,7 +482,7 @@ describe('DatasetService', () => {
       ],
       optimizations: [],
     });
-    repo.hardDeleteDataset.mockResolvedValue({ deleted: 1, payloadRefs: [] });
+    repo.hardDeleteDataset.mockResolvedValue({ deleted: 1 });
 
     await service.deleteDataset('77777777-7777-4777-8777-777777777777', '22222222-2222-4222-8222-222222222222', actor);
 
@@ -609,31 +494,6 @@ describe('DatasetService', () => {
       '77777777-7777-4777-8777-777777777777',
       '22222222-2222-4222-8222-222222222222',
     );
-  });
-
-  it('cleans up offloaded payload objects after deleting a dataset', async () => {
-    const sampleRef = storedObjectRef('orgs/o/projects/p/dataset_normalized/d/shard-00000.jsonl.gz');
-    const runResultRef: StoredObjectRef = {
-      ...storedObjectRef('orgs/o/projects/p/run_result_shard/e/gen1/shard-00000.jsonl.gz'),
-      resourceType: 'run_result_shard',
-      resourceId: '33333333-3333-4333-8333-333333333333',
-    };
-    const deleteObjects = vi.fn(async () => undefined);
-    const withStorage = await buildServiceWithObjectStorage({
-      isEnabled: () => true,
-      deleteObjects,
-    } as unknown as ObjectStorageProvider);
-    repo.findProjectAccess.mockResolvedValue(projectAccess());
-    repo.findDatasetById.mockResolvedValue(datasetRow());
-    repo.hardDeleteDataset.mockResolvedValue({ deleted: 1, payloadRefs: [sampleRef, runResultRef] });
-
-    await withStorage.deleteDataset(
-      '77777777-7777-4777-8777-777777777777',
-      '22222222-2222-4222-8222-222222222222',
-      actor,
-    );
-
-    expect(deleteObjects).toHaveBeenCalledWith([sampleRef, runResultRef]);
   });
 
   it('archives and restores a dataset', async () => {
@@ -801,7 +661,7 @@ describe('DatasetService', () => {
       repo.findProjectAccess.mockResolvedValue(projectAccess());
       repo.findDatasetById.mockResolvedValue(datasetRow({ sampleCount: 5 }));
       repo.countDatasetReferences.mockResolvedValue(new Map([[DATASET_ID, { experiments: 0, optimizations: 0 }]]));
-      repo.hardDeleteSamples.mockResolvedValue({ deleted: 2, payloadRefs: [] });
+      repo.hardDeleteSamples.mockResolvedValue({ deleted: 2 });
 
       const result = await service.deleteDatasetSamples(PROJECT_ID, DATASET_ID, { sampleIds: SAMPLE_IDS }, actor);
 
@@ -815,25 +675,6 @@ describe('DatasetService', () => {
           idempotencyKey: expect.stringContaining(`storage:dataset.updated:${DATASET_ID}`),
         }),
       );
-    });
-
-    it('cleans up unreferenced offloaded sample objects after deleting samples', async () => {
-      const sampleRef = storedObjectRef('orgs/o/projects/p/dataset_normalized/d/shard-00000.jsonl.gz');
-      const deleteObjects = vi.fn(async () => undefined);
-      const withStorage = await buildServiceWithObjectStorage({
-        isEnabled: () => true,
-        deleteObjects,
-      } as unknown as ObjectStorageProvider);
-      repo.findProjectAccess.mockResolvedValue(projectAccess());
-      repo.findDatasetById.mockResolvedValue(datasetRow({ sampleCount: 5 }));
-      repo.countDatasetReferences.mockResolvedValue(new Map([[DATASET_ID, { experiments: 0, optimizations: 0 }]]));
-      repo.hardDeleteSamples.mockResolvedValue({ deleted: 2, payloadRefs: [sampleRef] });
-
-      const result = await withStorage.deleteDatasetSamples(PROJECT_ID, DATASET_ID, { sampleIds: SAMPLE_IDS }, actor);
-
-      expect(result).toEqual({ deleted: 2 });
-      expect(deleteObjects).toHaveBeenCalledWith([sampleRef]);
-      expect(repo.decrementDatasetSampleCount).toHaveBeenCalledWith(DATASET_ID, 2);
     });
 
     it('rejects deletion when dataset is referenced by experiments', async () => {
@@ -865,7 +706,7 @@ describe('DatasetService', () => {
       repo.findProjectAccess.mockResolvedValue(projectAccess());
       repo.findDatasetById.mockResolvedValue(datasetRow({ sampleCount: 3 }));
       repo.countDatasetReferences.mockResolvedValue(new Map([[DATASET_ID, { experiments: 0, optimizations: 0 }]]));
-      repo.hardDeleteSamples.mockResolvedValue({ deleted: 1, payloadRefs: [] });
+      repo.hardDeleteSamples.mockResolvedValue({ deleted: 1 });
 
       const result = await service.deleteDatasetSamples(PROJECT_ID, DATASET_ID, { sampleIds: SAMPLE_IDS }, actor);
 

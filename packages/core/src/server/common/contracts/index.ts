@@ -1,5 +1,5 @@
 // Adapter extension point barrel — abstract class + default implementations + types
-// See docs/specs/08-saas-adapter-boundary.md
+// See docs/specs/08-adapter-extension-points.md
 
 export * from './types';
 export * from './project-context.resolver';
@@ -13,8 +13,34 @@ export * from './runtime-limits.provider';
 export * from './quota-policy.hook';
 export * from './usage-metering.hook';
 export * from './workflow-authorization.hook';
-export * from './object-storage.provider';
-export * from './local-fs-object-storage.provider';
+export {
+  DatasetUploadService,
+  type DatasetUploadInput,
+} from '../../modules/dataset/dataset-upload.contract';
+export { LocalDatasetUploadService } from '../../modules/dataset/dataset-import.service';
+export {
+  DatasetSampleRepository,
+  type DatasetSampleRow,
+  type DatasetSampleExportCursor,
+  type DatasetSampleExportBatch,
+} from '../../modules/dataset/dataset-sample.repository.contract';
+export { LocalDatasetSampleRepository } from '../../modules/dataset/local-dataset-sample.repository';
+export { DatasetImportRepository } from '../../modules/dataset/dataset-import.repository';
+export {
+  DatasetDeletionHook,
+  LocalDatasetDeletionHook,
+  type DatasetDeletionHookInput,
+} from '../../modules/dataset/dataset-deletion.hook';
+export {
+  PromptDeletionHook,
+  LocalPromptDeletionHook,
+  type PromptDeletionHookInput,
+} from '../../modules/prompt/prompt-deletion.hook';
+export {
+  ReleaseLineDeletionHook,
+  LocalReleaseLineDeletionHook,
+  type ReleaseLineDeletionHookInput,
+} from '../../modules/release-line/release-line-deletion.hook';
 export * from './http-actor.guard';
 export * from './local-project-context.resolver';
 export * from './local-actor-context.resolver';

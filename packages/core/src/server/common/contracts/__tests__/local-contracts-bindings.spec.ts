@@ -4,14 +4,18 @@ import { LocalConnectorContextResolver } from '../../../../webhook/channels/webh
 import { ConnectorContextResolver } from '../connector-context.resolver';
 import { LimiterKeyStrategy, LocalLimiterKeyStrategy } from '../limiter-key.strategy';
 import { LocalContractsModule } from '../local-contracts.module';
-import { LocalFsObjectStorageProvider } from '../local-fs-object-storage.provider';
-import { ObjectStorageProvider } from '../object-storage.provider';
 import { LocalQuotaPolicyHook, QuotaPolicyHook } from '../quota-policy.hook';
 import { LocalRuntimeLimitsProvider, RuntimeLimitsProvider } from '../runtime-limits.provider';
 import { LocalTokenService } from '../../../modules/token/token.service';
 import { TokenService } from '../token.service';
 import { NoopUsageMeteringHook, UsageMeteringHook } from '../usage-metering.hook';
 import { LocalWorkflowAuthorizationHook, WorkflowAuthorizationHook } from '../workflow-authorization.hook';
+import { DatasetDeletionHook, LocalDatasetDeletionHook } from '../../../modules/dataset/dataset-deletion.hook';
+import { LocalPromptDeletionHook, PromptDeletionHook } from '../../../modules/prompt/prompt-deletion.hook';
+import {
+  LocalReleaseLineDeletionHook,
+  ReleaseLineDeletionHook,
+} from '../../../modules/release-line/release-line-deletion.hook';
 
 // Asserts the contracts module binds + exports the new extension-point tokens to their Local* defaults
 // without booting the Nest DI container (which would require a live DatabaseModule).
@@ -54,8 +58,16 @@ describe('LocalContractsModule new bindings', () => {
     expect(providerFor(ConnectorContextResolver)?.useClass).toBe(LocalConnectorContextResolver);
   });
 
-  it('binds ObjectStorageProvider -> LocalFsObjectStorageProvider', () => {
-    expect(providerFor(ObjectStorageProvider)?.useClass).toBe(LocalFsObjectStorageProvider);
+  it('binds DatasetDeletionHook -> LocalDatasetDeletionHook', () => {
+    expect(providerFor(DatasetDeletionHook)?.useClass).toBe(LocalDatasetDeletionHook);
+  });
+
+  it('binds PromptDeletionHook -> LocalPromptDeletionHook', () => {
+    expect(providerFor(PromptDeletionHook)?.useClass).toBe(LocalPromptDeletionHook);
+  });
+
+  it('binds ReleaseLineDeletionHook -> LocalReleaseLineDeletionHook', () => {
+    expect(providerFor(ReleaseLineDeletionHook)?.useClass).toBe(LocalReleaseLineDeletionHook);
   });
 
   it('exports extension-point tokens', () => {
@@ -67,6 +79,8 @@ describe('LocalContractsModule new bindings', () => {
     expect(exports).toContain(QuotaPolicyHook);
     expect(exports).toContain(UsageMeteringHook);
     expect(exports).toContain(WorkflowAuthorizationHook);
-    expect(exports).toContain(ObjectStorageProvider);
+    expect(exports).toContain(DatasetDeletionHook);
+    expect(exports).toContain(PromptDeletionHook);
+    expect(exports).toContain(ReleaseLineDeletionHook);
   });
 });

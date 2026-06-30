@@ -4,8 +4,6 @@ import { Link } from '../../components/navigation/link';
 import { useRouter } from '../../hooks/use-router';
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
 import {
-  DATASET_IMPORT_MAX_FILE_BYTES,
-  DATASET_IMPORT_ZIP_MAX_FILE_BYTES,
   MODEL_PRESET_GROUPS,
   MODEL_PRESETS,
   QUICK_START_DEFAULT_CONCURRENCY,
@@ -16,18 +14,17 @@ import {
   QUICK_START_DEFAULT_SAMPLE_TIMEOUT_SECONDS,
   QUICK_START_DEFAULT_TEMPERATURE,
   QUICK_START_DEFAULT_TPM_LIMIT,
-  type CreateDatasetDto,
-  type CreateDatasetImportDto,
   type CreateProjectModelDto,
   type CreateQuickStartDto,
+  type DatasetFieldMappingDto,
   type DatasetFieldRole,
+  type DatasetUploadMetadataDto,
   type ModelImageCapability,
   type ModelPreset,
   type ModelPresetGroup,
   type QuickStartModelOptionDto,
   type QuickStartModelRefDto,
 } from '@proofhound/shared';
-import { datasetImportClient } from '@proofhound/api-client';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -52,21 +49,17 @@ import {
 import { useDelayedLoading } from '../../hooks';
 import { useI18n, type TranslationKey } from '../../i18n';
 import { getApiErrorMessage, buildProviderTypeOptions } from '../../lib';
-import { useProjectContext } from '../../providers';
-import { projectSampleRowsToBatches, runDatasetImport } from '../datasets/dataset-import-runner';
+import { useDatasetUploadAdapter, useDatasetUploadMaxBytes, useProjectContext } from '../../providers';
 import {
   FORMAT_CHIPS,
-  getDatasetImportSourceFormat,
   getDatasetNameFromFile,
   getDatasetPreviewPage,
   getDisplayValue,
   inferRole,
-  isStreamingImportFile,
   parseDatasetPreview,
-  parseDatasetFile,
-  streamDatasetRows,
   type ParsedDatasetFile,
 } from '../datasets/dataset-upload-parser';
+import { toUploadSourceFormat } from '../datasets/dataset-upload-page';
 
 type DraftModel = {
   name: string;
@@ -106,7 +99,6 @@ const ROLE_OPTIONS: Array<{ role: DatasetFieldRole; labelKey: TranslationKey }> 
 const DEFAULT_GOAL_TARGET = '0.8';
 const DEFAULT_PRESET = MODEL_PRESETS.find((preset) => preset.featured) ?? MODEL_PRESETS[0]!;
 const EMPTY_MODEL_OPTIONS: QuickStartModelOptionDto[] = [];
-const IMPORT_BATCH_SIZE = 1000;
 
 function presetToDraft(preset: ModelPreset): DraftModel {
   return {
@@ -714,43 +706,19 @@ function formatByteLimit(bytes: number) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
-function getDatasetUploadFileSizeError(file: Pick<File, 'name' | 'size'>) {
+function getDatasetUploadFileSizeError(file: Pick<File, 'name' | 'size'>, maxBytes: number) {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith('.zip') && file.size > DATASET_IMPORT_ZIP_MAX_FILE_BYTES) return 'zip_file_too_large';
-  if (file.size > DATASET_IMPORT_MAX_FILE_BYTES) return 'file_too_large';
+  if (lower.endsWith('.zip') && file.size > maxBytes) return 'zip_file_too_large';
+  if (file.size > maxBytes) return 'file_too_large';
   return null;
-}
-
-async function* rowsOfSamples(samples: Array<Record<string, unknown>>, signal?: AbortSignal) {
-  for (const sample of samples) {
-    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    yield sample;
-  }
-}
-
-function projectStreamingFileBatches(
-  file: File,
-  columns: string[],
-  onBytes: (readBytes: number, totalBytes: number) => void,
-  signal: AbortSignal,
-) {
-  return projectSampleRowsToBatches(streamDatasetRows(file, onBytes, signal), columns, {
-    maxRows: IMPORT_BATCH_SIZE,
-    signal,
-  });
-}
-
-function projectBufferedFileBatches(samples: Array<Record<string, unknown>>, columns: string[], signal: AbortSignal) {
-  return projectSampleRowsToBatches(rowsOfSamples(samples, signal), columns, {
-    maxRows: IMPORT_BATCH_SIZE,
-    signal,
-  });
 }
 
 export function QuickStartScreen() {
   const { t } = useI18n();
   const router = useRouter();
   const { projectId } = useProjectContext();
+  const uploadDataset = useDatasetUploadAdapter();
+  const datasetUploadMaxBytes = useDatasetUploadMaxBytes();
   const modelOptionsQuery = useQuickStartModelOptions();
   const createQuickStart = useCreateQuickStart();
   const [optimizationName, setOptimizationName] = useState('');
@@ -766,7 +734,6 @@ export function QuickStartScreen() {
     totalBytes: number;
   } | null>(null);
   const importAbortRef = useRef<AbortController | null>(null);
-  const importIdRef = useRef<string | null>(null);
   const [experimentChoice, setExperimentChoice] = useState<ModelChoice>(() => createInitialModelChoice());
   const [analysisSameAsExperiment, setAnalysisSameAsExperiment] = useState(true);
   const [analysisChoice, setAnalysisChoice] = useState<ModelChoice>(() => createInitialModelChoice());
@@ -830,9 +797,9 @@ export function QuickStartScreen() {
   const parseErrorKey = getParseErrorKey(parseError);
   const parseErrorMessage =
     parseError === 'zip_file_too_large'
-      ? formatTemplate(t(parseErrorKey), { zipLimit: formatByteLimit(DATASET_IMPORT_ZIP_MAX_FILE_BYTES) })
+      ? formatTemplate(t(parseErrorKey), { zipLimit: formatByteLimit(datasetUploadMaxBytes) })
       : parseError === 'file_too_large'
-        ? formatTemplate(t(parseErrorKey), { maxLimit: formatByteLimit(DATASET_IMPORT_MAX_FILE_BYTES) })
+        ? formatTemplate(t(parseErrorKey), { maxLimit: formatByteLimit(datasetUploadMaxBytes) })
         : t(parseErrorKey);
   const datasetProgressValue = datasetImportProgress
     ? Math.round(
@@ -847,24 +814,17 @@ export function QuickStartScreen() {
   useEffect(() => {
     if (!isSubmitting) return undefined;
 
+    // Tab close / refresh while the single upload is in flight: warn before losing it.
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!importIdRef.current) return;
       event.preventDefault();
       event.returnValue = '';
     };
-    const onPageHide = (event: PageTransitionEvent) => {
-      if (event.persisted) return;
-      const importId = importIdRef.current;
-      if (importId) datasetImportClient.abortDatasetImportBeacon(projectId, importId);
-    };
 
     window.addEventListener('beforeunload', onBeforeUnload);
-    window.addEventListener('pagehide', onPageHide);
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload);
-      window.removeEventListener('pagehide', onPageHide);
     };
-  }, [isSubmitting, projectId]);
+  }, [isSubmitting]);
 
   useEffect(
     () => () => {
@@ -925,7 +885,7 @@ export function QuickStartScreen() {
     setPreviewPageIndex(0);
 
     try {
-      const fileSizeError = getDatasetUploadFileSizeError(file);
+      const fileSizeError = getDatasetUploadFileSizeError(file, datasetUploadMaxBytes);
       if (fileSizeError) throw new Error(fileSizeError);
       const parsed = await parseDatasetPreview(file);
       setSelectedFile(file);
@@ -970,62 +930,34 @@ export function QuickStartScreen() {
     await handleDatasetFile(file);
   };
 
-  const importQuickStartDataset = async (
-    fieldMappings: CreateDatasetDto['fieldMappings'],
-    sourceFile: CreateDatasetDto['uploadSource'],
-    file: File,
-    columns: string[],
-  ) => {
+  const importQuickStartDataset = async (fieldMappings: DatasetFieldMappingDto[], file: File) => {
     const totalBytes = Math.max(1, file.size);
     const controller = new AbortController();
-    const streaming = isStreamingImportFile(file);
-    const fullParsedFile = streaming ? null : await parseDatasetFile(file);
-    const declaredTotalRows = fullParsedFile?.samples.length;
-    const createBody: CreateDatasetImportDto = {
+    const metadata: DatasetUploadMetadataDto = {
       name: getDatasetNameFromFile(file.name) || getFileStem(file.name),
       description: taskDescription.trim() || null,
       fieldMappings,
-      sourceFile,
-      sourceFormat: getDatasetImportSourceFormat(sourceFile.fileName),
-      ...(declaredTotalRows === undefined ? {} : { declaredTotalRows }),
+      sourceFormat: toUploadSourceFormat(file.name),
+      fileName: file.name,
     };
 
     setDatasetImportProgress({ loadedBytes: 0, totalBytes });
     importAbortRef.current = controller;
     try {
-      const result = await runDatasetImport({
-        projectId,
-        createBody,
-        batches: streaming
-          ? projectStreamingFileBatches(
-              file,
-              columns,
-              (readBytes) => setDatasetImportProgress({ loadedBytes: readBytes, totalBytes }),
-              controller.signal,
-            )
-          : projectBufferedFileBatches(fullParsedFile?.samples ?? [], columns, controller.signal),
+      // Goes through the dataset upload adapter (OSS default = multipart client; a replacement
+      // implementation can swap the transport) so Quick Start reuses the same seam as the upload page.
+      const result = await uploadDataset(projectId, file, metadata, {
         signal: controller.signal,
-        onCreated: (id) => {
-          importIdRef.current = id;
-        },
-        onProgress: ({ phase, receivedRows }) => {
-          if (!streaming && declaredTotalRows && declaredTotalRows > 0) {
-            setDatasetImportProgress({
-              loadedBytes: Math.round((totalBytes * receivedRows) / declaredTotalRows),
-              totalBytes,
-            });
-          }
-          if (phase === 'completing' || phase === 'completed') {
-            setDatasetImportProgress({ loadedBytes: totalBytes, totalBytes });
-          }
+        onProgress: ({ loadedBytes }) => {
+          setDatasetImportProgress({ loadedBytes: Math.min(loadedBytes, totalBytes), totalBytes });
         },
       });
+      setDatasetImportProgress({ loadedBytes: totalBytes, totalBytes });
 
       if (!result.datasetId) throw new Error('quick_start_dataset_import_failed');
       return result.datasetId;
     } finally {
       importAbortRef.current = null;
-      importIdRef.current = null;
     }
   };
 
@@ -1072,8 +1004,10 @@ export function QuickStartScreen() {
       return;
     }
 
-    const columns = parsedFile.columns;
-    const fieldMappings = columns.map((column) => ({ name: column, role: fieldRoles[column] ?? 'metadata' }));
+    const fieldMappings: DatasetFieldMappingDto[] = parsedFile.columns.map((column) => ({
+      name: column,
+      role: fieldRoles[column] ?? 'metadata',
+    }));
     const uploadSource = {
       fileName: selectedFile.name,
       fileSizeBytes: selectedFile.size,
@@ -1082,7 +1016,7 @@ export function QuickStartScreen() {
 
     setIsSubmitting(true);
     try {
-      const datasetId = await importQuickStartDataset(fieldMappings, uploadSource, selectedFile, columns);
+      const datasetId = await importQuickStartDataset(fieldMappings, selectedFile);
       const body: CreateQuickStartDto = {
         optimizationName: optimizationName.trim() || undefined,
         projectDescription: taskDescription.trim(),

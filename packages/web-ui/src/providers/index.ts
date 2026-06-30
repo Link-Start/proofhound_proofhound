@@ -8,6 +8,12 @@ export {
 export { ProjectContextProvider, useProjectContext } from './project-context-provider';
 export { NavigationProvider, useResolveHref, type ResolveHref } from './navigation-provider';
 export {
+  WebhookEndpointProvider,
+  useWebhookEndpoint,
+  buildWebhookUrl,
+  type WebhookEndpointContract,
+} from './webhook-endpoint-provider';
+export {
   RuntimeLimitsProvider,
   useRuntimeLimits,
   capConcurrencyValue,
@@ -15,4 +21,10 @@ export {
   resolveEffectiveConcurrencyLimit,
   type RuntimeLimitsUiContract,
 } from './runtime-limits-provider';
+export {
+  DatasetUploadProvider,
+  useDatasetUploadAdapter,
+  useDatasetUploadMaxBytes,
+  type DatasetUploadAdapter,
+} from './dataset-upload-provider';
 export { RefineProvider } from './refine-provider';

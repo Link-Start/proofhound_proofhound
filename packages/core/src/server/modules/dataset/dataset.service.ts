@@ -24,14 +24,13 @@ import type {
 import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { toActorContext } from '../../common/access-control';
 import { AccessControlService } from '../../common/contracts/access-control.service';
-import { ObjectStorageProvider } from '../../common/contracts/object-storage.provider';
-import { type StoredObjectRef } from '../../common/contracts/object-storage.provider';
 import { QuotaPolicyHook } from '../../common/contracts/quota-policy.hook';
 import { UsageMeteringHook } from '../../common/contracts/usage-metering.hook';
 import { safeRecordUsageEvent } from '../../common/contracts/usage-metering.hook';
 import { DatasetDeletionHook } from './dataset-deletion.hook';
 import { buildDatasetFieldSchema } from './dataset-field-schema.util';
 import { DatasetRepository } from './dataset.repository';
+import { DatasetSampleRepository } from './dataset-sample.repository.contract';
 import {
   type DatasetSampleExportCursor,
   type DatasetProjectAccessRow,
@@ -47,11 +46,9 @@ export interface DatasetExportFile {
 }
 
 /**
- * How the export should be delivered to the client:
- *  - `stream`: respond with a fresh export stream (object storage disabled, or the provider can't
- *    mint a public URL — e.g. LocalFs); preserves the original streamed-download behaviour.
- *  - `redirect`: the artifact was written to object storage; redirect the client to a signed URL
- *    so the bytes are served directly by the store (no DB / API egress for the payload).
+ * How the export is delivered to the client. OSS always streams a fresh DB-backed export (`stream`).
+ * The `redirect` variant is a reserved delivery shape (a replacement implementation serving payload bytes from
+ * object storage via a signed URL); OSS never produces it.
  */
 export type DatasetExportDelivery =
   | { kind: 'stream'; file: DatasetExportFile }
@@ -67,12 +64,12 @@ export class DatasetService {
 
   constructor(
     private readonly repo: DatasetRepository,
+    private readonly sampleRepo: DatasetSampleRepository,
     private readonly accessControl: AccessControlService,
     private readonly quotaPolicy: QuotaPolicyHook,
     @Inject(DatasetDeletionHook)
     private readonly deletionHook: DatasetDeletionHook,
     @Optional() private readonly usageMetering?: UsageMeteringHook,
-    @Optional() private readonly objectStorage?: ObjectStorageProvider,
   ) {}
 
   async listDatasets(
@@ -111,7 +108,7 @@ export class DatasetService {
   ): Promise<DatasetSamplesListResponseDto> {
     await this.getDataset(projectId, datasetId, actor);
 
-    const { rows, total } = await this.repo.listDatasetSamplesPage(datasetId, {
+    const { rows, total } = await this.sampleRepo.listDatasetSamplesPage(datasetId, {
       limit: query.pageSize,
       offset: (query.page - 1) * query.pageSize,
       search: query.search,
@@ -137,10 +134,8 @@ export class DatasetService {
   }
 
   /**
-   * Build the export artifact and decide how to deliver it. When an object-storage provider is
-   * configured and can mint a signed URL, the artifact is written to the store and the caller is
-   * redirected there (payload bytes leave the store, not the DB/API). Otherwise — provider disabled
-   * or unable to sign (e.g. LocalFs) — it falls back to streaming a fresh DB-backed export.
+   * Build the export artifact and stream it. OSS keeps every dataset sample inline in PostgreSQL, so
+   * the export is always served as a fresh DB-backed stream (no object storage, no signed URLs).
    */
   async exportDatasetForDownload(
     project: ProjectContext,
@@ -149,27 +144,6 @@ export class DatasetService {
     actor: CurrentUserPayload,
   ): Promise<DatasetExportDelivery> {
     const file = await this.exportDataset(project.projectId, datasetId, format, actor);
-
-    if (this.objectStorage?.isEnabled()) {
-      const contentDisposition = `attachment; filename="${file.fileName}"; filename*=UTF-8''${encodeURIComponent(file.fileName)}`;
-      const ref = await this.objectStorage.putObject(
-        { project, resourceType: 'export', resourceId: randomUUID(), name: file.fileName },
-        file.createStream(),
-        { contentType: file.contentType, contentDisposition },
-      );
-      const signed = await this.objectStorage.createSignedDownloadUrl(ref);
-      if (signed) {
-        return { kind: 'redirect', url: signed.url, expiresAt: signed.expiresAt };
-      }
-      // Provider stored the object but cannot expose a public URL (e.g. LocalFs). Drop the
-      // now-orphaned artifact before streaming — otherwise every such export leaks an object.
-      try {
-        await this.objectStorage.deleteObjects([ref]);
-      } catch (err) {
-        this.logger.warn({ key: ref.key, err }, 'export_artifact_cleanup_failed');
-      }
-    }
-
     return { kind: 'stream', file };
   }
 
@@ -191,7 +165,6 @@ export class DatasetService {
     const fieldSchema = buildDatasetFieldSchema(dto.fieldMappings, dto.samples);
     const externalIdFieldName = dto.fieldMappings.find((field) => field.role === 'id')?.name ?? null;
     const hasImages = fieldSchema.some((field) => ['image', 'image_url', 'image_base64'].includes(field.role));
-    const storagePrefix = `datasets/${projectId}/raw/${datasetId}/${dto.uploadSource.fileName}`;
     await this.quotaPolicy.assertCanStore({
       actor: toActorContext(actor),
       bytes: estimateDatasetCreateBytes(dto),
@@ -206,7 +179,6 @@ export class DatasetService {
       dto,
       fieldSchema,
       hasImages,
-      storagePrefix,
       externalIdFieldName,
     });
     await this.recordDatasetStorageEvents(row, actor.sub, 'dataset.created', {
@@ -250,7 +222,6 @@ export class DatasetService {
 
     const result = await this.repo.hardDeleteSamples(datasetId, dto.sampleIds);
     if (result.deleted > 0) {
-      await this.cleanupPayloadRefs(result.payloadRefs, { projectId, datasetId, operation: 'dataset_samples.delete' });
       await this.repo.decrementDatasetSampleCount(datasetId, result.deleted);
       await this.recordDatasetStorageEvents(row, actor.sub, 'dataset.updated', {
         deletedSamples: result.deleted,
@@ -363,11 +334,9 @@ export class DatasetService {
     if (result.deleted === 0) {
       throw new NotFoundException(`Dataset ${datasetId} not found`);
     }
-    await this.cleanupPayloadRefs(result.payloadRefs, { projectId, datasetId, operation: 'dataset.delete' });
     const deletedAt = new Date();
     await this.recordDatasetStorageEvents({ ...row, updatedAt: deletedAt, deletedAt }, actor.sub, 'dataset.deleted', {
       sampleCount: row.sampleCount,
-      storagePrefix: row.storagePrefix,
     });
   }
 
@@ -418,7 +387,6 @@ export class DatasetService {
       name: row.name,
       sampleCount: row.sampleCount,
       hasImages: row.hasImages,
-      storagePrefix: row.storagePrefix,
       updatedAt: row.updatedAt.toISOString(),
       ...payload,
     });
@@ -426,7 +394,6 @@ export class DatasetService {
       reason: eventType,
       datasetId: row.id,
       sampleCount: row.sampleCount,
-      storagePrefix: row.storagePrefix,
       updatedAt: row.updatedAt.toISOString(),
       ...payload,
     });
@@ -461,15 +428,6 @@ export class DatasetService {
       },
       this.logger,
     );
-  }
-
-  private async cleanupPayloadRefs(refs: StoredObjectRef[], context: Record<string, unknown>): Promise<void> {
-    if (refs.length === 0 || !this.objectStorage?.isEnabled()) return;
-    try {
-      await this.objectStorage.deleteObjects(refs);
-    } catch (err) {
-      this.logger.warn({ ...context, refs: refs.length, err }, 'object_storage_payload_cleanup_failed');
-    }
   }
 
   private assertConsistentMappings(dto: CreateDatasetDto) {
@@ -558,7 +516,6 @@ export class DatasetService {
       categoryDistribution,
       references,
       hasImages: row.hasImages,
-      storagePrefix: row.storagePrefix,
       createdBy: row.createdBy,
       createdByDisplayName: row.createdByDisplayName ?? null,
       createdAt: row.createdAt.toISOString(),
@@ -600,7 +557,7 @@ export class DatasetService {
     const expectedField = this.getExpectedOutputField(fieldSchema);
     if (!expectedField) return { field: null, total: 0, categories: [] };
 
-    const aggregated = await this.repo.aggregateCategoryDistribution(row.id, expectedField.name);
+    const aggregated = await this.sampleRepo.aggregateCategoryDistribution(row.id, expectedField.name);
     return this.toCategoryDistributionDto(expectedField.name, aggregated);
   }
 
@@ -693,7 +650,7 @@ export class DatasetService {
 
     let cursor: DatasetSampleExportCursor | null = null;
     do {
-      const batch = await this.repo.listDatasetSamplesBatch(datasetId, {
+      const batch = await this.sampleRepo.listDatasetSamplesBatch(datasetId, {
         limit: DATASET_EXPORT_BATCH_SIZE,
         cursor,
       });
@@ -715,7 +672,7 @@ export class DatasetService {
 
     let cursor: DatasetSampleExportCursor | null = null;
     do {
-      const batch = await this.repo.listDatasetSamplesBatch(datasetId, {
+      const batch = await this.sampleRepo.listDatasetSamplesBatch(datasetId, {
         limit: DATASET_EXPORT_BATCH_SIZE,
         cursor,
       });
